@@ -12,7 +12,11 @@ import {
 } from "./types/lessonPlan";
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { downloadWordDoc } from "./utils/exportPlan";
-import { extractFileContentHybrid } from "./utils/clientFileExtractor";
+import {
+  extractFileContentHybrid,
+  compactDocumentForSelectedWeek,
+  safeReadJsonResponse,
+} from "./utils/clientFileExtractor";
 import {
   Upload,
   FileText,
@@ -74,77 +78,6 @@ const DEFAULT_MEB_WEEKS: YillikPlanWeekItem[] = [
   { id: "meb-35", haftaNo: 35, haftaEtiketi: "35. HAFTA", tarihAraligi: "07 - 11 Haziran", onayTarihi: "07/06/2027" },
   { id: "meb-36", haftaNo: 36, haftaEtiketi: "36. HAFTA", tarihAraligi: "14 - 18 Haziran", onayTarihi: "14/06/2027" },
 ];
-
-// Exact sample plan from user's attached screenshots (9. Sınıf Tarım - Bitki Üretim Yöntemleri - 1. Hafta)
-const SAMPLE_TARIM_PLAN: MaarifLessonPlan = {
-  Ders_Bilgisi: {
-    Sinif: "9. SINIF",
-    Ders: "TARIM (BİTKİ ÜRETİM YÖNTEMLERİ)",
-    Ogrenme_Birimi: "Generatif üretim",
-    Sure: "3 Ders Saati",
-    Alan_Becerileri: "Bitkilerde üretim yapma",
-    Egilimler: "E2.2. Sorumluluk, E3.2. Odaklanma",
-  },
-  Programlar_Arasi_Bilesenler: {
-    Sosyal_Duygusal_Ogrenme_Becerileri:
-      "SDB2.2. İş Birliği Becerisi, SDB3.3. Sorumlu Karar Verme Becerisi",
-    Degerler: "D12. Sabır, D16. Sorumluluk, D18. Temizlik",
-    Okuryazarlik_Becerileri: "OB1. Bilgi okuryazarlığı",
-    Disiplinler_Arasi_Iliski: "Fen Bilimleri",
-    Beceriler_Arasi_Iliski:
-      "KB2.11. Gözleme Dayalı Tahmin Etme Becerisi, KB3.2. Problem Çözme Becerisi",
-  },
-  Ogrenme_Ciktilari_ve_Surec_Bilesenleri:
-    "BÜY.1.1. Generatif bitki organlarını sıralar.\na) Generatif üretim açıklanır.\nb) Çiçek tipleri sıralanır.",
-  Icerik_Cercevesi: "Generatif Bitki Organları",
-  Ogrenme_Kanitlari:
-    "Öğrenci performansını belirlemeye yönelik çalışmalar değerlendirilirken gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği ve dereceli puanlama anahtarı gibi ölçme araçlarından uygun olanlar seçilerek kullanılabilir. Örneğin çimlendirme için harç hazırlığı yapma, sporların toplanması ve ekiminin yapılması, tohum ekimi gibi uygulamalarda ilgili adımlar gözlem formları ile takip edilebilir. Bunun yanında öz değerlendirme ve akran değerlendirme formları kullanılarak öğrencilerin öğretim sürecine aktif katılımları sağlanabilir. Öz değerlendirme formlarında öğrenciler, harç hazırlığında, tohum ekiminde ve spor ekimi vb. gibi uygulama aşamaları bulunan çalışmalarda hangi aşamalarda başarılı olduklarını ve geliştirmeleri gereken noktaları belirtebilirken, akran değerlendirmeleri ile ekip çalışması becerileri değerlendirilebilir. Ayrıca, proje bazlı değerlendirme kapsamında öğrencilerden sporların muhafazası ve ekim süreci gibi aşamalı faaliyetlerde her aşamanın nasıl gerçekleştirildiğine dair bir rapor, sunum ya da simülasyon tabanlı çalışma sunmaları istenebilir. Öğrencilerin atölye, dış ortam veya uygulama bahçesi gibi yerlerde yapacakları sert kabuklu tohumlarda aşındırma, çelik alma, aşı için anaç ve kalem hazırlanması gibi uygulamalarda ölçme süreci, öğrencilerin iş sağlığı ve güvenliği kurallarına uygun davranmaları ve malzeme kullanımlarına göre detaylandırılabilir. Farklı tohum ve çiçek tiplerini gösteren bülten panosu hazırlatılabilir. Meyveler ve kullanım alanlarına yönelik zihin haritası yaptırılabilir. Çiçek kısım ve türleri eşleştirilebilir. Farklı çiçek ve meyve tiplerinden yapılandırılmış grid (grafik tasarım) hazırlanabilir. Bu ölçme yöntemleri, sürecin her aşamasında geri bildirim sağlamak ve öğrencilerin gelişimlerini sistematik bir şekilde izlemek için kullanılabilir.",
-  Ogrenme_Ogretme_Yasantilari: {
-    Temel_Kabuller:
-      "Öğrencilerin daha önce bitkinin organları hakkında temel bilgiye sahip oldukları, ayrıca tohum ekimi ve bitki bakımıyla ilgili basit gözlemler yaptıkları kabul edilmektedir.",
-    On_Degerlendirme_Sureci:
-      "Öğrencilerin gösterilen bazı bitki organlarını tanımaları ve işlevleri hakkında bilgi vermeleri istenebilir.",
-    Kopru_Kurma:
-      "Tarlada tohum ekimi yaparken, evde saksıda bitki yetiştirirken, bahçede sebze-meyve yetiştirirken, çiçek çoğaltırken veya fide alıp dikerken generatif ve vejetatif üretim yöntemlerini kullanabilir.",
-    Ogretme_Uygulamalari: [
-      "Generatif üretim:",
-      "Bu öğrenme birimi işlenirken, öğrencilere farklı kaynaklardan tohum ekimi ve ekim yöntemleri hakkında araştırma görevi verilir.",
-      "Elde ettikleri bilgiler ışığında ekimini yapacağı tohumu temin etmeleri ve uygun ekim yerini hazırlayarak tohum ekimini gerçekleştirmeleri istenir.",
-      "Öğrencilerin ekim zamanını belirlemede iklim, ekim yöntemi, ilişkisini kavrama düzeyleri T şeması kullanılarak ölçülebilir.",
-      "Tohum ekiminden sonra gruplara ayrılan öğrencilerin, bakım işlemlerini iş birliği içinde yürütmeleri ve yaptıkları tüm işlemleri sistematik şekilde kayıt altına almaları sağlanır.",
-      "Öğrencilerin düzenli kayıt tutma, veri yorumlama ve sonuç çıkarma becerileri, öğretmen gözlemiyle ve çalışma raporları üzerinden değerlendirilebilir.",
-      "Bitki üretim süreçlerinde öğrencilerden belli aralıklarla gözlem ve not tutmaları istenir KB2.11, E2.2, E3.2, D12.3, D16.3, D18.3, SDB2.2, SDB3.3, OB1).",
-      "Öğrencilere farklı kaynaklardan tohum ekimi için harç hazırlama yöntemleri ve kullanılacak materyaller hakkında araştırma görevi verilir.",
-      "Edindikleri bilgiler ışığında bir harç hazırlama planı oluşturmaları ve hijyen kurallarına dikkat ederek uygulamalı olarak harç hazırlamaları istenir.",
-      "Öğrencilerin harç hazırlama kavrama düzeyleri yapılandırılmış grid ölçme yöntemi ile değerlendirilebilir.",
-      "Bu süreçte öz değerlendirme ve akran değerlendirme formları kullanılarak öğrencilerin araştırma, planlama, uygulama, iş birliği ve kayıt tutma becerileri değerlendirilebilir (KB2.11, E2.2, E3.2, D12.3, D16.3, D18.3, SDB2.2, SDB3.3, OB1).",
-      "Öğrencilerden sporla üretim hakkında araştırma yaparak spor ve sporlu bitkilerle ilgili bilgi toplamaları, üzerinde spor bulunan kültür mantarı ve eğrelti otu bulmaları istenir.",
-      "Öğrencilerin spor, sporlu bitki ilişkisini kavrama düzeyleri T şeması kullanılarak ölçülebilir. Ardından spor toplama, kurutma ve spor ekimi işlemlerini uygulamalı olarak gerçekleştirmeleri beklenir.",
-      "Spor ekiminden sonra gruplara ayrılan öğrencilerin, bakım işlemlerini iş birliği içinde yürütmeleri ve tüm uygulama aşamalarını sistematik şekilde kayıt altına almaları sağlanır.",
-      "Bu süreçte öğrencilerin araştırma, gözlem, uygulama ve kayıt tutma becerileri, geliştirilecek bir dereceli puanlama anahtarı (rubrik) ile değerlendirilebilir (KB2.11, E2.2, E3.2, D12.3, D16.3, D18.3, SDB2.2, SDB3.3, OB1).",
-    ],
-    Guduleme: [
-      "Bu derste bitkilerin neslini devam ettiren generatif üretim kavramını ve temel generatif organları ayrıntılarıyla öğreneceksiniz.",
-      "Tarım alanında verimli üretim yapmanın temeli olan çiçek tiplerini ve tohum oluşum basamaklarını tanıyarak profesyonel yetiştiriciliğe ilk adımı atacaksınız.",
-      "Edineceğiniz bilgiler sayesinde çevrenizdeki bitkilerin çoğalma yapılarını bilinçli bir gözle inceleme becerisi kazanacaksınız.",
-      "Tarımsal üretim süreçlerinde doğru çoğaltma yöntemini seçerek başarılı uygulamalar gerçekleştirebileceksiniz.",
-    ],
-    Dikkat_Cekme: [
-      "Yediğimiz meyvelerin ve toprağa ektiğimiz tohumların aslında hangi bitki organının başkalaşımı sonucu oluştuğunu hiç düşündünüz mü?",
-      "Bir çiçeğin sadece görsel bir güzellik mi yoksa bitkinin neslini sürdüren hayati bir merkez mi olduğunu nasıl açıklarsınız?",
-      "Doğadaki tüm bitkilerin çiçekleri aynı yapıya ve çoğalma mekanizmasına mı sahiptir?",
-      "Bahçenizdeki bir domates veya elma ağacının meyve verebilmesi için öncelikle çiçeğinde hangi olayların gerçekleşmesi gerekir?",
-    ],
-    Ek_Ogretme_Uygulamalari: [
-      "Sınıfa getirilen taze çiçek örnekleri üzerinde çanak yaprak, taç yaprak, erkek organ ve dişi organ kısımları büyüteç yardımıyla incelenerek öğrencilere tanıtılabilir (E3.2, OB1).",
-      "Öğrencilerin morfolojik olarak tam ve eksik çiçek yapılarını karşılaştırmaları için hazırlanan görsel kartlar tahtada eşleştirilebilir (KB2.11).",
-      "Bitkilerde generatif organların biyolojik işlevleri ve tarımsal üretimdeki önemi şematik çizimler üzerinden etkileşimli biçimde anlatılabilir (OB1).",
-      "Öğrenciler küçük çalışma gruplarına ayrılarak çevrelerinde gözlemledikleri farklı çiçek tiplerini sınıflandırıp arkadaşlarına sunabilirler (SDB2.2, E2.2).",
-      "Laboratuvar veya atölye ortamında güvenli ve temiz çalışma kurallarına özen gösterilerek çiçek diseksiyonu uygulaması yaptırılabilir (D16.3, D18.3).",
-    ],
-  },
-  Farklilastirma: "",
-};
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -283,12 +216,25 @@ export default function App() {
       const response = await fetch("/api/parse-weeks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yillik_plan: planText }),
+        body: JSON.stringify({
+          yillik_plan: planText.slice(0, 45000),
+        }),
       });
-      const data = await response.json();
-      if (response.ok && Array.isArray(data.weeks) && data.weeks.length > 0) {
-        setExtractedWeeks(data.weeks);
-        const firstWeek = data.weeks[0] as YillikPlanWeekItem;
+      const parsed = await safeReadJsonResponse<{
+        okulAdi?: string;
+        dersIsmi?: string;
+        sinifDuzeyi?: string;
+        weeks?: YillikPlanWeekItem[];
+      }>(response);
+      if (
+        parsed.ok &&
+        parsed.data &&
+        Array.isArray(parsed.data.weeks) &&
+        parsed.data.weeks.length > 0
+      ) {
+        const data = parsed.data;
+        setExtractedWeeks(data.weeks!);
+        const firstWeek = data.weeks![0];
         setSelectedWeekId(firstWeek.id);
         setMeta((prev) => ({
           ...prev,
@@ -414,23 +360,6 @@ export default function App() {
     await processSelectedFile(file, fieldKey, setter, null);
   };
 
-  const handleLoadSampleTarimPlan = () => {
-    setMeta({
-      okulAdi: "SEYDİŞEHİR ILICA TİCARET MESLEKİ VE TEKNİK ANADOLU LİSESİ",
-      egitimOgretimYili: "2026-2027 Eğitim ve Öğretim Yılı 1. Dönem",
-      dersIsmi: "TARIM (BİTKİ ÜRETİM YÖNTEMLERİ)",
-      sinifDuzeyi: "9. SINIF",
-      haftaEtiketi: "1. HAFTA",
-      tarihAraligi: "14 - 18 Eylül",
-      onayTarihi: "14/09/2026",
-      ogretmenAdSoyad: "Ertem Karaner",
-      ogretmenBransi: "Ders Öğretmeni",
-      okulMuduruAdSoyad: "VAHİT",
-    });
-    setCurrentPlan(SAMPLE_TARIM_PLAN);
-    setErrorMessage(null);
-  };
-
   const handleGeneratePlan = async () => {
     if (!yillikPlan.trim() || !dersMateryali.trim()) {
       setErrorMessage(
@@ -444,15 +373,36 @@ export default function App() {
     setErrorMessage(null);
 
     try {
+      const searchKeywords = [
+        meta.haftaEtiketi,
+        meta.tarihAraligi,
+        selectedWeekObj?.ogrenmeBirimi || "",
+        selectedWeekObj?.konuVeCiktiOzeti || "",
+      ].filter(Boolean);
+
+      const compactedYillikPlan = compactDocumentForSelectedWeek(
+        yillikPlan,
+        searchKeywords,
+        32000
+      );
+      const compactedDersMateryali = compactDocumentForSelectedWeek(
+        dersMateryali,
+        searchKeywords,
+        32000
+      );
+      const compactedDersBilgiFormu = dersBilgiFormu.trim()
+        ? compactDocumentForSelectedWeek(dersBilgiFormu, searchKeywords, 32000)
+        : "";
+
       const response = await fetch("/api/generate-plan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          yillik_plan: yillikPlan,
-          ders_materyali: dersMateryali,
-          ders_bilgi_formu: dersBilgiFormu,
+          yillik_plan: compactedYillikPlan,
+          ders_materyali: compactedDersMateryali,
+          ders_bilgi_formu: compactedDersBilgiFormu,
           hafta_etiketi: meta.haftaEtiketi,
           tarih_araligi: meta.tarihAraligi,
           onay_tarihi: meta.onayTarihi,
@@ -465,13 +415,20 @@ export default function App() {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) {
+      const parsed = await safeReadJsonResponse<{
+        plan?: MaarifLessonPlan;
+        error?: string;
+      }>(response);
+
+      if (!parsed.ok || !parsed.data) {
         throw new Error(
-          data.error || "Günlük ders planı üretilirken bir hata oluştu."
+          parsed.data?.error ||
+            parsed.errorText ||
+            "Günlük ders planı üretilirken bir hata oluştu."
         );
       }
 
+      const data = parsed.data;
       if (data.plan) {
         const generated = data.plan as MaarifLessonPlan;
         if (meta.dersIsmi.trim()) {
@@ -490,9 +447,9 @@ export default function App() {
           }`,
           department: generated.Ders_Bilgisi?.Sinif || "",
           inputs: {
-            yillik_plan: yillikPlan,
-            ders_materyali: dersMateryali,
-            ders_bilgi_formu: dersBilgiFormu,
+            yillik_plan: compactedYillikPlan,
+            ders_materyali: compactedDersMateryali,
+            ders_bilgi_formu: compactedDersBilgiFormu,
           },
           meta: { ...meta },
           plan: generated,
@@ -714,14 +671,6 @@ export default function App() {
                     Okul, Ders, Hafta/Tarih ve İmza Bilgileri
                   </h1>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleLoadSampleTarimPlan}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
-                >
-                  Örnek Planı Yükle (9. Sınıf Tarım - 1. Hafta)
-                </button>
               </div>
 
               <div className="p-6 space-y-6">
@@ -1410,15 +1359,6 @@ export default function App() {
                         <strong>Hafta ve Tarih</strong> seçerek planınızı oluşturun.
                       </p>
                     </div>
-                    <div className="pt-2">
-                      <button
-                        type="button"
-                        onClick={handleLoadSampleTarimPlan}
-                        className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-indigo-950 bg-amber-400/90 hover:bg-amber-400 rounded-lg transition-colors"
-                      >
-                        Örnek Çıktı Formatını İncele (9. Sınıf Tarım - 1. Hafta)
-                      </button>
-                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1493,15 +1433,6 @@ export default function App() {
                   className="px-4 py-2 text-xs font-semibold text-white bg-indigo-900 rounded-lg hover:bg-indigo-800 transition-colors"
                 >
                   Veri Girişi &amp; Üretim Sekmesine Git
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleLoadSampleTarimPlan();
-                  }}
-                  className="px-4 py-2 text-xs font-semibold text-slate-900 bg-amber-400 rounded-lg hover:bg-amber-300 transition-colors"
-                >
-                  Örnek Planı Aç (9. Sınıf Tarım - 1. Hafta)
                 </button>
               </div>
             </div>

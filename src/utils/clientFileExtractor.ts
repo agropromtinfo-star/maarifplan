@@ -86,7 +86,6 @@ function extractLegacyDocText(buffer: ArrayBuffer): string {
   const decoderUtf8 = new TextDecoder("utf-8", { fatal: false });
   const rawUtf8 = decoderUtf8.decode(buffer);
 
-  // Many MEB .doc files are actually HTML or XML saved with .doc extension
   if (/<html|<table|<body|<p\b|<w:/i.test(rawUtf8)) {
     const stripped = rawUtf8
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -102,11 +101,8 @@ function extractLegacyDocText(buffer: ArrayBuffer): string {
     if (stripped.length > 20) return stripped;
   }
 
-  // Extract printable Turkish/ASCII text runs from binary .doc
   const printableChunks =
-    rawUtf8.match(
-      /[A-Za-z0-9ÇĞİÖŞÜçğıöşü.,;:!?()[\]\-–/\s]{6,}/g
-    ) || [];
+    rawUtf8.match(/[A-Za-z0-9ÇĞİÖŞÜçğıöşü.,;:!?()[\]\-–/\s]{6,}/g) || [];
   const cleaned = printableChunks
     .map((c) => c.trim())
     .filter((c) => c.length >= 6 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3,}/.test(c))
@@ -133,7 +129,6 @@ export async function extractFileContentHybrid(
   const arrayBuffer = await file.arrayBuffer();
   let extractedText = "";
 
-  // 1. Try client-side extraction first (works up to 40 MB with zero network latency)
   try {
     if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
       const uint8 = new Uint8Array(arrayBuffer);
@@ -204,34 +199,37 @@ export async function extractFileContentHybrid(
     };
   }
 
-  // 2. Fallback to server-side /api/extract-file (e.g., for scanned PDFs via Gemini OCR or server parsers)
-  try {
-    const formData = new FormData();
-    formData.append("file", file);
+  // Fallback to server-side /api/extract-file only if file is <= 15 MB so proxy doesn't reject it
+  if (file.size <= 15 * 1024 * 1024) {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    const response = await fetch("/api/extract-file", {
-      method: "POST",
-      body: formData,
-    });
+      const response = await fetch("/api/extract-file", {
+        method: "POST",
+        body: formData,
+      });
 
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      const data = await response.json();
-      if (response.ok && typeof data.text === "string" && data.text.trim()) {
-        return {
-          text: data.text.trim(),
-          quickWeeks: Array.isArray(data.quickWeeks)
-            ? data.quickWeeks
-            : parseQuickWeeksClient(data.text),
-          method: "server",
-        };
+      const raw = await response.text();
+      try {
+        const data = JSON.parse(raw);
+        if (response.ok && typeof data.text === "string" && data.text.trim()) {
+          return {
+            text: data.text.trim(),
+            quickWeeks: Array.isArray(data.quickWeeks)
+              ? data.quickWeeks
+              : parseQuickWeeksClient(data.text),
+            method: "server",
+          };
+        }
+      } catch {
+        // Non-JSON proxy response
       }
+    } catch (serverErr) {
+      console.warn("Server fallback warning:", serverErr);
     }
-  } catch (serverErr) {
-    console.warn("Server fallback warning:", serverErr);
   }
 
-  // 3. Ensure the user's file is still accepted even if it's a scanned image-heavy document
   const fallbackText =
     extractedText ||
     `[Yüklenen Dosya: ${file.name}]\nNot: Bu dosya görsel/taranmış ağırlıklı bir doküman olarak algılandı. Plan üretimi sırasında seçilen hafta ve ders bilgileriyle işlenecektir.`;
@@ -241,4 +239,91 @@ export async function extractFileContentHybrid(
     quickWeeks: parseQuickWeeksClient(fallbackText),
     method: "client",
   };
+}
+
+/**
+ * Compacts a potentially huge document text (e.g. a 300-page PDF textbook) into a focused,
+ * proxy-safe payload (< 35,000 chars) that preserves:
+ * 1) All sections matching the selected week, date range, learning unit, or outcome keywords
+ * 2) The document header/intro and relevant curriculum sections
+ * This prevents Cloud Run / reverse proxy 413 "The page could not be..." errors on POST /api/generate-plan.
+ */
+export function compactDocumentForSelectedWeek(
+  fullText: string,
+  searchKeywords: string[],
+  maxChars = 34000
+): string {
+  const trimmed = (fullText || "").trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+
+  const validTerms = searchKeywords
+    .map((k) => k.trim())
+    .filter((k) => k.length >= 3);
+
+  const lines = trimmed.split(/\r?\n/);
+  const matchedBlocks: string[] = [];
+
+  for (const term of validTerms) {
+    const lowerTerm = term.toLowerCase();
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(lowerTerm)) {
+        const start = Math.max(0, i - 6);
+        const end = Math.min(lines.length, i + 55);
+        const block = lines.slice(start, end).join("\n").trim();
+        if (block && !matchedBlocks.includes(block)) {
+          matchedBlocks.push(block);
+        }
+        i += 30; // advance window
+        if (matchedBlocks.join("\n\n").length > maxChars * 0.65) break;
+      }
+    }
+    if (matchedBlocks.join("\n\n").length > maxChars * 0.65) break;
+  }
+
+  const focusedSection = matchedBlocks.join("\n\n---\n\n");
+  const remainingBudget = Math.max(4000, maxChars - focusedSection.length - 500);
+  const headSlice = trimmed.slice(0, Math.floor(remainingBudget * 0.7));
+  const tailSlice = trimmed.slice(-Math.floor(remainingBudget * 0.3));
+
+  if (focusedSection) {
+    return `[SEÇİLEN HAFTA VE KONU İLE EŞLEŞEN ODAK BÖLÜMLER]\n${focusedSection}\n\n[DOKÜMAN BAŞLANGIÇ KESİTİ]\n${headSlice}\n\n[DOKÜMAN SON KESİTİ]\n${tailSlice}`;
+  }
+
+  return `${trimmed.slice(0, maxChars)}\n\n[...Belgenin devamı ağ sınırını aşmamak için özetlendi...]`;
+}
+
+/**
+ * Safely parses a fetch Response as JSON without throwing "Unexpected token 'T', 'The page c'..."
+ */
+export async function safeReadJsonResponse<T = Record<string, unknown>>(
+  response: Response
+): Promise<{ ok: boolean; status: number; data: T | null; errorText?: string }> {
+  const rawText = await response.text();
+  try {
+    const parsed = JSON.parse(rawText) as T;
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: parsed,
+    };
+  } catch {
+    // Server or reverse proxy returned plain text or HTML (e.g. 413 Payload Too Large or 504 Timeout)
+    if (response.status === 413 || rawText.includes("Too Large") || rawText.includes("The page")) {
+      return {
+        ok: false,
+        status: response.status,
+        data: null,
+        errorText:
+          "Gönderilen doküman metinleri çok büyük olduğu için ağ geçidi sınırı aşıldı. Dokümanlar otomatik optimize edildi, lütfen tekrar deneyin.",
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      data: null,
+      errorText: `Sunucudan beklenmeyen yanıt alındı (HTTP ${response.status}): ${rawText.slice(0, 140)}`,
+    };
+  }
 }

@@ -549,6 +549,7 @@ async function generateWithFallback(
     { name: "gemini-3.8-flash", useThinkingConfig: true },
     { name: "gemini-flash-latest", useThinkingConfig: false },
     { name: "gemini-3.1-flash-lite", useThinkingConfig: false },
+    { name: "gemini-2.5-flash", useThinkingConfig: false },
   ];
 
   let lastError: unknown = null;
@@ -576,27 +577,30 @@ async function generateWithFallback(
       } catch (err: unknown) {
         lastError = err;
         const msg = err instanceof Error ? err.message : String(err);
-        const isTransient =
-          msg.includes("503") ||
-          msg.includes("UNAVAILABLE") ||
-          msg.includes("high demand") ||
-          msg.includes("overloaded") ||
-          msg.includes("500") ||
-          msg.includes("502") ||
-          msg.includes("504") ||
-          msg.includes("429") ||
-          msg.includes("RESOURCE_EXHAUSTED") ||
-          msg.includes("fetch failed");
-
         console.warn(
           `[Gemini API] Model ${candidate.name} (attempt ${attempt}) failed: ${msg}`
         );
 
-        if (!isTransient) {
+        // If model is not found or unsupported config, immediately switch to the next candidate model
+        if (
+          msg.includes("404") ||
+          msg.includes("NOT_FOUND") ||
+          msg.includes("not found") ||
+          msg.includes("INVALID_ARGUMENT")
+        ) {
+          break;
+        }
+
+        // If API key is invalid/unauthorized, fail immediately
+        if (
+          msg.includes("API_KEY_INVALID") ||
+          msg.includes("PERMISSION_DENIED") ||
+          msg.includes("403")
+        ) {
           throw err;
         }
 
-        await sleep(attempt * 1200);
+        await sleep(attempt * 1000);
       }
     }
   }
@@ -893,6 +897,7 @@ async function startServer() {
             if (apiKey && file.size <= 20 * 1024 * 1024) {
               const ai = new GoogleGenAI({
                 apiKey,
+                apiVersion: "v1beta",
                 httpOptions: {
                   headers: {
                     "User-Agent": "aistudio-build",
@@ -1053,6 +1058,7 @@ async function startServer() {
 
       const ai = new GoogleGenAI({
         apiKey,
+        apiVersion: "v1beta",
         httpOptions: {
           headers: {
             "User-Agent": "aistudio-build",
@@ -1158,6 +1164,7 @@ Aşağıdaki Ünitelendirilmiş Yıllık Plan metnini incele ve planda yer alan 
 
       const ai = new GoogleGenAI({
         apiKey,
+        apiVersion: "v1beta",
         httpOptions: {
           headers: {
             "User-Agent": "aistudio-build",
@@ -1220,6 +1227,28 @@ Aşağıdaki Ünitelendirilmiş Yıllık Plan metnini incele ve planda yer alan 
       });
     }
   });
+
+  // Global JSON error handler for /api/* routes (e.g., PayloadTooLargeError)
+  app.use(
+    (
+      err: Error & { status?: number; type?: string },
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction
+    ) => {
+      if (req.path.startsWith("/api/")) {
+        const status = err.status || 500;
+        res.status(status).json({
+          error:
+            err.type === "entity.too.large"
+              ? "Gönderilen veri boyutu çok büyük. Lütfen tekrar deneyin."
+              : err.message || "Sunucu isteği işlerken bir hata oluştu.",
+        });
+        return;
+      }
+      next(err);
+    }
+  );
 
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
