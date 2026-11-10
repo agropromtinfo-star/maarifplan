@@ -679,7 +679,7 @@ ${
     : ""
 }
 --- [1D] ÜNİTELENDİRİLMİŞ YILLIK PLAN (yillik_plan) METNİ ---
-${truncateSafely(inputs.yillik_plan, 35000)}`;
+${truncateSafely(inputs.yillik_plan, 8000)}`;
 
   const part3DersBilgiFormuContext = hasDersBilgiFormu
     ? `====================================================================
@@ -707,7 +707,7 @@ ${
     : ""
 }
 --- [2C] DERS BİLGİ FORMU (ders_bilgi_formu) METNİ ---
-${truncateSafely(inputs.ders_bilgi_formu!, 35000)}`
+${truncateSafely(inputs.ders_bilgi_formu!, 8000)}`
     : `====================================================================
 BAĞLAM 2: DERS BİLGİ FORMU (ders_bilgi_formu) BİLGİSİ
 ====================================================================
@@ -731,7 +731,7 @@ ${
     : ""
 }
 --- [3B] DERS MATERYALİ (ders_materyali) METNİ ---
-${truncateSafely(inputs.ders_materyali, 35000)}`;
+${truncateSafely(inputs.ders_materyali, 8000)}`;
 
   const part5SynthesisInstructions = `====================================================================
 DOKÜMANLAR ARASI ÇAPRAZ EŞLEŞTİRME VE KONTROL LİSTESİ (ZORUNLU)
@@ -1068,7 +1068,7 @@ async function generateWithFallback(
     apiVersion: "v1beta",
     httpOptions: {
       retryOptions: { attempts: 1 },
-      timeout: 18000,
+      timeout: 8000,
       headers: {
         "User-Agent": "aistudio-build",
       },
@@ -1076,27 +1076,34 @@ async function generateWithFallback(
   });
 
   const candidateModels = [
-    { name: "gemini-3.8-flash", useThinkingConfig: true },
-    { name: "gemini-flash-latest", useThinkingConfig: false },
-    { name: "gemini-3.1-flash-lite", useThinkingConfig: false },
+    { name: "gemini-flash-latest", useThinkingConfig: false, maxMs: 7500 },
+    { name: "gemini-3.8-flash", useThinkingConfig: true, maxMs: 6500 },
   ];
 
   let lastError: unknown = null;
 
   for (const candidate of candidateModels) {
     try {
-      const response = await ai.models.generateContent({
-        model: candidate.name,
-        contents,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema,
-          ...(candidate.useThinkingConfig
-            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-            : {}),
-        },
-      });
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: candidate.name,
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema,
+            ...(candidate.useThinkingConfig
+              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+              : {}),
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Model ${candidate.name} timed out`)),
+            candidate.maxMs
+          )
+        ),
+      ]);
 
       const rawText = (response.text ?? "").trim();
       if (rawText) {
