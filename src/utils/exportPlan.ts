@@ -66,10 +66,9 @@ export function downloadWordDoc(
     Farklilastirma: fark,
   } = plan;
 
-  const okulAdi = (
-    meta?.okulAdi?.trim() ||
-    "SEYDİŞEHİR ILICA TİCARET MESLEKİ VE TEKNİK ANADOLU LİSESİ"
-  ).toLocaleUpperCase("tr-TR");
+  const okulAdi = meta?.okulAdi?.trim()
+    ? meta.okulAdi.trim().toLocaleUpperCase("tr-TR")
+    : "";
   const dersIsmi = (meta?.dersIsmi?.trim() || db.Ders || "DERS").toLocaleUpperCase(
     "tr-TR"
   );
@@ -80,12 +79,16 @@ export function downloadWordDoc(
   ).toLocaleUpperCase("tr-TR");
 
   const haftaEtiketi = meta?.haftaEtiketi?.trim() || "1. HAFTA";
-  const tarihAraligi = meta?.tarihAraligi?.trim() || "14 - 18 Eylül";
-  const haftaSatiri = tarihAraligi
-    ? `${haftaEtiketi} (${tarihAraligi})`
-    : haftaEtiketi;
+  const tarihAraligi = meta?.tarihAraligi?.trim() || "";
+  const isRedundantDate =
+    !tarihAraligi ||
+    tarihAraligi.toLocaleLowerCase("tr-TR") ===
+      haftaEtiketi.toLocaleLowerCase("tr-TR");
+  const haftaSatiri = isRedundantDate
+    ? haftaEtiketi
+    : `${haftaEtiketi} (${tarihAraligi})`;
 
-  const onayTarihi = meta?.onayTarihi?.trim() || "14/09/2026";
+  const onayTarihi = meta?.onayTarihi?.trim() || "..../..../202...";
   const ogretmenAdSoyad = meta?.ogretmenAdSoyad?.trim() || "........................";
   const ogretmenBransi = meta?.ogretmenBransi?.trim() || "Ders Öğretmeni";
   const okulMuduruAdSoyad = meta?.okulMuduruAdSoyad?.trim() || "........................";

@@ -65,14 +65,13 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
 
-  const displayOkulAdi = (
-    meta.okulAdi.trim() ||
-    "SEYDİŞEHİR ILICA TİCARET MESLEKİ VE TEKNİK ANADOLU LİSESİ"
-  ).toLocaleUpperCase("tr-TR");
+  const displayOkulAdi = meta.okulAdi.trim()
+    ? meta.okulAdi.trim().toLocaleUpperCase("tr-TR")
+    : "";
   const displayDers = (
     meta.dersIsmi.trim() ||
     plan.Ders_Bilgisi.Ders ||
-    "TARIM (BİTKİ ÜRETİM YÖNTEMLERİ)"
+    "DERS"
   ).toLocaleUpperCase("tr-TR");
   const displaySinif = (
     meta.sinifDuzeyi.trim() ||
@@ -81,12 +80,16 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
   ).toLocaleUpperCase("tr-TR");
 
   const haftaEtiketi = meta.haftaEtiketi?.trim() || "1. HAFTA";
-  const tarihAraligi = meta.tarihAraligi?.trim() || "14 - 18 Eylül";
-  const displayHaftaSatiri = tarihAraligi
-    ? `${haftaEtiketi} (${tarihAraligi})`
-    : haftaEtiketi;
+  const tarihAraligi = meta.tarihAraligi?.trim() || "";
+  const isRedundantDate =
+    !tarihAraligi ||
+    tarihAraligi.toLocaleLowerCase("tr-TR") ===
+      haftaEtiketi.toLocaleLowerCase("tr-TR");
+  const displayHaftaSatiri = isRedundantDate
+    ? haftaEtiketi
+    : `${haftaEtiketi} (${tarihAraligi})`;
 
-  const displayOnayTarihi = meta.onayTarihi?.trim() || "14/09/2026";
+  const displayOnayTarihi = meta.onayTarihi?.trim() || "..../..../202...";
   const displayOgretmenAd = meta.ogretmenAdSoyad.trim() || "........................";
   const displayOgretmenBrans = meta.ogretmenBransi.trim() || "Ders Öğretmeni";
   const displayOkulMuduru = meta.okulMuduruAdSoyad.trim() || "........................";
