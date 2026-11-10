@@ -20,36 +20,25 @@ const upload = multer({
   },
 });
 
-const SYSTEM_INSTRUCTION = `Sen uzman bir meslek ve atölye dersleri öğretmenisin ve MEB Türkiye Yüzyılı Maarif Modeli öğretim programları konusunda uzmansın.
-Temel görevin, kullanıcının sağladığı 3 temel dokümanı:
-1) 'Ünitelendirilmiş Yıllık Plan' (yillik_plan),
-2) 'Ders Bilgi Formu' (ders_bilgi_formu),
-3) 'Ders Materyali / Kitabı / Modülü' (ders_materyali)
-birlikte inceleyerek, kullanıcının seçtiği HAFTA ve TARİH ARALIĞI için resmî MEB Türkiye Yüzyılı Maarif Modeli formatında eksiksiz bir Günlük Ders Planı oluşturmaktır.
+const SYSTEM_INSTRUCTION = `Sen uzman bir meslek ve kültür dersleri öğretmenisin ve MEB Türkiye Yüzyılı Maarif Modeli öğretim programları konusunda uzmansın.
+Sana her çağrıda birbirinden farklı işleve sahip 3 ayrı kaynak doküman, açık bağlam etiketleriyle (Context Blocks) sunulacaktır:
 
-KRİTİK VERİ ÇEKME VE BİRLEŞTİRME KURALLARI:
-1. SEÇİLEN HAFTA VE TARİH ODAĞI: Kullanıcının seçtiği Hafta (örn. "1. HAFTA") ve Tarih Aralığı (örn. "14 - 18 Eylül") için Yıllık Plan içindeki ilgili satırı/bölümü bul.
-2. DERS BİLGİSİ VE PROGRAMLAR ARASI BİLEŞENLER:
-   - 'Sinif', 'Ders', 'Ogrenme_Birimi', 'Sure', 'Alan_Becerileri', 'Egilimler' (örn: "E2.2. Sorumluluk, E3.2. Odaklanma") alanlarını doğrudan Yıllık Plan ve Ders Bilgi Formundan birebir al.
-   - 'Programlar_Arasi_Bilesenler' altındaki 'Sosyal_Duygusal_Ogrenme_Becerileri' (örn: "SDB2.2. İş Birliği Becerisi, SDB3.3. Sorumlu Karar Verme Becerisi"), 'Degerler' (örn: "D12. Sabır, D16. Sorumluluk, D18. Temizlik"), 'Okuryazarlik_Becerileri' (örn: "OB1. Bilgi okuryazarlığı"), 'Disiplinler_Arasi_Iliski' (örn: "Fen Bilimleri") ve 'Beceriler_Arasi_Iliski' (örn: "KB2.11. Gözleme Dayalı Tahmin Etme Becerisi, KB3.2. Problem Çözme Becerisi") alanlarını kodları ve tam isimleriyle Yıllık Plan ve Ders Bilgi Formundan birebir al.
-3. ÖĞRENME ÇIKTILARI VE İÇERİK ÇERÇEVESİ:
-   - 'Ogrenme_Ciktilari_ve_Surec_Bilesenleri' alanına seçilen haftanın öğrenme çıktısını (kazanım kodu ve tam cümlesi, örn: "BÜY.1.1. Generatif bitki organlarını sıralar.") ve altındaki süreç bileşenlerini ("a) ...", "b) ...") alt alta satırlar halinde birebir Yıllık Plan ve Ders Bilgi Formundan aktar.
-   - 'Icerik_Cercevesi' alanına seçilen haftanın konu/içerik çerçevesi başlığını (örn: "Generatif Bitki Organları") birebir aktar.
-4. ÖĞRENME KANITLARI:
-   - 'Ogrenme_Kanitlari' alanına Ders Bilgi Formunda ve Yıllık Planda yer alan ölçme-değerlendirme paragrafını (gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği, dereceli puanlama anahtarı/rubrik, uygulama/proje değerlendirme süreçlerini içeren kapsamlı metni) aktar ve seçilen haftanın konusuyla bütünleştir.
-5. ÖĞRENME-ÖĞRETME YAŞANTILARI:
-   - 'Temel_Kabuller', 'On_Degerlendirme_Sureci' ve 'Kopru_Kurma' alanlarını doğrudan Ders Bilgi Formundaki ilgili öğrenme birimi açıklamalarından al (yoksa ders materyaline uygun oluştur).
-   - 'Ogretme_Uygulamalari' dizisine Ders Bilgi Formunda ve Yıllık Planda yer alan öğretme-öğrenme uygulamaları maddelerini (maddelerin sonundaki "(KB2.11, E2.2, E3.2, D12.3, D16.3, D18.3, SDB2.2, SDB3.3, OB1)" gibi parantez içi bileşen kodlarını da koruyarak) ve Ders Materyalindeki uygulama adımlarını detaylı maddeler halinde yaz.
-   - 'Guduleme' dizisine seçilen haftanın konusu ve Ders Materyaliyle uyumlu, öğrenciyi derse ve mesleki uygulamaya hazırlayan 4 güçlü güdüleme cümlesi ("Bu derste...", "Edineceğiniz bilgiler sayesinde..." vb.) yaz.
-   - 'Dikkat_Cekme' dizisine seçilen haftanın konusu ve Ders Materyaliyle ilgili, öğrencide merak uyandıran 4 düşündürücü soru cümlesi yaz.
-   - 'Ek_Ogretme_Uygulamalari' dizisine Ders Materyalindeki konuyu atölye/laboratuvar/sınıf ortamında pekiştiren 5 somut uygulama maddesi yaz ve her maddenin sonuna ilgili Maarif Modeli bileşen kodlarını parantez içinde ekle (örn: "(E3.2, OB1)", "(KB2.11)", "(SDB2.2, E2.2)", "(D16.3, D18.3)").`;
+1) [BAĞLAM 1 - ÜNİTELENDİRİLMİŞ YILLIK PLAN (yillik_plan)]:
+   - Bu metin dersin haftalık zaman çizelgesidir.
+   - Kullanıcının seçtiği HAFTA ve TARİH ARALIĞI'nda hangi 'Öğrenme Birimi', hangi 'Öğrenme Çıktıları ve Süreç Bileşenleri (a, b, c...)', hangi 'İçerik Çerçevesi (Konu)', kaç ders saati ('Süre') ve hangi Maarif bileşenlerinin işleneceğini belirleyen birincil zaman tablosudur.
 
-const OUTPUT_FORMATTING_RULES = [
-  "Çıktıyı kesinlikle aşağıdaki JSON şemasına uygun olarak üret.",
-  "Seçilen hafta ve tarihe ait Öğrenme Çıktıları ve Süreç Bileşenlerini, Öğrenme Birimini, Süreyi, İçerik Çerçevesini, Alan Becerilerini, Eğilimleri ve Programlar Arası Bileşenleri doğrudan 'yillik_plan' ve 'ders_bilgi_formu' dokümanlarından birebir al.",
-  "Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma, Öğrenme Kanıtları ve Öğretme Uygulamaları bölümlerinde 'ders_bilgi_formu' ve 'ders_materyali' verilerini esas al; parantez içi beceri/değer/eğilim kodlarını (KB..., E..., D..., SDB..., OB...) koru.",
-  "Güdüleme (4 madde), Dikkat Çekme (4 soru maddesi) ve Ek Öğretme Uygulamaları (sonunda parantez içi bileşen kodları bulunan 5 uygulama maddesi) bölümlerini 'ders_materyali' içeriğine göre zenginleştir.",
-];
+2) [BAĞLAM 2 - DERS BİLGİ FORMU / ÖĞRETİM PROGRAMI (ders_bilgi_formu)]:
+   - Bu metin MEB Türkiye Yüzyılı Maarif Modeli resmi öğretim programı / ders bilgi formudur.
+   - Seçilen haftanın Öğrenme Birimi ve Öğrenme Çıktısına ait resmi 'Öğrenme Çıktıları ve Süreç Bileşenleri', 'Alan Becerileri', 'Eğilimler (E...)', 'Programlar Arası Bileşenler (SDB..., D..., OB..., Disiplinler Arası İlişki, KB...)', 'Öğrenme Kanıtları (Ölçme-Değerlendirme)', 'Temel Kabuller', 'Ön Değerlendirme Süreci', 'Köprü Kurma', 'Öğretme-Öğrenme Uygulamaları' ve 'Farklılaştırma' metinlerinin birincil resmi kaynağıdır.
+
+3) [BAĞLAM 3 - DERS MATERYALİ / DERS KİTABI / MODÜL (ders_materyali)]:
+   - Bu metin o hafta derste işlenecek konu anlatımı, ders kitabı bölümü, modül veya atölye/laboratuvar uygulama föyüdür.
+   - Bu doküman; konuya özgü 'Güdüleme' (4 madde), 'Dikkat Çekme' (4 düşündürücü soru), 'Ek Öğretme Uygulamaları' (sonunda parantez içi Maarif kodları olan 5 somut sınıf/atölye/laboratuvar uygulaması) üretmek ve 'Öğretme Uygulamaları' ile 'Öğrenme Kanıtları' bölümlerini konunun teknik detaylarıyla zenginleştirmek için kullanılır.
+
+KESİN VERİ İŞLEME KURALLARI:
+- Öğrenme çıktılarını, kazanım kodlarını (örn: BÜY.1.1., TAR.1.1., BİL.9.1.2. vb.) ve a), b), c) süreç bileşenlerini ASLA uydurma; doğrudan BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) metinlerinden seçilen hafta için birebir al.
+- Eğilimler (E...), Sosyal-Duygusal Öğrenme Becerileri (SDB...), Değerler (D...), Okuryazarlık Becerileri (OB...) ve Beceriler Arası İlişki (KB...) kodlarını ve isimlerini BAĞLAM 1 ve BAĞLAM 2'den birebir koru.
+- 'Ogretme_Uygulamalari' maddelerinin sonunda yer alan parantez içi bileşen kodlarını (örn: "(KB2.11, E2.2, E3.2, D12.3, D16.3, D18.3, SDB2.2, SDB3.3, OB1)") BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) metninden koruyarak aktar ve BAĞLAM 3 (Ders Materyali) ile bütünleştir.`;
 
 const LESSON_PLAN_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -59,27 +48,33 @@ const LESSON_PLAN_RESPONSE_SCHEMA = {
       properties: {
         Sinif: {
           type: Type.STRING,
-          description: "Sınıf düzeyi (Örn: '9. SINIF').",
+          description:
+            "BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) içinden alınan Sınıf düzeyi (Örn: '9. SINIF').",
         },
         Ders: {
           type: Type.STRING,
-          description: "Dersin tam adı (Örn: 'TARIM (BİTKİ ÜRETİM YÖNTEMLERİ)').",
+          description:
+            "BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) içinden alınan Dersin tam adı (Örn: 'TARIM (BİTKİ ÜRETİM YÖNTEMLERİ)').",
         },
         Ogrenme_Birimi: {
           type: Type.STRING,
-          description: "Seçilen haftanın Öğrenme Birimi (Örn: 'Generatif üretim').",
+          description:
+            "Seçilen hafta için BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) içinden alınan Öğrenme Birimi (Örn: 'Generatif üretim').",
         },
         Sure: {
           type: Type.STRING,
-          description: "Seçilen haftanın ders saati süresi (Örn: '3 Ders Saati').",
+          description:
+            "Seçilen hafta için BAĞLAM 1 (Yıllık Plan) içinden alınan ders saati süresi (Örn: '3 Ders Saati').",
         },
         Alan_Becerileri: {
           type: Type.STRING,
-          description: "Yıllık plan ve ders bilgi formundaki Alan Becerileri (Örn: 'Bitkilerde üretim yapma').",
+          description:
+            "BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) içinden alınan Alan Becerileri (Örn: 'Bitkilerde üretim yapma').",
         },
         Egilimler: {
           type: Type.STRING,
-          description: "Kodları ve adlarıyla Eğilimler (Örn: 'E2.2. Sorumluluk, E3.2. Odaklanma').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden kodları ve adlarıyla alınan Eğilimler (Örn: 'E2.2. Sorumluluk, E3.2. Odaklanma').",
         },
       },
       required: [
@@ -96,23 +91,28 @@ const LESSON_PLAN_RESPONSE_SCHEMA = {
       properties: {
         Sosyal_Duygusal_Ogrenme_Becerileri: {
           type: Type.STRING,
-          description: "Kodları ve adlarıyla Sosyal-Duygusal Öğrenme Becerileri (Örn: 'SDB2.2. İş Birliği Becerisi, SDB3.3. Sorumlu Karar Verme Becerisi').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden kodları ve adlarıyla alınan Sosyal-Duygusal Öğrenme Becerileri (Örn: 'SDB2.2. İş Birliği Becerisi, SDB3.3. Sorumlu Karar Verme Becerisi').",
         },
         Degerler: {
           type: Type.STRING,
-          description: "Kodları ve adlarıyla Değerler (Örn: 'D12. Sabır, D16. Sorumluluk, D18. Temizlik').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden kodları ve adlarıyla alınan Değerler (Örn: 'D12. Sabır, D16. Sorumluluk, D18. Temizlik').",
         },
         Okuryazarlik_Becerileri: {
           type: Type.STRING,
-          description: "Kodları ve adlarıyla Okuryazarlık Becerileri (Örn: 'OB1. Bilgi okuryazarlığı').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden kodları ve adlarıyla alınan Okuryazarlık Becerileri (Örn: 'OB1. Bilgi okuryazarlığı').",
         },
         Disiplinler_Arasi_Iliski: {
           type: Type.STRING,
-          description: "Disiplinler Arası İlişki (Örn: 'Fen Bilimleri').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden alınan Disiplinler Arası İlişki (Örn: 'Fen Bilimleri').",
         },
         Beceriler_Arasi_Iliski: {
           type: Type.STRING,
-          description: "Kodları ve adlarıyla Beceriler Arası İlişki / Kavramsal Beceriler (Örn: 'KB2.11. Gözleme Dayalı Tahmin Etme Becerisi, KB3.2. Problem Çözme Becerisi').",
+          description:
+            "BAĞLAM 1 ve BAĞLAM 2 içinden kodları ve adlarıyla alınan Beceriler Arası İlişki / Kavramsal Beceriler (Örn: 'KB2.11. Gözleme Dayalı Tahmin Etme Becerisi, KB3.2. Problem Çözme Becerisi').",
         },
       },
       required: [
@@ -126,56 +126,59 @@ const LESSON_PLAN_RESPONSE_SCHEMA = {
     Ogrenme_Ciktilari_ve_Surec_Bilesenleri: {
       type: Type.STRING,
       description:
-        "Seçilen haftanın Öğrenme Çıktısı (kazanım kodu ve metni) ve alt satırlarda a), b), c) Süreç Bileşenleri. Örn:\nBÜY.1.1. Generatif bitki organlarını sıralar.\na) Generatif üretim açıklanır.\nb) Çiçek tipleri sıralanır.",
+        "Seçilen hafta için doğrudan BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) metinlerinden birebir alınan Öğrenme Çıktısı (kazanım kodu ve cümlesi) ile alt satırlardaki a), b), c) Süreç Bileşenleri. Örn:\nBÜY.1.1. Generatif bitki organlarını sıralar.\na) Generatif üretim açıklanır.\nb) Çiçek tipleri sıralanır.",
     },
     Icerik_Cercevesi: {
       type: Type.STRING,
       description:
-        "Seçilen haftanın İçerik Çerçevesi / Konu başlığı (Örn: 'Generatif Bitki Organları').",
+        "Seçilen hafta için BAĞLAM 1 (Yıllık Plan) ve BAĞLAM 2 (Ders Bilgi Formu) içinden alınan İçerik Çerçevesi / Konu başlığı (Örn: 'Generatif Bitki Organları').",
     },
     Ogrenme_Kanitlari: {
       type: Type.STRING,
       description:
-        "Ders Bilgi Formu ve Yıllık Plandaki Öğrenme Kanıtları (gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği, dereceli puanlama anahtarı ve uygulama değerlendirme süreçlerini anlatan kapsamlı paragraf).",
+        "BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içindeki Öğrenme Kanıtları / Ölçme-Değerlendirme açıklamalarının, BAĞLAM 3 (Ders Materyali) konusuyla bütünleştirilmiş kapsamlı paragrafı (gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği, dereceli puanlama anahtarı ve uygulama değerlendirme süreçlerini içeren tam metin).",
     },
     Ogrenme_Ogretme_Yasantilari: {
       type: Type.OBJECT,
       properties: {
         Temel_Kabuller: {
           type: Type.STRING,
-          description: "Ders Bilgi Formundan alınan Temel Kabuller cümlesi.",
+          description:
+            "BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içinden alınan Temel Kabuller cümlesi.",
         },
         On_Degerlendirme_Sureci: {
           type: Type.STRING,
-          description: "Ders Bilgi Formundan alınan Ön Değerlendirme Süreci cümlesi.",
+          description:
+            "BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içinden alınan Ön Değerlendirme Süreci cümlesi.",
         },
         Kopru_Kurma: {
           type: Type.STRING,
-          description: "Ders Bilgi Formundan alınan Köprü Kurma cümlesi.",
+          description:
+            "BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içinden alınan Köprü Kurma cümlesi.",
         },
         Ogretme_Uygulamalari: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
           description:
-            "Ders Bilgi Formu, Yıllık Plan ve Ders Materyalinden alınan Öğretme Uygulamaları maddeleri (başında * olmadan düz metin olarak; parantez içi KB, E, D, SDB, OB kodları korunarak).",
+            "BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içindeki Öğretme-Öğrenme Uygulamaları maddeleri ile BAĞLAM 3 (Ders Materyali) uygulama adımlarının birleşimi (başında * olmadan düz metin; parantez içi KB, E, D, SDB, OB kodları korunarak).",
         },
         Guduleme: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
           description:
-            "Öğrenciyi derse ve mesleki uygulamaya güdüleyen 4 madde (başında * olmadan düz metin).",
+            "BAĞLAM 3 (Ders Materyali) ve seçilen haftanın öğrenme çıktısına dayalı, öğrenciyi derse ve mesleki uygulamaya güdüleyen 4 madde (başında * olmadan düz metin).",
         },
         Dikkat_Cekme: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
           description:
-            "Öğrencinin ilgisini konuya çeken 4 soru maddesi (başında * olmadan düz metin).",
+            "BAĞLAM 3 (Ders Materyali) konusuna dayalı, öğrencinin ilgisini derse çeken 4 düşündürücü soru maddesi (başında * olmadan düz metin).",
         },
         Ek_Ogretme_Uygulamalari: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
           description:
-            "Ders Materyaline dayalı 5 somut sınıf/laboratuvar/atölye ek öğretme uygulaması maddesi; her maddenin sonunda parantez içinde ilgili Maarif Modeli kodları (örn: '(E3.2, OB1)', '(KB2.11)', '(D16.3, D18.3)') yer almalıdır.",
+            "BAĞLAM 3 (Ders Materyali) içeriğine dayalı 5 somut sınıf/laboratuvar/atölye ek öğretme uygulaması maddesi; her maddenin sonunda parantez içinde ilgili Maarif Modeli kodları (örn: '(E3.2, OB1)', '(KB2.11)', '(D16.3, D18.3)') yer almalıdır.",
         },
       },
       required: [
@@ -191,7 +194,7 @@ const LESSON_PLAN_RESPONSE_SCHEMA = {
     Farklilastirma: {
       type: Type.STRING,
       description:
-        "Ders Bilgi Formunda yer alan Zenginleştirme ve Destekleme (Farklılaştırma) açıklamaları.",
+        "BAĞLAM 2 (Ders Bilgi Formu) veya BAĞLAM 1 (Yıllık Plan) içinde yer alan Zenginleştirme ve Destekleme (Farklılaştırma) açıklamaları.",
     },
   },
   required: [
@@ -251,7 +254,7 @@ const WEEKS_EXTRACTION_SCHEMA = {
           },
           konuVeCiktiOzeti: {
             type: Type.STRING,
-            description: "O haftanın Öğrenme Çıktısı / Kazanımı ve İçerik Çerçevesi özeti (Örn: 'BÜY.1.1. Generatif bitki organlarını sıralar. - Generatif Bitki Organları').",
+            description: "O haftanın Öğrenme Çıktısı / Kazanımı (a, b, c süreç bileşenleri dahil) ve İçerik Çerçevesi özeti.",
           },
           sure: {
             type: Type.STRING,
@@ -273,7 +276,7 @@ const WEEKS_EXTRACTION_SCHEMA = {
   required: ["okulAdi", "dersIsmi", "sinifDuzeyi", "egitimOgretimYili", "weeks"],
 };
 
-function truncateSafely(text: string, maxChars = 120000): string {
+function truncateSafely(text: string, maxChars = 110000): string {
   const trimmed = text.trim();
   if (trimmed.length <= maxChars) return trimmed;
   return (
@@ -309,8 +312,7 @@ function inferApprovalDate(dateRange: string, defaultYear = 2026): string {
   const day = dayMatch ? dayMatch[1].padStart(2, "0") : "14";
   for (const [mName, mNum] of Object.entries(TURKISH_MONTHS)) {
     if (lower.includes(mName)) {
-      const year =
-        Number(mNum) >= 9 ? defaultYear : defaultYear + 1;
+      const year = Number(mNum) >= 9 ? defaultYear : defaultYear + 1;
       return `${day}/${mNum}/${year}`;
     }
   }
@@ -339,17 +341,20 @@ function parseWeeksRegexFallback(text: string) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Match patterns like "1. HAFTA (14 - 18 Eylül)", "1. Hafta | 14-18 Eylül", "1.HAFTA"
     const m = line.match(/(\d{1,2})\s*\.\s*HAFTA(?:\s*\(?([^)|]+)\)?)?/i);
     if (m) {
       const wNo = Number(m[1]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
         let datePart = (m[2] || "").trim();
-        if (!datePart && lines[i + 1] && /\d{1,2}\s*[-–]\s*\d{1,2}/.test(lines[i + 1])) {
+        if (
+          !datePart &&
+          lines[i + 1] &&
+          /\d{1,2}\s*[-–]\s*\d{1,2}/.test(lines[i + 1])
+        ) {
           datePart = lines[i + 1].trim();
         }
-        const contextSlice = lines.slice(i, i + 4).join(" | ");
+        const contextSlice = lines.slice(i, i + 5).join(" | ");
         weeks.push({
           id: `week-${wNo}`,
           haftaNo: wNo,
@@ -357,7 +362,7 @@ function parseWeeksRegexFallback(text: string) {
           tarihAraligi: datePart || `${wNo}. Hafta`,
           onayTarihi: inferApprovalDate(datePart),
           ogrenmeBirimi: "",
-          konuVeCiktiOzeti: contextSlice.slice(0, 140),
+          konuVeCiktiOzeti: contextSlice.slice(0, 180),
           sure: "",
         });
       }
@@ -367,12 +372,176 @@ function parseWeeksRegexFallback(text: string) {
   return weeks.sort((a, b) => a.haftaNo - b.haftaNo);
 }
 
+/**
+ * Pre-extracts the focused window for the selected week & date range from 'yillik_plan'
+ * so the model immediately sees the target week's learning outcomes, unit, and components.
+ */
+function extractSelectedWeekWindowFromYillikPlan(
+  yillikPlanText: string,
+  haftaEtiketi?: string,
+  tarihAraligi?: string
+): string {
+  const lines = yillikPlanText.split(/\r?\n/);
+  const weekNumMatch = (haftaEtiketi || "").match(/(\d{1,2})/);
+  const targetWeekNo = weekNumMatch ? Number(weekNumMatch[1]) : null;
+  const normalizedDate = (tarihAraligi || "").trim().toLowerCase();
+
+  const matchedIndices: number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lower = line.toLowerCase();
+
+    if (targetWeekNo !== null) {
+      const weekRegex = new RegExp(
+        `\\b${targetWeekNo}\\s*\\.\\s*hafta\\b`,
+        "i"
+      );
+      if (weekRegex.test(line)) {
+        matchedIndices.push(i);
+        continue;
+      }
+    }
+
+    if (normalizedDate.length >= 4 && lower.includes(normalizedDate)) {
+      matchedIndices.push(i);
+    }
+  }
+
+  if (matchedIndices.length === 0) {
+    return "Yıllık plan içinde seçilen hafta başlığı doğrudan tek satırda eşleşmedi; lütfen aşağıdaki tam yıllık plan metninden ilgili hafta/tarih satırını bulunuz.";
+  }
+
+  const excerpts: string[] = [];
+  for (const idx of matchedIndices.slice(0, 3)) {
+    const start = Math.max(0, idx - 3);
+    let end = Math.min(lines.length, idx + 35);
+
+    // Stop if we hit the next week's header
+    if (targetWeekNo !== null) {
+      const nextWeekRegex = new RegExp(
+        `\\b${targetWeekNo + 1}\\s*\\.\\s*hafta\\b`,
+        "i"
+      );
+      for (let j = idx + 1; j < end; j++) {
+        if (nextWeekRegex.test(lines[j])) {
+          end = Math.min(lines.length, j + 2);
+          break;
+        }
+      }
+    }
+
+    excerpts.push(lines.slice(start, end).join("\n").trim());
+  }
+
+  return excerpts.join("\n---\n");
+}
+
+/**
+ * Extracts explicit Maarif Modeli Learning Outcome blocks (e.g., BÜY.1.1., TAR.1.2., FİZ.9.1.1. and a), b), c) process steps)
+ * and Component codes (E..., SDB..., D..., OB..., KB...) from a document text to anchor the model.
+ */
+function extractDetectedOutcomesAndCodes(text: string): {
+  outcomeBlocks: string[];
+  maarifCodes: string[];
+} {
+  if (!text || !text.trim()) {
+    return { outcomeBlocks: [], maarifCodes: [] };
+  }
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const outcomeBlocks: string[] = [];
+
+  // Match outcome codes like "BÜY.1.1.", "TAR.9.1.1.", "9.1.1.", "ÖÇ.1.1." or lines right after "Öğrenme Çıktıları"
+  const outcomeCodeRegex =
+    /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.)?\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\.?\s+[A-ZÇĞİÖŞÜa-zçğıöşü]/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+
+    const isHeaderLine =
+      /öğrenme\s+çıktı|süreç\s+bileşen|kazanım/i.test(line) &&
+      line.length < 120;
+
+    if (outcomeCodeRegex.test(line) || isHeaderLine) {
+      const blockLines: string[] = [line];
+      for (let j = i + 1; j < Math.min(lines.length, i + 12); j++) {
+        const nextLine = lines[j];
+        if (!nextLine) continue;
+        // Include process components a), b), c), ç), d) or continuation lines
+        if (
+          /^[a-zçğıöşü]\)\s+/i.test(nextLine) ||
+          outcomeCodeRegex.test(nextLine) ||
+          nextLine.length < 180
+        ) {
+          blockLines.push(nextLine);
+        } else {
+          break;
+        }
+      }
+      const joined = blockLines.join("\n");
+      if (!outcomeBlocks.includes(joined)) {
+        outcomeBlocks.push(joined);
+      }
+      if (outcomeBlocks.length >= 12) break;
+    }
+  }
+
+  // Extract Maarif component codes (E2.2, SDB2.2, D12, OB1, KB2.11, AB1...)
+  const codeMatches =
+    text.match(/\b(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\b/g) || [];
+  const uniqueCodes = Array.from(new Set(codeMatches)).slice(0, 40);
+
+  return {
+    outcomeBlocks,
+    maarifCodes: uniqueCodes,
+  };
+}
+
+/**
+ * Finds the most relevant section in 'ders_bilgi_formu' matching the selected week's unit or learning outcome.
+ */
+function extractMatchingSectionFromDocument(
+  docText: string,
+  searchTerms: string[],
+  windowLines = 45
+): string {
+  if (!docText || !docText.trim()) return "";
+  const validTerms = searchTerms
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+
+  if (validTerms.length === 0) return "";
+
+  const lines = docText.split(/\r?\n/);
+  const matchedSnippets: string[] = [];
+
+  for (const term of validTerms) {
+    const lowerTerm = term.toLowerCase();
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(lowerTerm)) {
+        const start = Math.max(0, i - 4);
+        const end = Math.min(lines.length, i + windowLines);
+        const snippet = lines.slice(start, end).join("\n").trim();
+        if (snippet && !matchedSnippets.includes(snippet)) {
+          matchedSnippets.push(snippet);
+        }
+        break;
+      }
+    }
+    if (matchedSnippets.length >= 3) break;
+  }
+
+  return matchedSnippets.join("\n\n---\n\n");
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Resilient multi-model generator with exponential backoff to prevent 503 UNAVAILABLE errors
 async function generateWithFallback(
   ai: GoogleGenAI,
-  promptText: string,
+  contents: string | Array<{ text: string }>,
   systemInstruction: string,
   responseSchema: unknown
 ): Promise<string> {
@@ -389,7 +558,7 @@ async function generateWithFallback(
       try {
         const response = await ai.models.generateContent({
           model: candidate.name,
-          contents: promptText,
+          contents,
           config: {
             systemInstruction,
             responseMimeType: "application/json",
@@ -435,7 +604,7 @@ async function generateWithFallback(
   throw lastError ?? new Error("Yapay zeka servisine şu anda ulaşılamıyor.");
 }
 
-function buildStructuredPrompt(inputs: {
+interface ContextualPromptInputs {
   yillik_plan: string;
   ders_materyali: string;
   ders_bilgi_formu?: string;
@@ -446,47 +615,227 @@ function buildStructuredPrompt(inputs: {
   sinif_duzeyi?: string;
   okul_adi?: string;
   egitim_ogretim_yili?: string;
-}): string {
-  const secilenHaftaVeTarih = [
-    inputs.hafta_etiketi ? inputs.hafta_etiketi.trim() : "",
-    inputs.tarih_araligi ? `(${inputs.tarih_araligi.trim()})` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const ustBilgi = [
-    inputs.okul_adi ? `Okul Adı: ${inputs.okul_adi}` : "",
-    inputs.egitim_ogretim_yili
-      ? `Eğitim ve Öğretim Yılı: ${inputs.egitim_ogretim_yili}`
-      : "",
-    inputs.ders_ismi ? `Ders İsmi: ${inputs.ders_ismi}` : "",
-    inputs.sinif_duzeyi ? `Sınıf Düzeyi: ${inputs.sinif_duzeyi}` : "",
-    secilenHaftaVeTarih
-      ? `SEÇİLEN HAFTA VE TARİH: ${secilenHaftaVeTarih}`
-      : "",
-    inputs.onay_tarihi ? `Plan Onay Tarihi: ${inputs.onay_tarihi}` : "",
-  ]
-    .filter(Boolean)
-    .join(" | ");
-
-  const payload = {
-    task_description:
-      "Aşağıda sağlanan 1) Ünitelendirilmiş Yıllık Plan, 2) Ders Bilgi Formu ve 3) Ders Materyali dokümanlarını birlikte analiz et. Kullanıcının seçtiği HAFTA ve TARİH ARALIĞI için MEB Türkiye Yüzyılı Maarif Modeli resmi tablo formatına birebir uygun Günlük Ders Planı oluştur.",
-    secilen_hafta_ve_ust_bilgi:
-      ustBilgi ||
-      "1. HAFTA — Yıllık plan, ders bilgi formu ve ders materyalini eşleştirerek ilgili haftayı planlayınız.",
-    inputs: {
-      yillik_plan: truncateSafely(inputs.yillik_plan, 110000),
-      ders_bilgi_formu:
-        inputs.ders_bilgi_formu && inputs.ders_bilgi_formu.trim().length > 0
-          ? truncateSafely(inputs.ders_bilgi_formu, 110000)
-          : "Ayrı bir ders bilgi formu yüklenmedi; öğrenme çıktıları, süreç bileşenleri, programlar arası bileşenler, öğrenme kanıtları ve öğretme uygulamalarını doğrudan 'yillik_plan' ve 'ders_materyali' metinlerinden çıkarınız.",
-      ders_materyali: truncateSafely(inputs.ders_materyali, 110000),
-    },
-    output_formatting_rules: OUTPUT_FORMATTING_RULES,
+  secilen_hafta_verisi?: {
+    haftaNo?: number;
+    haftaEtiketi?: string;
+    tarihAraligi?: string;
+    ogrenmeBirimi?: string;
+    konuVeCiktiOzeti?: string;
+    sure?: string;
   };
+  dosya_adlari?: {
+    yillik_plan?: string | null;
+    ders_materyali?: string | null;
+    ders_bilgi_formu?: string | null;
+  };
+}
 
-  return JSON.stringify(payload, null, 2);
+/**
+ * Builds an explicitly contextualized multi-part prompt array so the model clearly understands
+ * the distinct role, authority, and extracted focus sections of:
+ * 1) 'yillik_plan' (Bu metin Ünitelendirilmiş Yıllık Plandır)
+ * 2) 'ders_bilgi_formu' (Bu metin MEB Ders Bilgi Formudur / Öğretim Programıdır)
+ * 3) 'ders_materyali' (Bu metin Ders Materyalidir / Ders Kitabı / Modül İçeriğidir)
+ */
+function buildContextualPromptParts(
+  inputs: ContextualPromptInputs
+): Array<{ text: string }> {
+  const secilenHaftaEtiketi = (inputs.hafta_etiketi || "1. HAFTA").trim();
+  const secilenTarihAraligi = (inputs.tarih_araligi || "").trim();
+  const haftaVeTarihBasligi = secilenTarihAraligi
+    ? `${secilenHaftaEtiketi} (${secilenTarihAraligi})`
+    : secilenHaftaEtiketi;
+
+  // 1. Extract focused window from Yıllık Plan for the selected week
+  const yillikPlanWeekWindow = extractSelectedWeekWindowFromYillikPlan(
+    inputs.yillik_plan,
+    secilenHaftaEtiketi,
+    secilenTarihAraligi
+  );
+
+  // 2. Detect outcome codes and process components in the selected week window & full Yıllık Plan
+  const weekWindowIntel = extractDetectedOutcomesAndCodes(yillikPlanWeekWindow);
+  const fullYillikIntel = extractDetectedOutcomesAndCodes(inputs.yillik_plan);
+
+  // Extract outcome code prefixes (like "BÜY.1.1") to search inside Ders Bilgi Formu and Ders Materyali
+  const outcomeSearchTerms: string[] = [];
+  if (inputs.secilen_hafta_verisi?.ogrenmeBirimi) {
+    outcomeSearchTerms.push(inputs.secilen_hafta_verisi.ogrenmeBirimi);
+  }
+  if (inputs.secilen_hafta_verisi?.konuVeCiktiOzeti) {
+    const codeMatch = inputs.secilen_hafta_verisi.konuVeCiktiOzeti.match(
+      /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.)?\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\b/
+    );
+    if (codeMatch) outcomeSearchTerms.push(codeMatch[0]);
+    outcomeSearchTerms.push(
+      inputs.secilen_hafta_verisi.konuVeCiktiOzeti.slice(0, 45)
+    );
+  }
+  for (const block of weekWindowIntel.outcomeBlocks) {
+    const firstLine = block.split("\n")[0] || "";
+    const codeMatch = firstLine.match(
+      /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.)?\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\b/
+    );
+    if (codeMatch) outcomeSearchTerms.push(codeMatch[0]);
+    if (firstLine.length >= 6) outcomeSearchTerms.push(firstLine.slice(0, 40));
+  }
+
+  // 3. Pre-locate matching unit & outcomes in Ders Bilgi Formu
+  const hasDersBilgiFormu = Boolean(
+    inputs.ders_bilgi_formu && inputs.ders_bilgi_formu.trim().length > 0
+  );
+  const dbfIntel = hasDersBilgiFormu
+    ? extractDetectedOutcomesAndCodes(inputs.ders_bilgi_formu!)
+    : { outcomeBlocks: [], maarifCodes: [] };
+  const dbfFocusedSection = hasDersBilgiFormu
+    ? extractMatchingSectionFromDocument(
+        inputs.ders_bilgi_formu!,
+        outcomeSearchTerms,
+        60
+      )
+    : "";
+
+  // 4. Pre-locate matching topic section in Ders Materyali
+  const materyalFocusedSection = extractMatchingSectionFromDocument(
+    inputs.ders_materyali,
+    outcomeSearchTerms,
+    50
+  );
+
+  // Part 1: Task & Selected Week Context Header
+  const part1TaskHeader = `====================================================================
+GÖREV VE HEDEF HAFTA BAĞLAMI (PLANLANACAK DERSİN KİMLİĞİ)
+====================================================================
+Aşağıda sana 3 farklı pedagojik doküman her birinin bağlamı (context) açıkça belirtilerek sunulmaktadır:
+- 1. Doküman Bağlamı: ÜNİTELENDİRİLMİŞ YILLIK PLAN (yillik_plan)
+- 2. Doküman Bağlamı: MEB DERS BİLGİ FORMU / ÖĞRETİM PROGRAMI (ders_bilgi_formu)
+- 3. Doküman Bağlamı: DERS MATERYALİ / DERS KİTABI / MODÜL (ders_materyali)
+
+KULLANICININ PLANLAMAK İSTEDİĞİ HEDEF HAFTA VE ÜST BİLGİLER:
+- Seçilen Hafta ve Tarih Aralığı: ${haftaVeTarihBasligi}
+- Plan Onay Tarihi: ${inputs.onay_tarihi || "Belirtilmedi"}
+- Okul Adı: ${inputs.okul_adi || "Yıllık plandan veya varsayılan başlıktan al"}
+- Eğitim ve Öğretim Yılı: ${inputs.egitim_ogretim_yili || "2026-2027"}
+- Ders İsmi: ${inputs.ders_ismi || "Yıllık Plan ve Ders Bilgi Formundan birebir al"}
+- Sınıf Düzeyi: ${inputs.sinif_duzeyi || "Yıllık Plan ve Ders Bilgi Formundan birebir al"}
+${
+  inputs.secilen_hafta_verisi
+    ? `- Seçilen Haftanın Yıllık Plandaki Ön Özeti:
+  * Öğrenme Birimi: ${inputs.secilen_hafta_verisi.ogrenmeBirimi || "-"}
+  * Konu ve Öğrenme Çıktısı Özeti: ${inputs.secilen_hafta_verisi.konuVeCiktiOzeti || "-"}
+  * Ders Saati (Süre): ${inputs.secilen_hafta_verisi.sure || "-"}`
+    : ""
+}`;
+
+  // Part 2: Context 1 - Yıllık Plan
+  const part2YillikPlanContext = `====================================================================
+BAĞLAM 1: BU METİN KULLANICININ YÜKLEDİĞİ 'ÜNİTELENDİRİLMİŞ YILLIK PLAN' (yillik_plan) DOKÜMANIDIR
+${inputs.dosya_adlari?.yillik_plan ? `(Kaynak Dosya: ${inputs.dosya_adlari.yillik_plan})` : ""}
+====================================================================
+[BU DOKÜMANIN BAĞLAMI VE KULLANIM AMACI]:
+Bu metin yıllık plandır. Dersin 36 haftalık zaman çizelgesini içerir.
+Model olarak bu dokümandan şu verileri DOĞRUDAN ve BİREBİR çekmelisin:
+1) Seçilen hafta (${haftaVeTarihBasligi}) satırında yer alan 'Öğrenme Birimi' ve 'Süre' (ders saati),
+2) Seçilen haftaya ait 'Öğrenme Çıktıları ve Süreç Bileşenleri' (kazanım kodu, kazanım cümlesi ve a, b, c... alt süreç bileşenleri),
+3) Seçilen haftaya ait 'İçerik Çerçevesi' (konu başlığı),
+4) Yıllık plan tablosunda o hafta için belirtilen 'Alan Becerileri', 'Eğilimler (E...)', 'Sosyal-Duygusal Öğrenme Becerileri (SDB...)', 'Değerler (D...)', 'Okuryazarlık Becerileri (OB...)', 'Disiplinler Arası İlişki', 'Beceriler Arası İlişki (KB...)', 'Öğrenme Kanıtları' ve 'Öğretme-Öğrenme Uygulamaları'.
+
+--- [1A] SEÇİLEN HAFTA (${haftaVeTarihBasligi}) İÇİN YILLIK PLANDAN AYRIŞTIRILAN ODAK KESİT ---
+${yillikPlanWeekWindow}
+
+${
+  weekWindowIntel.outcomeBlocks.length > 0
+    ? `--- [1B] SEÇİLEN HAFTA KESİTİNDE TESPİT EDİLEN ÖĞRENME ÇIKTILARI / KAZANIMLAR ---\n${weekWindowIntel.outcomeBlocks.join("\n\n")}\n`
+    : ""
+}
+${
+  weekWindowIntel.maarifCodes.length > 0 || fullYillikIntel.maarifCodes.length > 0
+    ? `--- [1C] YILLIK PLANDA TESPİT EDİLEN MAARİF MODELİ BİLEŞEN KODLARI ---\n${
+        (weekWindowIntel.maarifCodes.length > 0
+          ? weekWindowIntel.maarifCodes
+          : fullYillikIntel.maarifCodes
+        ).join(", ")
+      }\n`
+    : ""
+}
+--- [1D] ÜNİTELENDİRİLMİŞ YILLIK PLAN (yillik_plan) TAM METNİ ---
+${truncateSafely(inputs.yillik_plan, 100000)}`;
+
+  // Part 3: Context 2 - Ders Bilgi Formu
+  const part3DersBilgiFormuContext = hasDersBilgiFormu
+    ? `====================================================================
+BAĞLAM 2: BU METİN KULLANICININ YÜKLEDİĞİ 'MEB DERS BİLGİ FORMU / ÖĞRETİM PROGRAMI' (ders_bilgi_formu) DOKÜMANIDIR
+${inputs.dosya_adlari?.ders_bilgi_formu ? `(Kaynak Dosya: ${inputs.dosya_adlari.ders_bilgi_formu})` : ""}
+====================================================================
+[BU DOKÜMANIN BAĞLAMI VE KULLANIM AMACI]:
+Bu metin ders bilgi formudur (MEB Türkiye Yüzyılı Maarif Modeli resmi öğretim programı dokümanıdır).
+Yıllık planda bazen kısaltılarak yazılan öğrenme çıktılarının, süreç bileşenlerinin ve pedagojik açıklamaların TAM VE RESMİ HALİ bu dokümandadır.
+Model olarak bu dokümandan şu verileri DOĞRUDAN ve BİREBİR çekmelisin:
+1) Seçilen haftanın öğrenme birimine ve kazanım koduna ait tam 'Öğrenme Çıktıları ve Süreç Bileşenleri (a, b, c...)',
+2) 'Alan Becerileri', 'Eğilimler (E...)', 'Sosyal-Duygusal Öğrenme Becerileri (SDB...)', 'Değerler (D...)', 'Okuryazarlık Becerileri (OB...)', 'Disiplinler Arası İlişki' ve 'Beceriler Arası İlişki (KB...)' tam adları ve kodları,
+3) 'Öğrenme Kanıtları (Ölçme ve Değerlendirme)' bölümündeki resmi ölçme araçları paragrafı (gözlem formu, öz/akran değerlendirme, dereceli puanlama anahtarı vb.),
+4) 'Öğrenme-Öğretme Yaşantıları' altındaki resmi 'Temel Kabuller', 'Ön Değerlendirme Süreci', 'Köprü Kurma' cümleleri,
+5) 'Öğretme-Öğrenme Uygulamaları' altındaki resmi uygulama maddeleri (maddelerin sonundaki parantez içi KB, E, D, SDB, OB kodlarıyla birlikte),
+6) 'Farklılaştırma (Zenginleştirme ve Destekleme)' açıklamaları.
+
+${
+  dbfFocusedSection
+    ? `--- [2A] SEÇİLEN HAFTA/ÜNİTE İÇİN DERS BİLGİ FORMUNDAN EŞLEŞTİRİLEN ODAK BÖLÜM ---\n${dbfFocusedSection}\n`
+    : ""
+}
+${
+  dbfIntel.outcomeBlocks.length > 0
+    ? `--- [2B] DERS BİLGİ FORMUNDA TESPİT EDİLEN ÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ ---\n${dbfIntel.outcomeBlocks.join("\n\n")}\n`
+    : ""
+}
+--- [2C] DERS BİLGİ FORMU (ders_bilgi_formu) TAM METNİ ---
+${truncateSafely(inputs.ders_bilgi_formu!, 100000)}`
+    : `====================================================================
+BAĞLAM 2: DERS BİLGİ FORMU (ders_bilgi_formu) BİLGİSİ
+====================================================================
+Kullanıcı ayrı bir 'ders_bilgi_formu' dosyası yüklemedi. Bu nedenle 'Öğrenme Çıktıları ve Süreç Bileşenleri', 'Programlar Arası Bileşenler', 'Öğrenme Kanıtları', 'Temel Kabuller', 'Ön Değerlendirme Süreci', 'Köprü Kurma' ve 'Öğretme Uygulamaları' alanlarını doğrudan BAĞLAM 1 (Ünitelendirilmiş Yıllık Plan) ve BAĞLAM 3 (Ders Materyali) metinlerinden çıkararak oluştur.`;
+
+  // Part 4: Context 3 - Ders Materyali
+  const part4DersMateryaliContext = `====================================================================
+BAĞLAM 3: BU METİN KULLANICININ YÜKLEDİĞİ 'DERS MATERYALİ / DERS KİTABI / MODÜL' (ders_materyali) DOKÜMANIDIR
+${inputs.dosya_adlari?.ders_materyali ? `(Kaynak Dosya: ${inputs.dosya_adlari.ders_materyali})` : ""}
+====================================================================
+[BU DOKÜMANIN BAĞLAMI VE KULLANIM AMACI]:
+Bu metin ders materyalidir (ders kitabı, modül, konu anlatımı veya uygulama föyüdür).
+Öğretmenin sınıfta, laboratuvarda veya atölyede o hafta anlatacağı teknik/bilimsel içerik, kavramlar, görseller, örnekler ve uygulama adımları bu dokümandadır.
+Model olarak bu dokümanı şu alanları üretmek ve zenginleştirmek için kullanmalısın:
+1) 'Guduleme': Bu ders materyalindeki konunun gerçek yaşamda ve mesleki uygulamalarda öğrenciye ne kazandıracağını anlatan 4 güçlü güdüleme cümlesi,
+2) 'Dikkat_Cekme': Bu ders materyalindeki kavramlar üzerinden öğrencileri düşündüren ve derse merak uyandıran 4 soru cümlesi,
+3) 'Ek_Ogretme_Uygulamalari': Bu ders materyalindeki konuyu sınıf, atölye veya laboratuvarda somutlaştıran 5 ek uygulama maddesi (her maddenin sonuna BAĞLAM 1 ve BAĞLAM 2'deki ilgili Maarif bileşen kodlarını parantez içinde ekle; örn: "(E3.2, OB1)", "(KB2.11)", "(SDB2.2, E2.2)", "(D16.3, D18.3)"),
+4) 'Ogretme_Uygulamalari' ve 'Ogrenme_Kanitlari': BAĞLAM 1 ve BAĞLAM 2'den alınan resmi çerçeveyi bu ders materyalindeki somut konu detaylarıyla bütünleştir.
+
+${
+  materyalFocusedSection
+    ? `--- [3A] SEÇİLEN KONU İÇİN DERS MATERYALİNDEN EŞLEŞTİRİLEN ODAK KESİT ---\n${materyalFocusedSection}\n`
+    : ""
+}
+--- [3B] DERS MATERYALİ (ders_materyali) TAM METNİ ---
+${truncateSafely(inputs.ders_materyali, 100000)}`;
+
+  // Part 5: Cross-Verification & Synthesis Instructions
+  const part5SynthesisInstructions = `====================================================================
+DOKÜMANLAR ARASI ÇAPRAZ EŞLEŞTİRME VE KONTROL LİSTESİ (ZORUNLU)
+====================================================================
+Çıktıyı üretmeden önce şu 4 adımı sırasıyla uygula:
+ADIM 1 (Hafta Tespiti): BAĞLAM 1 (Yıllık Plan) içinde "${haftaVeTarihBasligi}" haftasını bul. O haftanın Öğrenme Birimini, Süresini, İçerik Çerçevesini ve Öğrenme Çıktısını (kazanım kodunu ve a, b, c süreç bileşenlerini) tespit et.
+ADIM 2 (Öğrenme Çıktısı ve Bileşen Doğrulaması): Tespit ettiğin Öğrenme Birimi ve Öğrenme Çıktısını BAĞLAM 2 (Ders Bilgi Formu) ile karşılaştır. Öğrenme Çıktısının tam metnini ve altındaki a), b), c) süreç bileşenlerini eksiksiz olarak 'Ogrenme_Ciktilari_ve_Surec_Bilesenleri' alanına yaz. Alan Becerileri, Eğilimler (E...), Sosyal-Duygusal Öğrenme Becerileri (SDB...), Değerler (D...), Okuryazarlık Becerileri (OB...), Disiplinler Arası İlişki ve Beceriler Arası İlişki (KB...) alanlarını BAĞLAM 1 ve BAĞLAM 2'deki resmi kodlarıyla doldur.
+ADIM 3 (Yaşantılar ve Kanıtların Aktarımı): BAĞLAM 2 (Ders Bilgi Formu) ve BAĞLAM 1 (Yıllık Plan) içindeki 'Öğrenme Kanıtları', 'Temel Kabuller', 'Ön Değerlendirme Süreci', 'Köprü Kurma' ve 'Öğretme Uygulamaları' metinlerini (parantez içi bileşen kodlarını koruyarak) aktar.
+ADIM 4 (Ders Materyali Sentezi): BAĞLAM 3 (Ders Materyali) içindeki konu anlatımını kullanarak 4 maddelik 'Guduleme', 4 soru maddelik 'Dikkat_Cekme' ve sonunda parantez içi Maarif kodları bulunan 5 maddelik 'Ek_Ogretme_Uygulamalari' bölümlerini oluştur.
+
+Şimdi bu 3 bağlamı birleştirerek JSON şemasına birebir uygun Günlük Ders Planını üret.`;
+
+  return [
+    { text: part1TaskHeader },
+    { text: part2YillikPlanContext },
+    { text: part3DersBilgiFormuContext },
+    { text: part4DersMateryaliContext },
+    { text: part5SynthesisInstructions },
+  ];
 }
 
 async function startServer() {
@@ -617,8 +966,30 @@ async function startServer() {
 
           finalExtractedText = sheetTexts.join("\n\n").trim();
         }
-        // 4. Plain Text / Markdown / CSV fallback
-        else if (
+        // 4. Legacy Word (.doc) / RTF / Plain Text / Markdown / CSV fallback
+        else if (ext === ".doc" || ext === ".rtf" || file.mimetype === "application/msword") {
+          const rawUtf8 = file.buffer.toString("utf-8");
+          if (/<html|<table|<body|<p\b|<w:/i.test(rawUtf8)) {
+            finalExtractedText = rawUtf8
+              .replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<script[\s\S]*?<\/script>/gi, " ")
+              .replace(/<\/(tr|p|div|li|h[1-6])>/gi, "\n")
+              .replace(/<\/(td|th)>/gi, " | ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/gi, " ")
+              .replace(/[ \t]+/g, " ")
+              .replace(/\n\s*\n+/g, "\n")
+              .trim();
+          } else {
+            const printableChunks =
+              rawUtf8.match(/[A-Za-z0-9ÇĞİÖŞÜçğıöşü.,;:!?()[\]\-–/\s]{6,}/g) || [];
+            finalExtractedText = printableChunks
+              .map((c) => c.trim())
+              .filter((c) => c.length >= 6 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3,}/.test(c))
+              .join("\n")
+              .trim();
+          }
+        } else if (
           [".txt", ".md", ".csv"].includes(ext) ||
           file.mimetype.startsWith("text/")
         ) {
@@ -626,12 +997,13 @@ async function startServer() {
         } else {
           res.status(400).json({
             error:
-              "Desteklenmeyen dosya formatı. Lütfen .pdf, .docx veya .xlsx formatında bir dosya yükleyin.",
+              "Desteklenmeyen dosya formatı. Lütfen .pdf, .docx, .doc veya .xlsx formatında bir dosya yükleyin.",
           });
           return;
         }
 
         const quickWeeks = parseWeeksRegexFallback(finalExtractedText);
+        const detectedIntel = extractDetectedOutcomesAndCodes(finalExtractedText);
 
         res.json({
           text:
@@ -640,6 +1012,8 @@ async function startServer() {
           fileName: originalName,
           sizeBytes: file.size,
           quickWeeks,
+          detectedOutcomeCount: detectedIntel.outcomeBlocks.length,
+          detectedCodeCount: detectedIntel.maarifCodes.length,
         });
       } catch (parseErr: unknown) {
         console.error("File extraction error:", parseErr);
@@ -658,9 +1032,14 @@ async function startServer() {
   app.post("/api/parse-weeks", async (req, res) => {
     try {
       const { yillik_plan } = req.body ?? {};
-      if (!yillik_plan || typeof yillik_plan !== "string" || !yillik_plan.trim()) {
+      if (
+        !yillik_plan ||
+        typeof yillik_plan !== "string" ||
+        !yillik_plan.trim()
+      ) {
         res.status(400).json({
-          error: "Hafta ve tarihlerin çıkarılması için önce Yıllık Plan yükleyin.",
+          error:
+            "Hafta ve tarihlerin çıkarılması için önce Yıllık Plan yükleyin.",
         });
         return;
       }
@@ -681,7 +1060,8 @@ async function startServer() {
         },
       });
 
-      const weekPrompt = `Aşağıdaki Ünitelendirilmiş Yıllık Plan metnini incele ve planda yer alan tüm haftaları, tarih aralıklarını (örn: "14 - 18 Eylül"), her haftanın ilk gününe karşılık gelen GG/AA/YYYY onay tarihini (örn: "14/09/2026"), öğrenme birimini, konu/öğrenme çıktısı özetini ve ders saati süresini sırasıyla çıkar. Ayrıca yıllık plan başlığında okul adı, ders ismi ve sınıf düzeyi varsa onları da çıkar:\n\n${truncateSafely(
+      const weekPrompt = `=== BAĞLAM: BU METİN MEB ÜNİTELENDİRİLMİŞ YILLIK PLANIDIR (yillik_plan) ===
+Aşağıdaki Ünitelendirilmiş Yıllık Plan metnini incele ve planda yer alan tüm haftaları, tarih aralıklarını (örn: "14 - 18 Eylül"), her haftanın ilk gününe karşılık gelen GG/AA/YYYY onay tarihini (örn: "14/09/2026"), öğrenme birimini, o haftanın Öğrenme Çıktısı / Kazanım kodu ve cümlesi ile İçerik Çerçevesi özetini ve ders saati süresini sırasıyla çıkar. Ayrıca yıllık plan başlığında okul adı, ders ismi ve sınıf düzeyi varsa onları da çıkar:\n\n${truncateSafely(
         yillik_plan,
         90000
       )}`;
@@ -689,7 +1069,7 @@ async function startServer() {
       const rawJson = await generateWithFallback(
         ai,
         weekPrompt,
-        "Sen MEB Ünitelendirilmiş Yıllık Plan tablolarından hafta, tarih aralığı, öğrenme birimi ve kazanım listesini birebir çıkaran bir uzmansın.",
+        "Sen MEB Ünitelendirilmiş Yıllık Plan tablolarından hafta, tarih aralığı, öğrenme birimi ve öğrenme çıktısı (kazanım) listesini birebir çıkaran bir uzmansın.",
         WEEKS_EXTRACTION_SCHEMA
       );
 
@@ -718,7 +1098,9 @@ async function startServer() {
       });
     } catch (err: unknown) {
       console.warn("AI week extraction fallback to regex:", err);
-      const fallback = parseWeeksRegexFallback(String(req.body?.yillik_plan || ""));
+      const fallback = parseWeeksRegexFallback(
+        String(req.body?.yillik_plan || "")
+      );
       res.json({ weeks: fallback });
     }
   });
@@ -737,6 +1119,8 @@ async function startServer() {
         sinif_duzeyi,
         okul_adi,
         egitim_ogretim_yili,
+        secilen_hafta_verisi,
+        dosya_adlari,
       } = req.body ?? {};
 
       if (
@@ -781,7 +1165,7 @@ async function startServer() {
         },
       });
 
-      const promptText = buildStructuredPrompt({
+      const contextualParts = buildContextualPromptParts({
         yillik_plan,
         ders_materyali,
         ders_bilgi_formu,
@@ -792,11 +1176,13 @@ async function startServer() {
         sinif_duzeyi,
         okul_adi,
         egitim_ogretim_yili,
+        secilen_hafta_verisi,
+        dosya_adlari,
       });
 
       const rawText = await generateWithFallback(
         ai,
-        promptText,
+        contextualParts,
         SYSTEM_INSTRUCTION,
         LESSON_PLAN_RESPONSE_SCHEMA
       );
@@ -808,7 +1194,9 @@ async function startServer() {
     } catch (err: unknown) {
       console.error("Error generating lesson plan:", err);
       const message =
-        err instanceof Error ? err.message : "Bilinmeyen bir sunucu hatası oluştu.";
+        err instanceof Error
+          ? err.message
+          : "Bilinmeyen bir sunucu hatası oluştu.";
       if (
         message.includes("API_KEY_INVALID") ||
         message.includes("PERMISSION_DENIED") ||

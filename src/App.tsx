@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   MaarifLessonPlan,
   DocumentHeaderFooterMeta,
@@ -12,13 +12,13 @@ import {
 } from "./types/lessonPlan";
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { downloadWordDoc } from "./utils/exportPlan";
+import { extractFileContentHybrid } from "./utils/clientFileExtractor";
 import {
   Upload,
   FileText,
   Bookmark,
   Trash2,
   FolderOpen,
-  Printer,
   FileDown,
   Check,
   AlertCircle,
@@ -33,8 +33,7 @@ type UploadFieldKey = "yillik_plan" | "ders_materyali" | "ders_bilgi_formu";
 
 const STORAGE_KEY = "maarif_atolye_saved_plans_v3";
 const MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024; // 40 MB
-const ACCEPTED_FILE_EXTENSIONS =
-  ".pdf,.docx,.xlsx,.xls,.txt,.md,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+const ACCEPTED_FILE_EXTENSIONS = ".pdf,.docx,.doc,.xlsx,.xls,.txt,.md,.csv,.rtf";
 
 // Standard MEB 36-Week Calendar fallback (used before Yıllık Plan is uploaded or if user wants to pick manually)
 const DEFAULT_MEB_WEEKS: YillikPlanWeekItem[] = [
@@ -180,10 +179,19 @@ export default function App() {
   const [dersMateryali, setDersMateryali] = useState<string>("");
   const [dersBilgiFormu, setDersBilgiFormu] = useState<string>("");
 
-  // File upload states per field
-  const [uploadingField, setUploadingField] = useState<UploadFieldKey | null>(
-    null
-  );
+  // File upload refs & independent states per field
+  const yillikPlanInputRef = useRef<HTMLInputElement | null>(null);
+  const dersMateryaliInputRef = useRef<HTMLInputElement | null>(null);
+  const dersBilgiFormuInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [uploadingFields, setUploadingFields] = useState<
+    Record<UploadFieldKey, boolean>
+  >({
+    yillik_plan: false,
+    ders_materyali: false,
+    ders_bilgi_formu: false,
+  });
+
   const [uploadedFileNames, setUploadedFileNames] = useState<
     Record<UploadFieldKey, string | null>
   >({
@@ -191,6 +199,19 @@ export default function App() {
     ders_materyali: null,
     ders_bilgi_formu: null,
   });
+
+  const [fieldErrors, setFieldErrors] = useState<
+    Record<UploadFieldKey, string | null>
+  >({
+    yillik_plan: null,
+    ders_materyali: null,
+    ders_bilgi_formu: null,
+  });
+
+  const isAnyUploading =
+    uploadingFields.yillik_plan ||
+    uploadingFields.ders_materyali ||
+    uploadingFields.ders_bilgi_formu;
 
   // Active lesson plan
   const [currentPlan, setCurrentPlan] = useState<MaarifLessonPlan | null>(null);
@@ -286,22 +307,24 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
+  const processSelectedFile = async (
+    file: File,
     fieldKey: UploadFieldKey,
-    setter: (val: string) => void
+    setter: (val: string) => void,
+    inputElement?: HTMLInputElement | null
   ) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+    // Clear previous field error
+    setFieldErrors((prev) => ({ ...prev, [fieldKey]: null }));
+    setErrorMessage(null);
 
-    // 1. Validate 40 MB limit on client immediately
+    // 1. Validate 40 MB limit immediately
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setErrorMessage(
-        `"${file.name}" dosyası (${formatFileSize(
-          file.size
-        )}) 40 MB sınırını aşmaktadır. Lütfen en fazla 40 MB boyutunda bir PDF, DOCX veya XLSX dosyası yükleyin.`
-      );
+      const msg = `"${file.name}" dosyası (${formatFileSize(
+        file.size
+      )}) 40 MB sınırını aşmaktadır. Lütfen en fazla 40 MB boyutunda bir dosya seçin.`;
+      setFieldErrors((prev) => ({ ...prev, [fieldKey]: msg }));
+      setErrorMessage(msg);
+      if (inputElement) inputElement.value = "";
       return;
     }
 
@@ -310,69 +333,85 @@ export default function App() {
     const isSupported =
       lowerName.endsWith(".pdf") ||
       lowerName.endsWith(".docx") ||
+      lowerName.endsWith(".doc") ||
       lowerName.endsWith(".xlsx") ||
       lowerName.endsWith(".xls") ||
       lowerName.endsWith(".txt") ||
       lowerName.endsWith(".md") ||
-      lowerName.endsWith(".csv");
+      lowerName.endsWith(".csv") ||
+      lowerName.endsWith(".rtf");
 
     if (!isSupported) {
-      setErrorMessage(
-        "Desteklenmeyen dosya türü. Lütfen .pdf, .docx veya .xlsx formatında bir dosya seçin."
-      );
+      const msg = `"${file.name}" desteklenmeyen bir dosya türüdür. Lütfen .pdf, .docx, .doc veya .xlsx formatında bir dosya seçin.`;
+      setFieldErrors((prev) => ({ ...prev, [fieldKey]: msg }));
+      setErrorMessage(msg);
+      if (inputElement) inputElement.value = "";
       return;
     }
 
-    setUploadingField(fieldKey);
-    setErrorMessage(null);
+    setUploadingFields((prev) => ({ ...prev, [fieldKey]: true }));
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      const result = await extractFileContentHybrid(file);
+      const extractedText = result.text || "";
 
-      const response = await fetch("/api/extract-file", {
-        method: "POST",
-        body: formData,
-      });
+      setter(extractedText);
+      setUploadedFileNames((prev) => ({
+        ...prev,
+        [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
+      }));
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Dosya içeriği okunamadı.");
-      }
-
-      if (typeof data.text === "string") {
-        setter(data.text);
-        setUploadedFileNames((prev) => ({
-          ...prev,
-          [fieldKey]: `${file.name} (${formatFileSize(file.size)})`,
-        }));
-
-        // If user uploaded Yıllık Plan, immediately populate quickWeeks and trigger full AI week/date analysis!
-        if (fieldKey === "yillik_plan") {
-          if (Array.isArray(data.quickWeeks) && data.quickWeeks.length > 0) {
-            setExtractedWeeks(data.quickWeeks);
-            const first = data.quickWeeks[0] as YillikPlanWeekItem;
-            setSelectedWeekId(first.id);
-            setMeta((prev) => ({
-              ...prev,
-              haftaEtiketi: first.haftaEtiketi,
-              tarihAraligi: first.tarihAraligi,
-              onayTarihi: first.onayTarihi || prev.onayTarihi,
-            }));
-          }
-          // Run deep week/date/unit extraction in background
-          analyzeWeeksFromYillikPlan(data.text);
+      // If user uploaded Yıllık Plan, immediately populate quickWeeks and trigger full AI week/date analysis!
+      if (fieldKey === "yillik_plan") {
+        if (Array.isArray(result.quickWeeks) && result.quickWeeks.length > 0) {
+          setExtractedWeeks(result.quickWeeks);
+          const first = result.quickWeeks[0];
+          setSelectedWeekId(first.id);
+          setMeta((prev) => ({
+            ...prev,
+            haftaEtiketi: first.haftaEtiketi,
+            tarihAraligi: first.tarihAraligi,
+            onayTarihi: first.onayTarihi || prev.onayTarihi,
+          }));
         }
+        analyzeWeeksFromYillikPlan(extractedText);
       }
     } catch (err: unknown) {
-      setErrorMessage(
+      const msg =
         err instanceof Error
           ? err.message
-          : "Dosya yüklenirken veya metin çıkarılırken bir hata oluştu."
-      );
+          : "Dosya yüklenirken veya metin çıkarılırken bir hata oluştu.";
+      setFieldErrors((prev) => ({ ...prev, [fieldKey]: msg }));
+      setErrorMessage(msg);
     } finally {
-      setUploadingField(null);
+      setUploadingFields((prev) => ({ ...prev, [fieldKey]: false }));
+      if (inputElement) {
+        inputElement.value = "";
+      }
     }
+  };
+
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    fieldKey: UploadFieldKey,
+    setter: (val: string) => void
+  ) => {
+    const inputEl = e.currentTarget;
+    const file = inputEl.files?.[0];
+    if (!file) return;
+    await processSelectedFile(file, fieldKey, setter, inputEl);
+  };
+
+  const handleFileDrop = async (
+    e: React.DragEvent<HTMLDivElement>,
+    fieldKey: UploadFieldKey,
+    setter: (val: string) => void
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await processSelectedFile(file, fieldKey, setter, null);
   };
 
   const handleLoadSampleTarimPlan = () => {
@@ -421,6 +460,8 @@ export default function App() {
           egitim_ogretim_yili: meta.egitimOgretimYili,
           ders_ismi: meta.dersIsmi,
           sinif_duzeyi: meta.sinifDuzeyi,
+          secilen_hafta_verisi: selectedWeekObj,
+          dosya_adlari: uploadedFileNames,
         }),
       });
 
@@ -999,78 +1040,124 @@ export default function App() {
 
                   <div className="p-6 space-y-5">
                     {/* Input 1: Ünitelendirilmiş Yıllık Plan */}
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                    <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) =>
+                        handleFileDrop(e, "yillik_plan", setYillikPlan)
+                      }
+                      className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-3.5 transition-colors"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                         <label
                           htmlFor="input-yillik-plan"
                           className="text-xs font-semibold text-indigo-950"
                         >
                           1. Ünitelendirilmiş Yıllık Plan (Zorunlu)
                         </label>
-                        <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-xs font-semibold text-indigo-800 transition-colors">
-                          {uploadingField === "yillik_plan" ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Okunuyor...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Upload className="w-3.5 h-3.5" />
-                              <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
-                            </>
-                          )}
+                        <div>
                           <input
+                            ref={yillikPlanInputRef}
                             type="file"
-                            disabled={uploadingField !== null}
                             accept={ACCEPTED_FILE_EXTENSIONS}
-                            className="hidden"
+                            className="sr-only"
                             onChange={(e) =>
                               handleFileUpload(e, "yillik_plan", setYillikPlan)
                             }
                           />
-                        </label>
+                          <button
+                            type="button"
+                            disabled={uploadingFields.yillik_plan}
+                            onClick={() => yillikPlanInputRef.current?.click()}
+                            className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-xs font-semibold text-white shadow-2xs transition-colors"
+                          >
+                            {uploadingFields.yillik_plan ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Dosya Okunuyor...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
+                      <p className="text-[11px] text-indigo-800/80 mb-2">
+                        <strong>AI Bağlamı (yillik_plan):</strong> Seçilen haftanın Öğrenme Birimi, Süresi, İçerik Çerçevesi ve Öğrenme Çıktıları bu dokümandan eşleştirilir.
+                      </p>
+                      {fieldErrors.yillik_plan && (
+                        <div className="mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-medium text-red-800 flex items-center justify-between gap-2">
+                          <span>{fieldErrors.yillik_plan}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                yillik_plan: null,
+                              }))
+                            }
+                            className="text-red-600 hover:text-red-900 font-semibold"
+                          >
+                            Kapat
+                          </button>
+                        </div>
+                      )}
                       {uploadedFileNames.yillik_plan && (
-                        <p className="text-[11px] font-medium text-emerald-700 mb-1.5">
-                          Yüklendi: {uploadedFileNames.yillik_plan}
-                        </p>
+                        <div className="mb-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-[11px] font-medium text-emerald-800 flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5 truncate">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="truncate">
+                              Yüklendi: {uploadedFileNames.yillik_plan}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setYillikPlan("");
+                              setUploadedFileNames((prev) => ({
+                                ...prev,
+                                yillik_plan: null,
+                              }));
+                            }}
+                            className="text-emerald-700 hover:text-red-600 font-semibold shrink-0"
+                          >
+                            Temizle
+                          </button>
+                        </div>
                       )}
                       <textarea
                         id="input-yillik-plan"
-                        rows={5}
+                        rows={4}
                         value={yillikPlan}
                         onChange={(e) => setYillikPlan(e.target.value)}
-                        placeholder="Yıllık planınızı (.pdf, .docx, .xlsx) yükleyin veya buraya yapıştırın. Haftalar, tarihler, öğrenme birimi ve kazanımlar buradan çekilir..."
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:bg-white focus:border-indigo-600 focus:outline-none"
+                        placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya yıllık plan metnini yapıştırın..."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-indigo-600 focus:outline-none"
                       />
                     </div>
 
                     {/* Input 2: Ders Materyali */}
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                    <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) =>
+                        handleFileDrop(e, "ders_materyali", setDersMateryali)
+                      }
+                      className="rounded-xl border border-teal-100 bg-teal-50/20 p-3.5 transition-colors"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                         <label
                           htmlFor="input-ders-materyali"
                           className="text-xs font-semibold text-teal-950"
                         >
                           2. Ders Materyali / Ders Kitabı / Modül (Zorunlu)
                         </label>
-                        <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-teal-50 border border-teal-200 hover:bg-teal-100 text-xs font-semibold text-teal-800 transition-colors">
-                          {uploadingField === "ders_materyali" ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Okunuyor...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Upload className="w-3.5 h-3.5" />
-                              <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
-                            </>
-                          )}
+                        <div>
                           <input
+                            ref={dersMateryaliInputRef}
                             type="file"
-                            disabled={uploadingField !== null}
                             accept={ACCEPTED_FILE_EXTENSIONS}
-                            className="hidden"
+                            className="sr-only"
                             onChange={(e) =>
                               handleFileUpload(
                                 e,
@@ -1079,49 +1166,106 @@ export default function App() {
                               )
                             }
                           />
-                        </label>
+                          <button
+                            type="button"
+                            disabled={uploadingFields.ders_materyali}
+                            onClick={() =>
+                              dersMateryaliInputRef.current?.click()
+                            }
+                            className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-xs font-semibold text-white shadow-2xs transition-colors"
+                          >
+                            {uploadingFields.ders_materyali ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Dosya Okunuyor...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
+                      <p className="text-[11px] text-teal-800/80 mb-2">
+                        <strong>AI Bağlamı (ders_materyali):</strong> Konuya özgü Güdüleme, Dikkat Çekme soruları ve Ek Öğretme Uygulamaları bu materyalden üretilir.
+                      </p>
+                      {fieldErrors.ders_materyali && (
+                        <div className="mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-medium text-red-800 flex items-center justify-between gap-2">
+                          <span>{fieldErrors.ders_materyali}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                ders_materyali: null,
+                              }))
+                            }
+                            className="text-red-600 hover:text-red-900 font-semibold"
+                          >
+                            Kapat
+                          </button>
+                        </div>
+                      )}
                       {uploadedFileNames.ders_materyali && (
-                        <p className="text-[11px] font-medium text-emerald-700 mb-1.5">
-                          Yüklendi: {uploadedFileNames.ders_materyali}
-                        </p>
+                        <div className="mb-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-[11px] font-medium text-emerald-800 flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5 truncate">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="truncate">
+                              Yüklendi: {uploadedFileNames.ders_materyali}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDersMateryali("");
+                              setUploadedFileNames((prev) => ({
+                                ...prev,
+                                ders_materyali: null,
+                              }));
+                            }}
+                            className="text-emerald-700 hover:text-red-600 font-semibold shrink-0"
+                          >
+                            Temizle
+                          </button>
+                        </div>
                       )}
                       <textarea
                         id="input-ders-materyali"
-                        rows={5}
+                        rows={4}
                         value={dersMateryali}
                         onChange={(e) => setDersMateryali(e.target.value)}
-                        placeholder="Ders materyalini (.pdf, .docx, .xlsx) yükleyin veya yapıştırın. Güdüleme, Dikkat Çekme ve Ek Öğretme Uygulamaları bu materyalden zenginleştirilir..."
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:bg-white focus:border-teal-600 focus:outline-none"
+                        placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya ders materyali metnini yapıştırın..."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-teal-600 focus:outline-none"
                       />
                     </div>
 
                     {/* Input 3: Ders Bilgi Formu */}
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                    <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) =>
+                        handleFileDrop(
+                          e,
+                          "ders_bilgi_formu",
+                          setDersBilgiFormu
+                        )
+                      }
+                      className="rounded-xl border border-sky-100 bg-sky-50/20 p-3.5 transition-colors"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                         <label
                           htmlFor="input-ders-bilgi-formu"
                           className="text-xs font-semibold text-sky-950"
                         >
                           3. Ders Bilgi Formu (Öğretim Programı)
                         </label>
-                        <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-sky-50 border border-sky-200 hover:bg-sky-100 text-xs font-semibold text-sky-800 transition-colors">
-                          {uploadingField === "ders_bilgi_formu" ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Okunuyor...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Upload className="w-3.5 h-3.5" />
-                              <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
-                            </>
-                          )}
+                        <div>
                           <input
+                            ref={dersBilgiFormuInputRef}
                             type="file"
-                            disabled={uploadingField !== null}
                             accept={ACCEPTED_FILE_EXTENSIONS}
-                            className="hidden"
+                            className="sr-only"
                             onChange={(e) =>
                               handleFileUpload(
                                 e,
@@ -1130,20 +1274,78 @@ export default function App() {
                               )
                             }
                           />
-                        </label>
+                          <button
+                            type="button"
+                            disabled={uploadingFields.ders_bilgi_formu}
+                            onClick={() =>
+                              dersBilgiFormuInputRef.current?.click()
+                            }
+                            className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-xs font-semibold text-white shadow-2xs transition-colors"
+                          >
+                            {uploadingFields.ders_bilgi_formu ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Dosya Okunuyor...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Dosya Yükle (.pdf, .docx, .xlsx)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
+                      <p className="text-[11px] text-sky-800/80 mb-2">
+                        <strong>AI Bağlamı (ders_bilgi_formu):</strong> Öğrenme Çıktıları ve Süreç Bileşenleri (a, b, c...), Programlar Arası Bileşen Kodları, Öğrenme Kanıtları, Temel Kabuller ve Öğretme Uygulamaları bu dokümandan birebir alınır.
+                      </p>
+                      {fieldErrors.ders_bilgi_formu && (
+                        <div className="mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-medium text-red-800 flex items-center justify-between gap-2">
+                          <span>{fieldErrors.ders_bilgi_formu}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                ders_bilgi_formu: null,
+                              }))
+                            }
+                            className="text-red-600 hover:text-red-900 font-semibold"
+                          >
+                            Kapat
+                          </button>
+                        </div>
+                      )}
                       {uploadedFileNames.ders_bilgi_formu && (
-                        <p className="text-[11px] font-medium text-emerald-700 mb-1.5">
-                          Yüklendi: {uploadedFileNames.ders_bilgi_formu}
-                        </p>
+                        <div className="mb-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-[11px] font-medium text-emerald-800 flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5 truncate">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="truncate">
+                              Yüklendi: {uploadedFileNames.ders_bilgi_formu}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDersBilgiFormu("");
+                              setUploadedFileNames((prev) => ({
+                                ...prev,
+                                ders_bilgi_formu: null,
+                              }));
+                            }}
+                            className="text-emerald-700 hover:text-red-600 font-semibold shrink-0"
+                          >
+                            Temizle
+                          </button>
+                        </div>
                       )}
                       <textarea
                         id="input-ders-bilgi-formu"
-                        rows={5}
+                        rows={4}
                         value={dersBilgiFormu}
                         onChange={(e) => setDersBilgiFormu(e.target.value)}
-                        placeholder="Ders Bilgi Formunu (.pdf, .docx, .xlsx) yükleyin veya yapıştırın. Programlar Arası Bileşenler, Öğrenme Kanıtları, Temel Kabuller ve Öğretme Uygulamaları buradan alınır..."
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:bg-white focus:border-sky-600 focus:outline-none"
+                        placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya ders bilgi formu metnini yapıştırın..."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-sky-600 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -1153,7 +1355,7 @@ export default function App() {
                 <div className="p-6 pt-4 border-t border-slate-200 bg-slate-50/60 space-y-2.5">
                   <button
                     type="button"
-                    disabled={isGenerating || uploadingField !== null}
+                    disabled={isGenerating || isAnyUploading}
                     onClick={handleGeneratePlan}
                     className="w-full py-3.5 px-4 rounded-lg bg-gradient-to-r from-indigo-900 via-sky-800 to-teal-800 hover:from-indigo-800 hover:via-sky-700 hover:to-teal-700 disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-xs transition-all"
                   >
