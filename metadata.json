@@ -1,0 +1,6 @@
+{
+  "name": "Maarif Atölye Planlayıcı",
+  "description": "MEB Türkiye Yüzyılı Maarif Modeli uyumlu, meslek lisesi atölye ve meslek dersleri için yapay zeka destekli günlük ders planı oluşturucu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
