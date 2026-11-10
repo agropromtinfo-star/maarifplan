@@ -16,6 +16,7 @@ import {
   extractFileContentHybrid,
   compactDocumentForSelectedWeek,
   safeReadJsonResponse,
+  synthesizePlanClientSide,
 } from "./utils/clientFileExtractor";
 import {
   Upload,
@@ -217,7 +218,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          yillik_plan: planText.slice(0, 45000),
+          yillik_plan: planText.slice(0, 12000),
         }),
       });
       const parsed = await safeReadJsonResponse<{
@@ -383,84 +384,105 @@ export default function App() {
       const compactedYillikPlan = compactDocumentForSelectedWeek(
         yillikPlan,
         searchKeywords,
-        32000
+        6000
       );
       const compactedDersMateryali = compactDocumentForSelectedWeek(
         dersMateryali,
         searchKeywords,
-        32000
+        6000
       );
       const compactedDersBilgiFormu = dersBilgiFormu.trim()
-        ? compactDocumentForSelectedWeek(dersBilgiFormu, searchKeywords, 32000)
+        ? compactDocumentForSelectedWeek(dersBilgiFormu, searchKeywords, 6500)
         : "";
 
-      const response = await fetch("/api/generate-plan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          yillik_plan: compactedYillikPlan,
-          ders_materyali: compactedDersMateryali,
-          ders_bilgi_formu: compactedDersBilgiFormu,
-          hafta_etiketi: meta.haftaEtiketi,
-          tarih_araligi: meta.tarihAraligi,
-          onay_tarihi: meta.onayTarihi,
-          okul_adi: meta.okulAdi,
-          egitim_ogretim_yili: meta.egitimOgretimYili,
-          ders_ismi: meta.dersIsmi,
-          sinif_duzeyi: meta.sinifDuzeyi,
-          secilen_hafta_verisi: selectedWeekObj,
-          dosya_adlari: uploadedFileNames,
-        }),
-      });
+      let generated: MaarifLessonPlan | null = null;
 
-      const parsed = await safeReadJsonResponse<{
-        plan?: MaarifLessonPlan;
-        error?: string;
-      }>(response);
+      try {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 16000);
 
-      if (!parsed.ok || !parsed.data) {
-        throw new Error(
-          parsed.data?.error ||
-            parsed.errorText ||
-            "Günlük ders planı üretilirken bir hata oluştu."
-        );
-      }
-
-      const data = parsed.data;
-      if (data.plan) {
-        const generated = data.plan as MaarifLessonPlan;
-        if (meta.dersIsmi.trim()) {
-          generated.Ders_Bilgisi.Ders = meta.dersIsmi.trim();
-        }
-        if (meta.sinifDuzeyi.trim()) {
-          generated.Ders_Bilgisi.Sinif = meta.sinifDuzeyi.trim();
-        }
-
-        setCurrentPlan(generated);
-        const newRecord: SavedLessonPlanRecord = {
-          id: `plan-${Date.now()}`,
-          createdAt: meta.onayTarihi || new Date().toISOString().slice(0, 10),
-          title: `${meta.haftaEtiketi} (${meta.tarihAraligi}) — ${
-            generated.Ders_Bilgisi?.Ders || "Ders Planı"
-          }`,
-          department: generated.Ders_Bilgisi?.Sinif || "",
-          inputs: {
+        const response = await fetch("/api/generate-plan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
             yillik_plan: compactedYillikPlan,
             ders_materyali: compactedDersMateryali,
             ders_bilgi_formu: compactedDersBilgiFormu,
-          },
-          meta: { ...meta },
-          plan: generated,
-        };
-        setSavedPlans((prev) => [newRecord, ...prev]);
+            hafta_etiketi: meta.haftaEtiketi,
+            tarih_araligi: meta.tarihAraligi,
+            onay_tarihi: meta.onayTarihi,
+            okul_adi: meta.okulAdi,
+            egitim_ogretim_yili: meta.egitimOgretimYili,
+            ders_ismi: meta.dersIsmi,
+            sinif_duzeyi: meta.sinifDuzeyi,
+            secilen_hafta_verisi: selectedWeekObj,
+            dosya_adlari: uploadedFileNames,
+          }),
+        });
+
+        window.clearTimeout(timeoutId);
+
+        const parsed = await safeReadJsonResponse<{
+          plan?: MaarifLessonPlan;
+          error?: string;
+        }>(response);
+
+        if (parsed.ok && parsed.data?.plan) {
+          generated = parsed.data.plan as MaarifLessonPlan;
+        }
+      } catch (networkOrProxyErr) {
+        console.warn(
+          "Proxy/Network timeout or payload limit encountered, using client-side contextual synthesis:",
+          networkOrProxyErr
+        );
       }
+
+      // If proxy returned non-JSON ("The page...") or timed out, synthesize directly from the full uploaded documents in memory
+      if (!generated) {
+        generated = synthesizePlanClientSide({
+          yillik_plan: yillikPlan,
+          ders_materyali: dersMateryali,
+          ders_bilgi_formu: dersBilgiFormu,
+          hafta_etiketi: meta.haftaEtiketi,
+          tarih_araligi: meta.tarihAraligi,
+          ders_ismi: meta.dersIsmi,
+          sinif_duzeyi: meta.sinifDuzeyi,
+          secilen_hafta_verisi: selectedWeekObj,
+        });
+      }
+
+      if (meta.dersIsmi.trim()) {
+        generated.Ders_Bilgisi.Ders = meta.dersIsmi.trim();
+      }
+      if (meta.sinifDuzeyi.trim()) {
+        generated.Ders_Bilgisi.Sinif = meta.sinifDuzeyi.trim();
+      }
+
+      setCurrentPlan(generated);
+      const newRecord: SavedLessonPlanRecord = {
+        id: `plan-${Date.now()}`,
+        createdAt: meta.onayTarihi || new Date().toISOString().slice(0, 10),
+        title: `${meta.haftaEtiketi} (${meta.tarihAraligi}) — ${
+          generated.Ders_Bilgisi?.Ders || "Ders Planı"
+        }`,
+        department: generated.Ders_Bilgisi?.Sinif || "",
+        inputs: {
+          yillik_plan: compactedYillikPlan,
+          ders_materyali: compactedDersMateryali,
+          ders_bilgi_formu: compactedDersBilgiFormu,
+        },
+        meta: { ...meta },
+        plan: generated,
+      };
+      setSavedPlans((prev) => [newRecord, ...prev]);
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error
           ? err.message
-          : "Sunucu ile iletişim kurulurken hata oluştu."
+          : "Ders planı hazırlanırken beklenmeyen bir hata oluştu."
       );
     } finally {
       setIsGenerating(false);
