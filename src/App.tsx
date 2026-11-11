@@ -14,13 +14,11 @@ import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { downloadWordDoc } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
-  compactDocumentForSelectedWeek,
-  extractSearchKeywordsFromYillikPlanWeek,
   extractDocumentMetadataClient,
   safeReadJsonResponse,
-  synthesizePlanClientSide,
-  buildXmlContextPayload,
+  buildXmlContextPayloadWithAnalysis,
 } from "./utils/clientFileExtractor";
+import { enforceAndMergeLessonPlan } from "./shared/maarifPlanEngine";
 import {
   Upload,
   FileText,
@@ -39,7 +37,7 @@ import {
 type ActiveTab = "workspace" | "official-table" | "saved-plans";
 type UploadFieldKey = "yillik_plan" | "ders_materyali" | "ders_bilgi_formu";
 
-const STORAGE_KEY = "maarif_atolye_saved_plans_v3";
+const STORAGE_KEY = "maarif_atolye_saved_plans_v4";
 const MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024; // 40 MB
 const ACCEPTED_FILE_EXTENSIONS = ".pdf,.docx,.doc,.xlsx,.xls,.txt,.md,.csv,.rtf";
 
@@ -386,16 +384,8 @@ export default function App() {
     setErrorMessage(null);
 
     try {
-      // First extract outcome codes (e.g. ST.2.1) & topic phrases from the selected week in Yıllık Plan
-      const crossDocSearchKeywords = extractSearchKeywordsFromYillikPlanWeek(
-        yillikPlan,
-        meta.haftaEtiketi,
-        meta.tarihAraligi,
-        selectedWeekObj
-      );
-
       const detectedDocMeta = extractDocumentMetadataClient(
-        `${yillikPlan}\n${dersBilgiFormu}\n${dersMateryali}`
+        `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
       );
       const effectiveDersIsmi =
         meta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
@@ -404,41 +394,24 @@ export default function App() {
       const effectiveOkulAdi =
         meta.okulAdi.trim() || detectedDocMeta.okulAdi;
 
-      const compactedYillikPlan = compactDocumentForSelectedWeek(
-        yillikPlan,
-        [meta.haftaEtiketi, meta.tarihAraligi, ...crossDocSearchKeywords],
-        10500
-      );
-      const compactedDersMateryali = compactDocumentForSelectedWeek(
-        dersMateryali,
-        crossDocSearchKeywords,
-        10500
-      );
-      const compactedDersBilgiFormu = dersBilgiFormu.trim()
-        ? compactDocumentForSelectedWeek(
-            dersBilgiFormu,
-            crossDocSearchKeywords,
-            11000
-          )
-        : "";
+      // Decompose the full, untruncated documents in memory and build the XML-tagged context package
+      const { xmlPayload, structuredDbf, weekData, materyalSlice } =
+        buildXmlContextPayloadWithAnalysis({
+          yillik_plan: yillikPlan,
+          ders_materyali: dersMateryali,
+          ders_bilgi_formu: dersBilgiFormu,
+          hafta_etiketi: meta.haftaEtiketi,
+          tarih_araligi: meta.tarihAraligi,
+          onay_tarihi: meta.onayTarihi,
+          okul_adi: effectiveOkulAdi,
+          egitim_ogretim_yili: meta.egitimOgretimYili,
+          ders_ismi: effectiveDersIsmi,
+          sinif_duzeyi: effectiveSinifDuzeyi,
+          secilen_hafta_verisi: selectedWeekObj,
+          dosya_adlari: uploadedFileNames,
+        });
 
-      // Wrap all input documents and metadata in explicit XML-like tags (<yillik_plan>, <ders_bilgi_formu>, <ders_materyali>) instead of JSON
-      const xmlContextPayload = buildXmlContextPayload({
-        yillik_plan: compactedYillikPlan,
-        ders_materyali: compactedDersMateryali,
-        ders_bilgi_formu: compactedDersBilgiFormu,
-        hafta_etiketi: meta.haftaEtiketi,
-        tarih_araligi: meta.tarihAraligi,
-        onay_tarihi: meta.onayTarihi,
-        okul_adi: effectiveOkulAdi,
-        egitim_ogretim_yili: meta.egitimOgretimYili,
-        ders_ismi: effectiveDersIsmi,
-        sinif_duzeyi: effectiveSinifDuzeyi,
-        secilen_hafta_verisi: selectedWeekObj,
-        dosya_adlari: uploadedFileNames,
-      });
-
-      let generated: MaarifLessonPlan | null = null;
+      let aiCandidatePlan: Partial<MaarifLessonPlan> | null = null;
 
       try {
         const controller = new AbortController();
@@ -450,7 +423,7 @@ export default function App() {
             "Content-Type": "text/plain; charset=utf-8",
           },
           signal: controller.signal,
-          body: xmlContextPayload,
+          body: xmlPayload,
         });
 
         window.clearTimeout(timeoutId);
@@ -461,7 +434,7 @@ export default function App() {
         }>(response);
 
         if (parsed.ok && parsed.data?.plan) {
-          generated = parsed.data.plan as MaarifLessonPlan;
+          aiCandidatePlan = parsed.data.plan;
         }
       } catch (networkOrProxyErr) {
         console.warn(
@@ -470,26 +443,18 @@ export default function App() {
         );
       }
 
-      // If proxy returned non-JSON ("The page...") or timed out, synthesize directly from the full uploaded documents in memory
-      if (!generated) {
-        generated = synthesizePlanClientSide({
-          yillik_plan: yillikPlan,
-          ders_materyali: dersMateryali,
-          ders_bilgi_formu: dersBilgiFormu,
-          hafta_etiketi: meta.haftaEtiketi,
-          tarih_araligi: meta.tarihAraligi,
-          ders_ismi: effectiveDersIsmi,
-          sinif_duzeyi: effectiveSinifDuzeyi,
-          secilen_hafta_verisi: selectedWeekObj,
-        });
-      }
+      // Enforce 1:1 verbatim integrity for Ders Bilgi Formu & Yıllık Plan fields + merge week-specific AI synthesis for Ders Materyali fields
+      const generated = enforceAndMergeLessonPlan(
+        aiCandidatePlan,
+        structuredDbf,
+        weekData,
+        materyalSlice,
+        {
+          dersIsmi: effectiveDersIsmi,
+          sinifDuzeyi: effectiveSinifDuzeyi,
+        }
+      );
 
-      if (effectiveDersIsmi) {
-        generated.Ders_Bilgisi.Ders = effectiveDersIsmi;
-      }
-      if (effectiveSinifDuzeyi) {
-        generated.Ders_Bilgisi.Sinif = effectiveSinifDuzeyi;
-      }
       if (
         !meta.dersIsmi.trim() ||
         !meta.sinifDuzeyi.trim() ||
@@ -498,8 +463,8 @@ export default function App() {
         setMeta((prev) => ({
           ...prev,
           okulAdi: prev.okulAdi.trim() || effectiveOkulAdi,
-          dersIsmi: prev.dersIsmi.trim() || effectiveDersIsmi,
-          sinifDuzeyi: prev.sinifDuzeyi.trim() || effectiveSinifDuzeyi,
+          dersIsmi: prev.dersIsmi.trim() || generated.Ders_Bilgisi.Ders,
+          sinifDuzeyi: prev.sinifDuzeyi.trim() || generated.Ders_Bilgisi.Sinif,
         }));
       }
 
@@ -512,9 +477,9 @@ export default function App() {
         }`,
         department: generated.Ders_Bilgisi?.Sinif || "",
         inputs: {
-          yillik_plan: compactedYillikPlan,
-          ders_materyali: compactedDersMateryali,
-          ders_bilgi_formu: compactedDersBilgiFormu,
+          yillik_plan: weekData.rawWeekWindowText,
+          ders_materyali: materyalSlice,
+          ders_bilgi_formu: dersBilgiFormu.slice(0, 12000),
         },
         meta: { ...meta },
         plan: generated,

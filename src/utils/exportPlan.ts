@@ -8,12 +8,12 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Highlights Maarif Modeli codes like E2.2., SDB2.2., D12., OB1., KB2.11., a), b) in bold
+// Highlights Maarif Modeli codes like "E2.2. ", "SDB2.2. ", "D12. ", "OB1. ", "KB2.2. ", "a) " in bold
 function formatWithBoldCodesHtml(text: string): string {
   const escaped = escapeHtml(text || "");
   return escaped
     .replace(
-      /\b([A-ZÇĞİÖŞÜ]{1,5}\d+(?:\.\d+)*\.)/g,
+      /\b([A-ZÇĞİÖŞÜ]{1,5}\d+(?:\.\d+)*\.)(?=\s|$)/g,
       "<strong>$1</strong>"
     )
     .replace(/(^|\n)\s*([a-zçğıöşü]\))/gi, "$1<strong>$2</strong>")

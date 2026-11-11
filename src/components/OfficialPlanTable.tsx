@@ -9,10 +9,10 @@ interface OfficialPlanTableProps {
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
 }
 
-// Helper to render codes like E2.2., SDB2.2., D12., OB1., KB2.11. in bold
+// Helper to render codes like "E2.2. ", "SDB2.2. ", "D12. ", "OB1. ", "KB2.2. " in bold when followed by space
 function renderTextWithBoldCodes(text: string): React.ReactNode {
   if (!text) return null;
-  const parts = text.split(/(\b[A-ZÇĞİÖŞÜ]{1,5}\d+(?:\.\d+)*\.)/g);
+  const parts = text.split(/(\b[A-ZÇĞİÖŞÜ]{1,5}\d+(?:\.\d+)*\.(?=\s|$))/g);
   return parts.map((part, idx) => {
     if (/^[A-ZÇĞİÖŞÜ]{1,5}\d+(?:\.\d+)*\.$/.test(part)) {
       return (
