@@ -48,12 +48,34 @@ import {
   RefreshCw,
   Printer,
   ChevronDown,
+  Lock,
+  Unlock,
 } from "lucide-react";
 
 type ActiveTab = "workspace" | "official-table" | "saved-plans";
 type UploadFieldKey = "yillik_plan" | "ders_materyali" | "ders_bilgi_formu";
+type LockableMetaKey =
+  | "okulAdi"
+  | "egitimOgretimYili"
+  | "dersIsmi"
+  | "sinifDuzeyi"
+  | "ogretmenAdSoyad"
+  | "ogretmenBransi"
+  | "okulMuduruAdSoyad";
+
+const LOCKABLE_META_KEYS: LockableMetaKey[] = [
+  "okulAdi",
+  "egitimOgretimYili",
+  "dersIsmi",
+  "sinifDuzeyi",
+  "ogretmenAdSoyad",
+  "ogretmenBransi",
+  "okulMuduruAdSoyad",
+];
 
 const STORAGE_KEY = "maarif_atolye_saved_plans_v4";
+const META_VALUES_STORAGE_KEY = "maarif_atolye_meta_values_v1";
+const LOCKED_FIELDS_STORAGE_KEY = "maarif_atolye_locked_fields_v1";
 const MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024; // 40 MB
 const ACCEPTED_FILE_EXTENSIONS = ".pdf,.docx,.doc,.xlsx,.xls,.txt,.md,.csv,.rtf";
 
@@ -107,19 +129,146 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("workspace");
   const [isExportConfigOpen, setIsExportConfigOpen] = useState<boolean>(false);
 
-  // Header & Footer Document Metadata Fields
-  const [meta, setMeta] = useState<DocumentHeaderFooterMeta>({
-    okulAdi: "",
-    egitimOgretimYili: "2026-2027 Eğitim ve Öğretim Yılı 1. Dönem",
-    dersIsmi: "",
-    sinifDuzeyi: "",
-    haftaEtiketi: "1. HAFTA",
-    tarihAraligi: "14 - 18 Eylül",
-    onayTarihi: "14/09/2026",
-    ogretmenAdSoyad: "",
-    ogretmenBransi: "Ders Öğretmeni",
-    okulMuduruAdSoyad: "",
+  // Header & Footer Document Metadata Fields (persisted across sessions)
+  const [meta, setMeta] = useState<DocumentHeaderFooterMeta>(() => {
+    const defaults: DocumentHeaderFooterMeta = {
+      okulAdi: "",
+      egitimOgretimYili: "2026-2027 Eğitim ve Öğretim Yılı 1. Dönem",
+      dersIsmi: "",
+      sinifDuzeyi: "",
+      haftaEtiketi: "1. HAFTA",
+      tarihAraligi: "14 - 18 Eylül",
+      onayTarihi: "14/09/2026",
+      ogretmenAdSoyad: "",
+      ogretmenBransi: "Ders Öğretmeni",
+      okulMuduruAdSoyad: "",
+    };
+    try {
+      const raw = localStorage.getItem(META_VALUES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          return {
+            ...defaults,
+            okulAdi: String(parsed.okulAdi ?? defaults.okulAdi),
+            egitimOgretimYili: String(
+              parsed.egitimOgretimYili ?? defaults.egitimOgretimYili
+            ),
+            dersIsmi: String(parsed.dersIsmi ?? defaults.dersIsmi),
+            sinifDuzeyi: String(parsed.sinifDuzeyi ?? defaults.sinifDuzeyi),
+            ogretmenAdSoyad: String(
+              parsed.ogretmenAdSoyad ?? defaults.ogretmenAdSoyad
+            ),
+            ogretmenBransi: String(
+              parsed.ogretmenBransi ?? defaults.ogretmenBransi
+            ),
+            okulMuduruAdSoyad: String(
+              parsed.okulMuduruAdSoyad ?? defaults.okulMuduruAdSoyad
+            ),
+          };
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return defaults;
   });
+
+  // Individual & Bulk Lock state for the 7 school/course/signature fields
+  const [lockedFields, setLockedFields] = useState<
+    Record<LockableMetaKey, boolean>
+  >(() => {
+    const defaultLocks: Record<LockableMetaKey, boolean> = {
+      okulAdi: false,
+      egitimOgretimYili: false,
+      dersIsmi: false,
+      sinifDuzeyi: false,
+      ogretmenAdSoyad: false,
+      ogretmenBransi: false,
+      okulMuduruAdSoyad: false,
+    };
+    try {
+      const raw = localStorage.getItem(LOCKED_FIELDS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          return {
+            okulAdi: Boolean(parsed.okulAdi),
+            egitimOgretimYili: Boolean(parsed.egitimOgretimYili),
+            dersIsmi: Boolean(parsed.dersIsmi),
+            sinifDuzeyi: Boolean(parsed.sinifDuzeyi),
+            ogretmenAdSoyad: Boolean(parsed.ogretmenAdSoyad),
+            ogretmenBransi: Boolean(parsed.ogretmenBransi),
+            okulMuduruAdSoyad: Boolean(parsed.okulMuduruAdSoyad),
+          };
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return defaultLocks;
+  });
+
+  const lockedFieldsRef = useRef<Record<LockableMetaKey, boolean>>(lockedFields);
+  useEffect(() => {
+    lockedFieldsRef.current = lockedFields;
+    try {
+      localStorage.setItem(
+        LOCKED_FIELDS_STORAGE_KEY,
+        JSON.stringify(lockedFields)
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [lockedFields]);
+
+  useEffect(() => {
+    try {
+      const toPersist: Record<LockableMetaKey, string> = {
+        okulAdi: meta.okulAdi,
+        egitimOgretimYili: meta.egitimOgretimYili,
+        dersIsmi: meta.dersIsmi,
+        sinifDuzeyi: meta.sinifDuzeyi,
+        ogretmenAdSoyad: meta.ogretmenAdSoyad,
+        ogretmenBransi: meta.ogretmenBransi,
+        okulMuduruAdSoyad: meta.okulMuduruAdSoyad,
+      };
+      localStorage.setItem(META_VALUES_STORAGE_KEY, JSON.stringify(toPersist));
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    meta.okulAdi,
+    meta.egitimOgretimYili,
+    meta.dersIsmi,
+    meta.sinifDuzeyi,
+    meta.ogretmenAdSoyad,
+    meta.ogretmenBransi,
+    meta.okulMuduruAdSoyad,
+  ]);
+
+  const toggleFieldLock = (key: LockableMetaKey) => {
+    setLockedFields((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const lockedCount = LOCKABLE_META_KEYS.filter((k) => lockedFields[k]).length;
+  const areAllFieldsLocked = lockedCount === LOCKABLE_META_KEYS.length;
+
+  const toggleLockAllFields = () => {
+    const nextValue = !areAllFieldsLocked;
+    setLockedFields({
+      okulAdi: nextValue,
+      egitimOgretimYili: nextValue,
+      dersIsmi: nextValue,
+      sinifDuzeyi: nextValue,
+      ogretmenAdSoyad: nextValue,
+      ogretmenBransi: nextValue,
+      okulMuduruAdSoyad: nextValue,
+    });
+  };
 
   // Extracted weeks from the user's uploaded Yıllık Plan
   const [extractedWeeks, setExtractedWeeks] = useState<YillikPlanWeekItem[]>([]);
@@ -406,13 +555,18 @@ export default function App() {
       setExtractedWeeks(localDeterministicWeeks);
       const firstLocal = localDeterministicWeeks[0];
       setSelectedWeekId(firstLocal.id);
+      const locks = lockedFieldsRef.current;
       setMeta((prev) => ({
         ...prev,
-        okulAdi: detectedDocMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
-        dersIsmi:
-          detectedDocMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
-        sinifDuzeyi:
-          detectedDocMeta.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
+        okulAdi: locks.okulAdi
+          ? prev.okulAdi
+          : detectedDocMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
+        dersIsmi: locks.dersIsmi
+          ? prev.dersIsmi
+          : detectedDocMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+        sinifDuzeyi: locks.sinifDuzeyi
+          ? prev.sinifDuzeyi
+          : detectedDocMeta.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
         haftaEtiketi: firstLocal.haftaEtiketi,
         tarihAraligi: firstLocal.tarihAraligi,
         onayTarihi:
@@ -487,23 +641,27 @@ export default function App() {
         setExtractedWeeks(mergedWeeks);
         const firstWeek = mergedWeeks[0];
         setSelectedWeekId(firstWeek.id);
+        const locks = lockedFieldsRef.current;
         setMeta((prev) => ({
           ...prev,
-          okulAdi:
-            data.okulAdi?.trim() ||
-            detectedDocMeta.okulAdi?.trim() ||
-            prev.okulAdi.trim() ||
-            "",
-          dersIsmi:
-            data.dersIsmi?.trim() ||
-            detectedDocMeta.dersIsmi?.trim() ||
-            prev.dersIsmi.trim() ||
-            "",
-          sinifDuzeyi:
-            data.sinifDuzeyi?.trim() ||
-            detectedDocMeta.sinifDuzeyi?.trim() ||
-            prev.sinifDuzeyi.trim() ||
-            "",
+          okulAdi: locks.okulAdi
+            ? prev.okulAdi
+            : data.okulAdi?.trim() ||
+              detectedDocMeta.okulAdi?.trim() ||
+              prev.okulAdi.trim() ||
+              "",
+          dersIsmi: locks.dersIsmi
+            ? prev.dersIsmi
+            : data.dersIsmi?.trim() ||
+              detectedDocMeta.dersIsmi?.trim() ||
+              prev.dersIsmi.trim() ||
+              "",
+          sinifDuzeyi: locks.sinifDuzeyi
+            ? prev.sinifDuzeyi
+            : data.sinifDuzeyi?.trim() ||
+              detectedDocMeta.sinifDuzeyi?.trim() ||
+              prev.sinifDuzeyi.trim() ||
+              "",
           haftaEtiketi: firstWeek.haftaEtiketi,
           tarihAraligi: firstWeek.tarihAraligi,
           onayTarihi:
@@ -575,18 +733,22 @@ export default function App() {
         [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
       }));
 
-      // Overwrite Okul Adı, Ders İsmi, and Sınıf Düzeyi whenever detected in the newly uploaded document
+      // Overwrite Okul Adı, Ders İsmi, and Sınıf Düzeyi whenever detected in the newly uploaded document (unless locked by the user)
       if (result.detectedMeta) {
+        const locks = lockedFieldsRef.current;
         setMeta((prev) => ({
           ...prev,
-          okulAdi:
-            result.detectedMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
-          dersIsmi:
-            result.detectedMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
-          sinifDuzeyi:
-            result.detectedMeta.sinifDuzeyi?.trim() ||
-            prev.sinifDuzeyi.trim() ||
-            "",
+          okulAdi: locks.okulAdi
+            ? prev.okulAdi
+            : result.detectedMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
+          dersIsmi: locks.dersIsmi
+            ? prev.dersIsmi
+            : result.detectedMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+          sinifDuzeyi: locks.sinifDuzeyi
+            ? prev.sinifDuzeyi
+            : result.detectedMeta.sinifDuzeyi?.trim() ||
+              prev.sinifDuzeyi.trim() ||
+              "",
         }));
       }
 
@@ -896,7 +1058,27 @@ export default function App() {
     setDersMateryali(record.inputs.ders_materyali);
     setDersBilgiFormu(record.inputs.ders_bilgi_formu || "");
     if (record.meta) {
-      setMeta(record.meta);
+      const locks = lockedFieldsRef.current;
+      setMeta((prev) => ({
+        ...record.meta,
+        okulAdi: locks.okulAdi ? prev.okulAdi : record.meta.okulAdi,
+        egitimOgretimYili: locks.egitimOgretimYili
+          ? prev.egitimOgretimYili
+          : record.meta.egitimOgretimYili,
+        dersIsmi: locks.dersIsmi ? prev.dersIsmi : record.meta.dersIsmi,
+        sinifDuzeyi: locks.sinifDuzeyi
+          ? prev.sinifDuzeyi
+          : record.meta.sinifDuzeyi,
+        ogretmenAdSoyad: locks.ogretmenAdSoyad
+          ? prev.ogretmenAdSoyad
+          : record.meta.ogretmenAdSoyad,
+        ogretmenBransi: locks.ogretmenBransi
+          ? prev.ogretmenBransi
+          : record.meta.ogretmenBransi,
+        okulMuduruAdSoyad: locks.okulMuduruAdSoyad
+          ? prev.okulMuduruAdSoyad
+          : record.meta.okulMuduruAdSoyad,
+      }));
     }
     setCurrentPlan(record.plan);
     setActiveTab("official-table");
@@ -1047,79 +1229,259 @@ export default function App() {
             {/* School, Course, Week/Date & Teacher/Principal Metadata Card */}
             <div className="no-print bg-white border border-slate-200/90 rounded-xl overflow-hidden shadow-xs">
               <div className="p-6 space-y-6">
+                {/* Lock All / Unlock All Toolbar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/80">
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    {lockedCount > 0 ? (
+                      <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    ) : (
+                      <Unlock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    )}
+                    <span>
+                      {lockedCount > 0
+                        ? `${lockedCount} / ${LOCKABLE_META_KEYS.length} bilgi kilitlendi ve hafızaya alındı (yeni dosya yüklendiğinde korunur)`
+                        : "Her seferinde tekrar girmemek için bilgileri tek tek veya tümüyle kilitleyebilirsiniz"}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={toggleLockAllFields}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border shadow-2xs ${
+                      areAllFieldsLocked
+                        ? "bg-amber-100 border-amber-300 text-amber-950 hover:bg-amber-200"
+                        : "bg-indigo-950 border-indigo-950 text-white hover:bg-indigo-900"
+                    }`}
+                  >
+                    {areAllFieldsLocked ? (
+                      <>
+                        <Unlock className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Tüm Kilitleri Aç</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Tümünü Kilitle</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
                 {/* Row 1: Okul Adı, Eğitim ve Öğretim Yılı, Ders İsmi, Sınıf Düzeyi */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <label
-                      htmlFor="meta-okul-adi"
-                      className="block text-xs font-semibold text-indigo-950 mb-1.5"
-                    >
-                      Okul Adı
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="meta-okul-adi"
+                        className="block text-xs font-semibold text-indigo-950"
+                      >
+                        Okul Adı
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleFieldLock("okulAdi")}
+                        title={
+                          lockedFields.okulAdi
+                            ? "Kilidi açmak için tıklayın"
+                            : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                          lockedFields.okulAdi
+                            ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                            : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {lockedFields.okulAdi ? (
+                          <>
+                            <Lock className="w-3 h-3 text-amber-700" />
+                            <span>Kilitli</span>
+                          </>
+                        ) : (
+                          <>
+                            <Unlock className="w-3 h-3 text-slate-500" />
+                            <span>Kilitle</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <input
                       id="meta-okul-adi"
                       type="text"
+                      readOnly={lockedFields.okulAdi}
                       value={meta.okulAdi}
-                      onChange={(e) => updateMetaField("okulAdi", e.target.value)}
+                      onChange={(e) => {
+                        if (!lockedFields.okulAdi) {
+                          updateMetaField("okulAdi", e.target.value);
+                        }
+                      }}
                       placeholder="Örn: Atatürk Anadolu Lisesi Müdürlüğü"
-                      className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
+                      className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                        lockedFields.okulAdi
+                          ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                          : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-indigo-600"
+                      }`}
                     />
                   </div>
 
                   <div>
-                    <label
-                      htmlFor="meta-egitim-yili"
-                      className="block text-xs font-semibold text-indigo-950 mb-1.5"
-                    >
-                      Eğitim ve Öğretim Yılı:
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="meta-egitim-yili"
+                        className="block text-xs font-semibold text-indigo-950"
+                      >
+                        Eğitim ve Öğretim Yılı:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleFieldLock("egitimOgretimYili")}
+                        title={
+                          lockedFields.egitimOgretimYili
+                            ? "Kilidi açmak için tıklayın"
+                            : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                          lockedFields.egitimOgretimYili
+                            ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                            : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {lockedFields.egitimOgretimYili ? (
+                          <>
+                            <Lock className="w-3 h-3 text-amber-700" />
+                            <span>Kilitli</span>
+                          </>
+                        ) : (
+                          <>
+                            <Unlock className="w-3 h-3 text-slate-500" />
+                            <span>Kilitle</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <input
                       id="meta-egitim-yili"
                       type="text"
+                      readOnly={lockedFields.egitimOgretimYili}
                       value={meta.egitimOgretimYili}
-                      onChange={(e) =>
-                        updateMetaField("egitimOgretimYili", e.target.value)
-                      }
+                      onChange={(e) => {
+                        if (!lockedFields.egitimOgretimYili) {
+                          updateMetaField("egitimOgretimYili", e.target.value);
+                        }
+                      }}
                       placeholder="Örn. 2026-2027 Eğitim ve Öğretim Yılı 1. Dönem"
-                      className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
+                      className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                        lockedFields.egitimOgretimYili
+                          ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                          : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-indigo-600"
+                      }`}
                     />
                   </div>
 
                   <div>
-                    <label
-                      htmlFor="meta-ders-ismi"
-                      className="block text-xs font-semibold text-indigo-950 mb-1.5"
-                    >
-                      Ders İsmi:
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="meta-ders-ismi"
+                        className="block text-xs font-semibold text-indigo-950"
+                      >
+                        Ders İsmi:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleFieldLock("dersIsmi")}
+                        title={
+                          lockedFields.dersIsmi
+                            ? "Kilidi açmak için tıklayın"
+                            : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                          lockedFields.dersIsmi
+                            ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                            : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {lockedFields.dersIsmi ? (
+                          <>
+                            <Lock className="w-3 h-3 text-amber-700" />
+                            <span>Kilitli</span>
+                          </>
+                        ) : (
+                          <>
+                            <Unlock className="w-3 h-3 text-slate-500" />
+                            <span>Kilitle</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <input
                       id="meta-ders-ismi"
                       type="text"
+                      readOnly={lockedFields.dersIsmi}
                       value={meta.dersIsmi}
-                      onChange={(e) =>
-                        updateMetaField("dersIsmi", e.target.value)
-                      }
+                      onChange={(e) => {
+                        if (!lockedFields.dersIsmi) {
+                          updateMetaField("dersIsmi", e.target.value);
+                        }
+                      }}
                       placeholder="Örn: Biyoloji"
-                      className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
+                      className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                        lockedFields.dersIsmi
+                          ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                          : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-indigo-600"
+                      }`}
                     />
                   </div>
 
                   <div>
-                    <label
-                      htmlFor="meta-sinif-duzeyi"
-                      className="block text-xs font-semibold text-indigo-950 mb-1.5"
-                    >
-                      Sınıf Düzeyi:
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="meta-sinif-duzeyi"
+                        className="block text-xs font-semibold text-indigo-950"
+                      >
+                        Sınıf Düzeyi:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleFieldLock("sinifDuzeyi")}
+                        title={
+                          lockedFields.sinifDuzeyi
+                            ? "Kilidi açmak için tıklayın"
+                            : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                          lockedFields.sinifDuzeyi
+                            ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                            : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {lockedFields.sinifDuzeyi ? (
+                          <>
+                            <Lock className="w-3 h-3 text-amber-700" />
+                            <span>Kilitli</span>
+                          </>
+                        ) : (
+                          <>
+                            <Unlock className="w-3 h-3 text-slate-500" />
+                            <span>Kilitle</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <input
                       id="meta-sinif-duzeyi"
                       type="text"
+                      readOnly={lockedFields.sinifDuzeyi}
                       value={meta.sinifDuzeyi}
-                      onChange={(e) =>
-                        updateMetaField("sinifDuzeyi", e.target.value)
-                      }
+                      onChange={(e) => {
+                        if (!lockedFields.sinifDuzeyi) {
+                          updateMetaField("sinifDuzeyi", e.target.value);
+                        }
+                      }}
                       placeholder="Örn. 9. Sınıf"
-                      className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
+                      className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                        lockedFields.sinifDuzeyi
+                          ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                          : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-indigo-600"
+                      }`}
                     />
                   </div>
                 </div>
@@ -1328,69 +1690,197 @@ export default function App() {
 
                 {/* Row 3: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}
                 <div className="pt-4 border-t border-slate-200/80">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h2 className="text-xs font-semibold text-teal-900">
                       Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır)
                     </h2>
-                    <span className="text-[11px] text-slate-500">
-                      Planın en altındaki imza bloğuna otomatik eklenir
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-slate-500">
+                        Planın en altındaki imza bloğuna otomatik eklenir
+                      </span>
+                      <button
+                        type="button"
+                        onClick={toggleLockAllFields}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors border ${
+                          areAllFieldsLocked
+                            ? "bg-amber-100 border-amber-300 text-amber-950 hover:bg-amber-200"
+                            : "bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        {areAllFieldsLocked ? (
+                          <>
+                            <Unlock className="w-3 h-3 text-amber-700" />
+                            <span>Tüm Kilitleri Aç</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3 h-3 text-indigo-700" />
+                            <span>Tümünü Kilitle</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label
-                        htmlFor="meta-ogretmen-ad"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Öğretmen Adı Soyadı
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <label
+                          htmlFor="meta-ogretmen-ad"
+                          className="block text-xs font-semibold text-slate-800"
+                        >
+                          Öğretmen Adı Soyadı
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => toggleFieldLock("ogretmenAdSoyad")}
+                          title={
+                            lockedFields.ogretmenAdSoyad
+                              ? "Kilidi açmak için tıklayın"
+                              : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                            lockedFields.ogretmenAdSoyad
+                              ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                              : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {lockedFields.ogretmenAdSoyad ? (
+                            <>
+                              <Lock className="w-3 h-3 text-amber-700" />
+                              <span>Kilitli</span>
+                            </>
+                          ) : (
+                            <>
+                              <Unlock className="w-3 h-3 text-slate-500" />
+                              <span>Kilitle</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                       <input
                         id="meta-ogretmen-ad"
                         type="text"
+                        readOnly={lockedFields.ogretmenAdSoyad}
                         value={meta.ogretmenAdSoyad}
-                        onChange={(e) =>
-                          updateMetaField("ogretmenAdSoyad", e.target.value)
-                        }
+                        onChange={(e) => {
+                          if (!lockedFields.ogretmenAdSoyad) {
+                            updateMetaField("ogretmenAdSoyad", e.target.value);
+                          }
+                        }}
                         placeholder="Örn: Ayşe Demir"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
+                        className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                          lockedFields.ogretmenAdSoyad
+                            ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                            : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-teal-600"
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label
-                        htmlFor="meta-ogretmen-brans"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Öğretmen Branşı
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <label
+                          htmlFor="meta-ogretmen-brans"
+                          className="block text-xs font-semibold text-slate-800"
+                        >
+                          Öğretmen Branşı
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => toggleFieldLock("ogretmenBransi")}
+                          title={
+                            lockedFields.ogretmenBransi
+                              ? "Kilidi açmak için tıklayın"
+                              : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                            lockedFields.ogretmenBransi
+                              ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                              : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {lockedFields.ogretmenBransi ? (
+                            <>
+                              <Lock className="w-3 h-3 text-amber-700" />
+                              <span>Kilitli</span>
+                            </>
+                          ) : (
+                            <>
+                              <Unlock className="w-3 h-3 text-slate-500" />
+                              <span>Kilitle</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                       <input
                         id="meta-ogretmen-brans"
                         type="text"
+                        readOnly={lockedFields.ogretmenBransi}
                         value={meta.ogretmenBransi}
-                        onChange={(e) =>
-                          updateMetaField("ogretmenBransi", e.target.value)
-                        }
-                        placeholder="Örn: Biyoloji Öğretmeni"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
+                        onChange={(e) => {
+                          if (!lockedFields.ogretmenBransi) {
+                            updateMetaField("ogretmenBransi", e.target.value);
+                          }
+                        }}
+                        placeholder="Örn: Ders Öğretmeni"
+                        className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                          lockedFields.ogretmenBransi
+                            ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                            : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-teal-600"
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label
-                        htmlFor="meta-okul-muduru"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Okul Müdürü Adı Soyadı
-                      </label>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <label
+                          htmlFor="meta-okul-muduru"
+                          className="block text-xs font-semibold text-slate-800"
+                        >
+                          Okul Müdürü Adı Soyadı
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => toggleFieldLock("okulMuduruAdSoyad")}
+                          title={
+                            lockedFields.okulMuduruAdSoyad
+                              ? "Kilidi açmak için tıklayın"
+                              : "Bu alanı sabitlemek/kilitlemek için tıklayın"
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-colors border ${
+                            lockedFields.okulMuduruAdSoyad
+                              ? "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                              : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {lockedFields.okulMuduruAdSoyad ? (
+                            <>
+                              <Lock className="w-3 h-3 text-amber-700" />
+                              <span>Kilitli</span>
+                            </>
+                          ) : (
+                            <>
+                              <Unlock className="w-3 h-3 text-slate-500" />
+                              <span>Kilitle</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                       <input
                         id="meta-okul-muduru"
                         type="text"
+                        readOnly={lockedFields.okulMuduruAdSoyad}
                         value={meta.okulMuduruAdSoyad}
-                        onChange={(e) =>
-                          updateMetaField("okulMuduruAdSoyad", e.target.value)
-                        }
+                        onChange={(e) => {
+                          if (!lockedFields.okulMuduruAdSoyad) {
+                            updateMetaField("okulMuduruAdSoyad", e.target.value);
+                          }
+                        }}
                         placeholder="Örn: Mehmet Yılmaz"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
+                        className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
+                          lockedFields.okulMuduruAdSoyad
+                            ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                            : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-teal-600"
+                        }`}
                       />
                     </div>
                   </div>
