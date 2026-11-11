@@ -199,12 +199,16 @@ export function parseQuickWeeksClient(
       ogrenmeBirimi = sanitizeShortTopicTitle(unitMatch[1], "");
     }
 
-    if (!ogrenmeBirimi && effectiveUnitNo > 0 && structuredDbf.unitsByNumber[effectiveUnitNo]) {
-      ogrenmeBirimi = structuredDbf.unitsByNumber[effectiveUnitNo];
-    }
-
     if (!ogrenmeBirimi && displayOutcome) {
       ogrenmeBirimi = deriveUnitNameFromOutcome(displayOutcome);
+    }
+
+    if (
+      !ogrenmeBirimi &&
+      effectiveUnitNo > 0 &&
+      structuredDbf.unitsByNumber[effectiveUnitNo]
+    ) {
+      ogrenmeBirimi = structuredDbf.unitsByNumber[effectiveUnitNo];
     }
 
     if (ogrenmeBirimi) {

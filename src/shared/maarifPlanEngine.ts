@@ -1391,9 +1391,7 @@ export function parseDersBilgiFormuStructured(
 
   // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, BÜY.1.1, etc.) and Sub-Process Components (a, b, c, ç, d, e)
   const outcomesMap: Record<string, ParsedOutcomeEntry> = {};
-  const unitsByNumber: Record<number, string> = {
-    ...materyalTree.unitsByNumber,
-  };
+  const unitsByNumber: Record<number, string> = {};
 
   const outcomeLineRegex =
     /(?:^|\s|\|)([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?(?:\s+([A-ZÇĞİÖŞÜa-zçğıöşü].*))?$/;
@@ -1484,6 +1482,14 @@ export function parseDersBilgiFormuStructured(
             deriveTopicHeadingFromOutcome(headerLine);
         }
 
+        // Derive the unit name directly from the outcome sentence when unitNumber is first seen
+        if (!unitsByNumber[unitNumber] && cleanMainSentence.length >= 4) {
+          const derivedUnit = deriveUnitNameFromOutcome(headerLine);
+          if (derivedUnit) {
+            unitsByNumber[unitNumber] = derivedUnit;
+          }
+        }
+
         // Extract any inline sub-components ("a) ... b) ...") that appeared on the same line
         const rawRestForSubs = outcomeMatch[5] || "";
         let inlineMatch: RegExpExecArray | null;
@@ -1562,11 +1568,45 @@ export function parseDersBilgiFormuStructured(
     }
   }
 
+  // Verify whether materyalTree belongs to the SAME course as the active outcomesMap / Yıllık Plan
+  let isMateryalCompatible = true;
+  if (
+    Object.keys(unitsByNumber).length > 0 &&
+    Object.keys(materyalTree.unitsByNumber).length > 0
+  ) {
+    const activeUnit1 = (unitsByNumber[1] || "").toLocaleLowerCase("tr-TR");
+    const matUnit1 = (materyalTree.unitsByNumber[1] || "").toLocaleLowerCase(
+      "tr-TR"
+    );
+    if (activeUnit1 && matUnit1) {
+      const activeWords = activeUnit1
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+      const hasOverlap = activeWords.some((w) =>
+        matUnit1.includes(w.slice(0, 4))
+      );
+      if (!hasOverlap) {
+        isMateryalCompatible = false;
+      }
+    }
+  }
+
+  if (isMateryalCompatible) {
+    for (const [uNoStr, uName] of Object.entries(materyalTree.unitsByNumber)) {
+      const uNo = Number(uNoStr);
+      if (!unitsByNumber[uNo] && uName) {
+        unitsByNumber[uNo] = uName;
+      }
+    }
+  }
+
   // Enrich outcomesMap from Ders Materyali chapter tree (1.1, 1.1.1..1.1.6, 1.2, 1.2.1..1.2.4)
   // AND canonical MEB textbook mappings when EK-3 Ders Bilgi Formu only had unit-level outcomes without a), b), c), ç)
   for (const [code, entry] of Object.entries(outcomesMap)) {
     const uoKey = `${entry.unitNumber}.${entry.outcomeNumber}`;
-    const matSec = materyalTree.sectionsByUnitAndOutcome[uoKey];
+    const matSec = isMateryalCompatible
+      ? materyalTree.sectionsByUnitAndOutcome[uoKey]
+      : undefined;
     const canonical = CANONICAL_MEB_TEXTBOOK_OUTCOMES[code];
 
     if (matSec) {

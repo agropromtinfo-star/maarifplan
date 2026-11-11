@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   MaarifLessonPlan,
   DocumentHeaderFooterMeta,
@@ -200,11 +200,70 @@ export default function App() {
     }));
   };
 
-  const activeWeekList =
-    extractedWeeks.length > 0 ? extractedWeeks : DEFAULT_MEB_WEEKS;
+  // Request ID tracker to discard stale async week-parse responses when a new course is uploaded
+  const weekParseRequestIdRef = useRef<number>(0);
 
-  const selectedWeekObj =
-    activeWeekList.find((w) => w.id === selectedWeekId) || activeWeekList[0];
+  // Memoized deterministic week & unit list derived directly from the active course documents
+  const localParsedWeeks = useMemo<YillikPlanWeekItem[]>(() => {
+    if (!yillikPlan.trim()) return [];
+    return parseQuickWeeksClient(yillikPlan, dersBilgiFormu, dersMateryali);
+  }, [yillikPlan, dersBilgiFormu, dersMateryali]);
+
+  // Memoized activeWeekList that always binds to the current document's weeks & units and never carries stale course units
+  const activeWeekList = useMemo<YillikPlanWeekItem[]>(() => {
+    if (!yillikPlan.trim()) {
+      return DEFAULT_MEB_WEEKS;
+    }
+
+    if (extractedWeeks.length > 0) {
+      const distinctAiUnits = new Set(
+        extractedWeeks.map((w) => (w.ogrenmeBirimi || "").trim()).filter(Boolean)
+      );
+      const distinctLocalUnits = new Set(
+        localParsedWeeks
+          .map((w) => (w.ogrenmeBirimi || "").trim())
+          .filter(Boolean)
+      );
+
+      return extractedWeeks.map((w) => {
+        const localMatch = localParsedWeeks.find(
+          (lw) => lw.haftaNo === w.haftaNo
+        );
+        const preferLocalUnit =
+          Boolean(localMatch?.ogrenmeBirimi) &&
+          (!w.ogrenmeBirimi ||
+            (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
+            (distinctLocalUnits.size > 0 &&
+              !distinctLocalUnits.has((w.ogrenmeBirimi || "").trim())));
+
+        return {
+          ...w,
+          tarihAraligi: resolveValidDateRange(
+            w.tarihAraligi || localMatch?.tarihAraligi || "",
+            w.haftaNo
+          ),
+          ogrenmeBirimi: preferLocalUnit
+            ? localMatch!.ogrenmeBirimi
+            : w.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
+          konuVeCiktiOzeti:
+            localMatch?.konuVeCiktiOzeti || w.konuVeCiktiOzeti || "",
+          sure: w.sure || localMatch?.sure || "",
+        };
+      });
+    }
+
+    if (localParsedWeeks.length > 0) {
+      return localParsedWeeks;
+    }
+
+    return DEFAULT_MEB_WEEKS;
+  }, [yillikPlan, extractedWeeks, localParsedWeeks]);
+
+  const selectedWeekObj = useMemo<YillikPlanWeekItem>(() => {
+    return (
+      activeWeekList.find((w) => w.id === selectedWeekId) || activeWeekList[0]
+    );
+  }, [activeWeekList, selectedWeekId]);
 
   const handleSelectWeek = (weekId: string) => {
     setSelectedWeekId(weekId);
@@ -223,42 +282,79 @@ export default function App() {
     }
   };
 
-  // Automatically recompute weeks and unit names whenever Yıllık Plan, Ders Bilgi Formu, or Ders Materyali changes
+  // Synchronize extractedWeeks and selectedWeekId whenever the active course documents change
   useEffect(() => {
     if (!yillikPlan.trim()) {
       setExtractedWeeks([]);
       setSelectedWeekId("meb-1");
       return;
     }
-    const recomputed = parseQuickWeeksClient(
-      yillikPlan,
-      dersBilgiFormu,
-      dersMateryali
-    );
-    if (recomputed.length > 0) {
-      setExtractedWeeks(recomputed);
+    if (localParsedWeeks.length > 0) {
+      setExtractedWeeks(localParsedWeeks);
       setSelectedWeekId((prevId) => {
-        const exists = recomputed.some((w) => w.id === prevId);
-        return exists ? prevId : recomputed[0].id;
+        const exists = localParsedWeeks.some((w) => w.id === prevId);
+        return exists ? prevId : localParsedWeeks[0].id;
       });
     }
-  }, [yillikPlan, dersBilgiFormu, dersMateryali]);
+  }, [yillikPlan, dersBilgiFormu, dersMateryali, localParsedWeeks]);
 
-  // Extracts structured weeks & dates from the uploaded/pasted Yıllık Plan
-  const analyzeWeeksFromYillikPlan = async (planText: string) => {
-    if (!planText.trim()) return;
+  // Clears cached week/unit state from any previous course and binds the new document's weeks & units
+  const analyzeWeeksFromYillikPlan = async (
+    planText: string,
+    overrides?: { dbfText?: string; materyalText?: string }
+  ) => {
+    const cleanText = (planText || "").trim();
+    const requestId = ++weekParseRequestIdRef.current;
+
+    // 1. Immediately purge cached week/unit state from previous course uploads
+    setExtractedWeeks([]);
+
+    if (!cleanText) {
+      setSelectedWeekId("meb-1");
+      return;
+    }
+
+    const activeDbf =
+      overrides?.dbfText !== undefined ? overrides.dbfText : dersBilgiFormu;
+    const activeMateryal =
+      overrides?.materyalText !== undefined
+        ? overrides.materyalText
+        : dersMateryali;
+
+    // 2. Compute fresh deterministic weeks & units strictly from the new course document
+    const localDeterministicWeeks = parseQuickWeeksClient(
+      cleanText,
+      activeDbf,
+      activeMateryal
+    );
+    const detectedDocMeta = extractDocumentMetadataClient(cleanText);
+
+    if (localDeterministicWeeks.length > 0) {
+      setExtractedWeeks(localDeterministicWeeks);
+      const firstLocal = localDeterministicWeeks[0];
+      setSelectedWeekId(firstLocal.id);
+      setMeta((prev) => ({
+        ...prev,
+        okulAdi: detectedDocMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
+        dersIsmi:
+          detectedDocMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+        sinifDuzeyi:
+          detectedDocMeta.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
+        haftaEtiketi: firstLocal.haftaEtiketi,
+        tarihAraligi: firstLocal.tarihAraligi,
+        onayTarihi:
+          firstLocal.onayTarihi ||
+          inferApprovalDateClient(firstLocal.tarihAraligi) ||
+          prev.onayTarihi,
+      }));
+    }
+
     setIsParsingWeeks(true);
     try {
-      const localDeterministicWeeks = parseQuickWeeksClient(
-        planText,
-        dersBilgiFormu,
-        dersMateryali
-      );
-
       const response = await fetch("/api/parse-weeks", {
         method: "POST",
         headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: `<yillik_plan>${planText.slice(0, 12000)}</yillik_plan>`,
+        body: `<yillik_plan>${cleanText.slice(0, 12000)}</yillik_plan>`,
       });
       const parsed = await safeReadJsonResponse<{
         okulAdi?: string;
@@ -266,6 +362,12 @@ export default function App() {
         sinifDuzeyi?: string;
         weeks?: YillikPlanWeekItem[];
       }>(response);
+
+      // Ignore stale responses if another course upload occurred in the meantime
+      if (requestId !== weekParseRequestIdRef.current) {
+        return;
+      }
+
       if (
         parsed.ok &&
         parsed.data &&
@@ -274,7 +376,6 @@ export default function App() {
       ) {
         const data = parsed.data;
         const aiWeeks = data.weeks!;
-        // Check if AI returned the exact same unit name for every week while local deterministic parser found distinct units
         const distinctAiUnits = new Set(
           aiWeeks.map((w) => (w.ogrenmeBirimi || "").trim()).filter(Boolean)
         );
@@ -289,9 +390,11 @@ export default function App() {
             (lw) => lw.haftaNo === aiW.haftaNo
           );
           const preferLocalUnit =
-            localMatch?.ogrenmeBirimi &&
+            Boolean(localMatch?.ogrenmeBirimi) &&
             (!aiW.ogrenmeBirimi ||
-              (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1));
+              (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
+              (distinctLocalUnits.size > 0 &&
+                !distinctLocalUnits.has((aiW.ogrenmeBirimi || "").trim())));
 
           return {
             ...aiW,
@@ -313,18 +416,35 @@ export default function App() {
         setSelectedWeekId(firstWeek.id);
         setMeta((prev) => ({
           ...prev,
-          okulAdi: data.okulAdi?.trim() || prev.okulAdi.trim() || "",
-          dersIsmi: data.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
-          sinifDuzeyi: data.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
+          okulAdi:
+            data.okulAdi?.trim() ||
+            detectedDocMeta.okulAdi?.trim() ||
+            prev.okulAdi.trim() ||
+            "",
+          dersIsmi:
+            data.dersIsmi?.trim() ||
+            detectedDocMeta.dersIsmi?.trim() ||
+            prev.dersIsmi.trim() ||
+            "",
+          sinifDuzeyi:
+            data.sinifDuzeyi?.trim() ||
+            detectedDocMeta.sinifDuzeyi?.trim() ||
+            prev.sinifDuzeyi.trim() ||
+            "",
           haftaEtiketi: firstWeek.haftaEtiketi,
           tarihAraligi: firstWeek.tarihAraligi,
-          onayTarihi: firstWeek.onayTarihi || prev.onayTarihi,
+          onayTarihi:
+            firstWeek.onayTarihi ||
+            inferApprovalDateClient(firstWeek.tarihAraligi) ||
+            prev.onayTarihi,
         }));
       }
     } catch {
-      // keep existing or quickWeeks
+      // keep localDeterministicWeeks bound via activeWeekList useMemo
     } finally {
-      setIsParsingWeeks(false);
+      if (requestId === weekParseRequestIdRef.current) {
+        setIsParsingWeeks(false);
+      }
     }
   };
 
@@ -397,33 +517,17 @@ export default function App() {
         }));
       }
 
-      // If user uploaded Yıllık Plan, reset old course's active plan, immediately populate quickWeeks, and trigger week/date analysis!
+      // Trigger analyzeWeeksFromYillikPlan to purge stale course week cache and re-bind activeWeekList
       if (fieldKey === "yillik_plan") {
         setCurrentPlan(null);
-        const computedWeeks = parseQuickWeeksClient(
-          extractedText,
-          dersBilgiFormu,
-          dersMateryali
-        );
-        const initialWeeks =
-          computedWeeks.length > 0
-            ? computedWeeks
-            : Array.isArray(result.quickWeeks)
-            ? result.quickWeeks
-            : [];
-
-        if (initialWeeks.length > 0) {
-          setExtractedWeeks(initialWeeks);
-          const first = initialWeeks[0];
-          setSelectedWeekId(first.id);
-          setMeta((prev) => ({
-            ...prev,
-            haftaEtiketi: first.haftaEtiketi,
-            tarihAraligi: first.tarihAraligi,
-            onayTarihi: first.onayTarihi || prev.onayTarihi,
-          }));
-        }
-        analyzeWeeksFromYillikPlan(extractedText);
+        await analyzeWeeksFromYillikPlan(extractedText);
+      } else if (yillikPlan.trim()) {
+        await analyzeWeeksFromYillikPlan(yillikPlan, {
+          dbfText:
+            fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu,
+          materyalText:
+            fieldKey === "ders_materyali" ? extractedText : dersMateryali,
+        });
       }
     } catch (err: unknown) {
       const msg =
@@ -766,13 +870,6 @@ export default function App() {
             Kayıtlı Planlar ({savedPlans.length})
           </a>
         </nav>
-
-        {/* Zone 3: Clean minimal status (Yellow button removed per user request) */}
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
-            MEB Maarif Modeli
-          </span>
-        </div>
       </header>
 
       {/* Mobile Tab Navigation */}
@@ -1586,9 +1683,7 @@ export default function App() {
                         meta={meta}
                         onUpdatePlan={(updated) => setCurrentPlan(updated)}
                         onUpdateMeta={(updated) => setMeta(updated)}
-                        availableWeeks={
-                          extractedWeeks.length > 0 ? extractedWeeks : DEFAULT_MEB_WEEKS
-                        }
+                        availableWeeks={activeWeekList}
                         onProceedToTable={() => {
                           document
                             .getElementById("official-table-sheet-workspace")
@@ -1625,9 +1720,7 @@ export default function App() {
                   meta={meta}
                   onUpdatePlan={(updated) => setCurrentPlan(updated)}
                   onUpdateMeta={(updated) => setMeta(updated)}
-                  availableWeeks={
-                    extractedWeeks.length > 0 ? extractedWeeks : DEFAULT_MEB_WEEKS
-                  }
+                  availableWeeks={activeWeekList}
                   onProceedToTable={() => {
                     document
                       .getElementById("official-table-sheet-tab2")
@@ -1799,33 +1892,6 @@ export default function App() {
           </div>
         )}
       </main>
-
-      {/* Institutional Footer */}
-      <footer className="no-print border-t border-slate-200 bg-white px-6 py-4 mt-12">
-        <div className="max-w-[1400px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-600">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-indigo-950">Maarif Ders Planlayıcı</span>
-            <span aria-hidden="true">·</span>
-            <span>MEB Türkiye Yüzyılı Maarif Modeli Uyumlu</span>
-          </div>
-          <div className="flex items-center gap-4 font-medium">
-            <button
-              type="button"
-              onClick={() => setActiveTab("official-table")}
-              className="hover:text-indigo-900 transition-colors"
-            >
-              Resmî Tablo Görünümü
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("saved-plans")}
-              className="hover:text-indigo-900 transition-colors"
-            >
-              Kayıtlı Planlar
-            </button>
-          </div>
-        </div>
-      </footer>
 
       {/* Export & Paper-Saving Configurator Modal */}
       {currentPlan && (
