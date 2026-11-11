@@ -110,8 +110,8 @@ export function downloadWordDoc(
   const cellPaddingVal = options.compactPaperSaver ? "2.5px 5px" : "5px 7px";
   const headerFontSizeVal = options.compactPaperSaver ? "10pt" : "11pt";
   const headerMarginVal = options.compactPaperSaver ? "6px" : "12px";
-  const borderColorVal = options.printerFriendlyBorders ? "#3b8296" : "#4bacc6";
-  const bannerBgVal = options.printerFriendlyBorders ? "#d8e6c3" : "#c2d69b";
+  const borderColorVal = "#4bacc6";
+  const bannerBgVal = "#c2d69b";
 
   // Filter helper for 'Boş satırları koru' setting
   const shouldRenderRow = (textValue?: string, arrayValue?: string[]) => {
@@ -163,7 +163,7 @@ export function downloadWordDoc(
     table.plan-table td {
       border: 1px solid ${borderColorVal};
       padding: ${cellPaddingVal};
-      vertical-align: middle;
+      vertical-align: top;
       text-align: left;
     }
     .section-banner {

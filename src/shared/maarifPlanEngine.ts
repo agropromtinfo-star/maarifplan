@@ -222,13 +222,13 @@ export function sanitizeOutcomeOrSubSentence(rawText: string): string {
  */
 export function sanitizeShortTopicTitle(
   rawTitle: string,
-  fallback = "Onarıcı Tarım"
+  fallback = ""
 ): string {
   const cleaned = sanitizeOutcomeOrSubSentence(rawTitle || "")
     .replace(/^[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s*/, "")
     .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
     .replace(
-      /\s+(?:açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|analiz\s+edebilme|analiz\s+eder|değerlendirebilme|değerlendirir|kavrayabilme|kavrar)\.?$/i,
+      /\s+(?:(?:analiz|kontrol|hasat|muhafaza|tespit|ayırt|elde|kayıt|takip)\s+)?(?:yapabilme|yapar|edebilme|eder|açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|değerlendirebilme|değerlendirir|kavrayabilme|kavrar|belirleyebilme|belirler|kullanabilme|kullanır|hazırlayabilme|hazırlar|üretebilme|üretir|yönetebilme|yönetir|tasarlayabilme|tasarlar|seçebilme|seçer|sorgulayabilme|sorgular|çözümleyebilme|çözümler|[a-zçğıöşü]{3,}(?:ebilme|abilme))\.?$/i,
       ""
     )
     .replace(/\.$/, "")
@@ -689,8 +689,58 @@ export function formatFullWeekAndDateRange(
 }
 
 /**
+ * Converts a Turkish outcome sentence like "BÜY.1.1. Generatif üretim yapabilme",
+ * "ST.1.1. Onarıcı tarım yöntemlerini açıklayabilme", or "ST.2.1. İyi tarımı açıklayabilme"
+ * into its clean Learning Unit name ("Generatif üretim", "Onarıcı tarım", "İyi tarım").
+ */
+export function deriveUnitNameFromOutcome(outcomeHeader: string): string {
+  const withoutCode = sanitizeOutcomeOrSubSentence(outcomeHeader || "")
+    .replace(/^[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s*/, "")
+    .replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "")
+    .replace(/\.$/, "")
+    .trim();
+
+  if (!withoutCode) return "";
+
+  const stripped = withoutCode
+    .replace(
+      /\s+(?:(?:analiz|kontrol|hasat|muhafaza|tespit|ayırt|elde|kayıt|takip)\s+)?(?:yapabilme|yapar|edebilme|eder|açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|değerlendirebilme|değerlendirir|kavrayabilme|kavrar|belirleyebilme|belirler|kullanabilme|kullanır|hazırlayabilme|hazırlar|üretebilme|üretir|yönetebilme|yönetir|tasarlayabilme|tasarlar|seçebilme|seçer|sorgulayabilme|sorgular|çözümleyebilme|çözümler|[a-zçğıöşü]{3,}(?:ebilme|abilme))$/i,
+      ""
+    )
+    .replace(
+      /\s+(?:yöntemlerini|uygulamalarını|ilkelerini|kurallarını|yönetimini|süreçlerini|işlemlerini|tekniklerini|özelliklerini|esaslarını|aşamalarını|unsurlarını|çeşitlerini|tiplerini)$/i,
+      ""
+    )
+    .replace(/tarımın$/i, "tarım")
+    .replace(/tarımı$/i, "tarım")
+    .replace(/üretimin$/i, "üretim")
+    .replace(/üretimi$/i, "üretim")
+    .replace(/yönetimin$/i, "yönetim")
+    .replace(/yönetimi$/i, "yönetim")
+    .replace(/bakımın$/i, "bakım")
+    .replace(/bakımı$/i, "bakım")
+    .replace(/ekimin$/i, "ekim")
+    .replace(/ekimi$/i, "ekim")
+    .replace(/dikimin$/i, "dikim")
+    .replace(/dikimi$/i, "dikim")
+    .replace(/budamayı$/i, "budama")
+    .replace(/sulamayı$/i, "sulama")
+    .replace(/gübrelemeyi$/i, "gübreleme")
+    .trim();
+
+  if (!stripped || stripped.length < 3) return "";
+
+  const formatted =
+    stripped.charAt(0).toLocaleUpperCase("tr-TR") +
+    stripped.slice(1).toLocaleLowerCase("tr-TR");
+
+  return sanitizeShortTopicTitle(formatted, "");
+}
+
+/**
  * Converts a Turkish outcome sentence like "Onarıcı tarımın ilkelerini açıklar."
- * or "İyi tarımı açıklayabilme" into its clean Content Framework title ("Onarıcı Tarımın İlkeleri", "İyi Tarım")
+ * or "BÜY.1.1. Generatif üretim yapabilme" into its clean Content Framework title
+ * ("Onarıcı Tarımın İlkeleri", "Generatif Üretim").
  */
 export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
   const withoutCode = sanitizeOutcomeOrSubSentence(outcomeHeader)
@@ -701,7 +751,7 @@ export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
 
   const cleaned = withoutCode
     .replace(
-      /\s+(?:açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|analiz\s+edebilme|analiz\s+eder|değerlendirebilme|değerlendirir|kavrayabilme|kavrar)$/i,
+      /\s+(?:(?:analiz|kontrol|hasat|muhafaza|tespit|ayırt|elde|kayıt|takip)\s+)?(?:yapabilme|yapar|edebilme|eder|açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|değerlendirebilme|değerlendirir|kavrayabilme|kavrar|belirleyebilme|belirler|kullanabilme|kullanır|hazırlayabilme|hazırlar|üretebilme|üretir|yönetebilme|yönetir|tasarlayabilme|tasarlar|seçebilme|seçer|sorgulayabilme|sorgular|çözümleyebilme|çözümler|[a-zçğıöşü]{3,}(?:ebilme|abilme))$/i,
       ""
     )
     .replace(/ilkelerini$/i, "İlkeleri")
@@ -712,6 +762,7 @@ export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
     .replace(/özelliklerini$/i, "Özellikleri")
     .replace(/organlarını$/i, "Organları")
     .replace(/tarımı$/i, "Tarım")
+    .replace(/üretimi$/i, "Üretim")
     .trim();
 
   const titleCased = cleaned
@@ -726,7 +777,7 @@ export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
     })
     .join(" ");
 
-  return sanitizeShortTopicTitle(titleCased, "Onarıcı Tarımın İlkeleri");
+  return sanitizeShortTopicTitle(titleCased, "");
 }
 
 const TURKISH_SUB_LETTERS = [
@@ -1177,8 +1228,34 @@ export function parseDersBilgiFormuStructured(
   yillikPlanText = "",
   dersMateryaliText = ""
 ): StructuredDersBilgiFormu {
-  const cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
+  let cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
   const cleanYillik = stripFrontMatter(yillikPlanText || "");
+
+  // Guard against cross-course contamination: if Yıllık Plan has outcome codes (e.g. BÜY.1.1)
+  // and Ders Bilgi Formu has outcome codes from a DIFFERENT course prefix (e.g. ST.1.1), ignore stale cleanDbf!
+  const extractCoursePrefixes = (txt: string): string[] => {
+    const matches =
+      txt.match(/\b([A-ZÇĞİÖŞÜ]{2,8})\.\d{1,2}\.\d{1,2}\b/g) || [];
+    const prefixes = new Set<string>();
+    for (const m of matches) {
+      const p = m.split(".")[0].toLocaleUpperCase("tr-TR");
+      if (!/^(?:SDB|KB|OB|AB|E|D)$/.test(p)) {
+        prefixes.add(p);
+      }
+    }
+    return Array.from(prefixes);
+  };
+
+  const yillikPrefixes = extractCoursePrefixes(cleanYillik);
+  const dbfPrefixes = extractCoursePrefixes(cleanDbf);
+  if (
+    yillikPrefixes.length > 0 &&
+    dbfPrefixes.length > 0 &&
+    !dbfPrefixes.some((p) => yillikPrefixes.includes(p))
+  ) {
+    cleanDbf = "";
+  }
+
   const combined = `${cleanDbf}\n\n${cleanYillik}`;
   const dbfLines = cleanDbf
     .split(/\r?\n/)
@@ -1189,8 +1266,9 @@ export function parseDersBilgiFormuStructured(
     .map((l) => l.trim())
     .filter(Boolean);
 
+  // Extract metadata prioritizing Yıllık Plan and active Ders Bilgi Formu
   const meta = extractCleanDocumentMetadata(
-    `${cleanDbf}\n${cleanYillik}\n${(dersMateryaliText || "").slice(0, 4000)}`
+    `${cleanYillik}\n${cleanDbf}\n${(dersMateryaliText || "").slice(0, 4000)}`
   );
 
   // Parse textbook chapter/sub-chapter tree from Ders Materyali (if provided)
@@ -1976,7 +2054,8 @@ export function extractWeekPlanStructured(
   const rawHeaderCandidate =
     catalogEntry?.headerLine ||
     inlineHeadersByCode[detectedCode] ||
-    `${detectedCode || "ST.1.1"}. Onarıcı tarımın ilkelerini açıklar.`;
+    selectedWeekObj?.konuVeCiktiOzeti ||
+    (detectedCode ? `${detectedCode}.` : "");
 
   const outcomeHeader = sanitizeOutcomeOrSubSentence(
     rawHeaderCandidate.replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
@@ -2057,9 +2136,6 @@ export function extractWeekPlanStructured(
       );
 
       if (totalWeeksForOutcome > 1 && totalSubs >= totalWeeksForOutcome) {
-        // Exact remainder-front-loaded distribution:
-        // For M=6 subs (a,b,c,ç,d,e) across K=4 weeks:
-        // base=1, rem=2 -> Week 1 gets 2 (a,b), Week 2 gets 2 (c,ç), Week 3 gets 1 (d), Week 4 gets 1 (e)!
         const baseCount = Math.floor(totalSubs / totalWeeksForOutcome);
         const remainder = totalSubs % totalWeeksForOutcome;
 
@@ -2074,7 +2150,6 @@ export function extractWeekPlanStructured(
           startSubIdx + countForThisWeek
         );
       } else if (totalSubs > 2) {
-        // Default 2 sub-components per week based on week offset
         const offset = ((targetWeekNo - 1) * 2) % totalSubs;
         finalSubComponents = allOrderedSubs.slice(offset, offset + 2);
       } else {
@@ -2090,7 +2165,7 @@ export function extractWeekPlanStructured(
     .filter(Boolean)
     .join("\n");
 
-  // 4. Determine Öğrenme Birimi (Strictly clean unit name like "Onarıcı tarım", max 55 chars)
+  // 4. Determine Öğrenme Birimi dynamically for this course and unit (max 55 chars, never hardcoded to another course)
   let ogrenmeBirimi = "";
   if (structuredDbf.unitsByNumber[detectedUnitNo]) {
     ogrenmeBirimi = structuredDbf.unitsByNumber[detectedUnitNo];
@@ -2107,17 +2182,25 @@ export function extractWeekPlanStructured(
     ogrenmeBirimi = sanitizeShortTopicTitle(selectedWeekObj.ogrenmeBirimi, "");
   }
   if (!ogrenmeBirimi) {
+    ogrenmeBirimi = deriveUnitNameFromOutcome(outcomeHeader);
+  }
+  if (!ogrenmeBirimi) {
     const derivedBase = deriveTopicHeadingFromOutcome(outcomeHeader).replace(
       /\s+(?:İlkeleri|Yönetimi|Uygulamaları|Kuralları|Yöntemleri|Organları)$/i,
       ""
     );
-    ogrenmeBirimi =
-      derivedBase.charAt(0).toLocaleUpperCase("tr-TR") +
-      derivedBase.slice(1).toLocaleLowerCase("tr-TR");
+    if (derivedBase) {
+      ogrenmeBirimi =
+        derivedBase.charAt(0).toLocaleUpperCase("tr-TR") +
+        derivedBase.slice(1).toLocaleLowerCase("tr-TR");
+    }
   }
-  ogrenmeBirimi = sanitizeShortTopicTitle(ogrenmeBirimi, "Onarıcı tarım");
+  ogrenmeBirimi = sanitizeShortTopicTitle(
+    ogrenmeBirimi,
+    structuredDbf.ders || "Genel Öğrenme Birimi"
+  );
 
-  // 5. Determine İçerik Çerçevesi (Strictly clean topic heading like "Onarıcı Tarımın İlkeleri", max 65 chars)
+  // 5. Determine İçerik Çerçevesi dynamically for this course and week (max 65 chars)
   let icerikCercevesi = "";
   if (catalogEntry?.derivedTopicHeading) {
     icerikCercevesi = sanitizeShortTopicTitle(

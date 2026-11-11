@@ -319,15 +319,15 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
       {/* Official Document Sheet (Matches User's Attached Sample Plan Format 1:1) */}
       <div
         className={`print-container bg-white border border-slate-200 rounded-xl text-black shadow-xs ${
-          isCompactView ? "p-4 md:p-6" : "p-6 md:p-10"
+          isCompactView ? "p-3.5 md:p-5" : "p-6 md:p-8"
         }`}
       >
         {/* 3-Line Centered Title Header */}
         <div
           className={`text-center font-bold leading-snug text-black space-y-0.5 ${
             isCompactView
-              ? "text-xs md:text-sm mb-3"
-              : "text-sm md:text-base mb-5"
+              ? "text-xs md:text-[13px] mb-2.5"
+              : "text-sm md:text-base mb-4"
           }`}
         >
           <div>{displayOkulAdi}</div>
@@ -338,10 +338,10 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         {/* Unified Maarif Modeli Table */}
         <div className="overflow-x-auto">
           <table
-            className={`w-full border-collapse border border-[#4bacc6] text-black ${
+            className={`maarif-official-table w-full border-collapse border border-[#4bacc6] text-black ${
               isCompactView
-                ? "text-[11.5px] leading-tight"
-                : "text-xs md:text-[13px] leading-relaxed"
+                ? "text-[11.5px] leading-[1.28]"
+                : "text-xs md:text-[12.5px] leading-snug"
             }`}
           >
             <tbody>
@@ -349,7 +349,8 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase tracking-normal"
+                  valign="top"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-2.5 py-1 font-bold text-black uppercase tracking-normal align-top"
                 >
                   DERS BİLGİSİ
                 </td>
@@ -357,31 +358,43 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
               {/* Row: Sınıf | ... | Ders | ... */}
               <tr>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold w-[22%] align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold w-[22%] align-top"
+                >
                   Sınıf
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 w-[28%] align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 w-[28%] align-top"
+                >
                   {isEditing ? (
                     <input
                       type="text"
                       value={plan.Ders_Bilgisi.Sinif}
                       onChange={(e) => updateDersBilgisi("Sinif", e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                      className="w-full border border-slate-300 rounded px-2 py-0.5 text-xs"
                     />
                   ) : (
                     displaySinif
                   )}
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold w-[14%] align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold w-[14%] align-top"
+                >
                   Ders
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 w-[36%] align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 w-[36%] align-top"
+                >
                   {isEditing ? (
                     <input
                       type="text"
                       value={plan.Ders_Bilgisi.Ders}
                       onChange={(e) => updateDersBilgisi("Ders", e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                      className="w-full border border-slate-300 rounded px-2 py-0.5 text-xs"
                     />
                   ) : (
                     displayDers
@@ -391,10 +404,16 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
               {/* Row: Öğrenme Birimi | ... | Süre | ... */}
               <tr>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   Öğrenme Birimi
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   {isEditing ? (
                     <input
                       type="text"
@@ -402,22 +421,28 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
                       onChange={(e) =>
                         updateDersBilgisi("Ogrenme_Birimi", e.target.value)
                       }
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-normal"
+                      className="w-full border border-slate-300 rounded px-2 py-0.5 text-xs font-normal"
                     />
                   ) : (
                     plan.Ders_Bilgisi.Ogrenme_Birimi
                   )}
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   Süre
                 </td>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   {isEditing ? (
                     <input
                       type="text"
                       value={plan.Ders_Bilgisi.Sure}
                       onChange={(e) => updateDersBilgisi("Sure", e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-normal"
+                      className="w-full border border-slate-300 rounded px-2 py-0.5 text-xs font-normal"
                     />
                   ) : (
                     plan.Ders_Bilgisi.Sure
@@ -445,7 +470,8 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  valign="top"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-2.5 py-1 font-bold text-black uppercase align-top"
                 >
                   PROGRAMLAR ARASI BİLEŞENLER
                 </td>
@@ -499,10 +525,17 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
               {/* Öğrenme Çıktıları ve Süreç Bileşenleri */}
               <tr>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   Öğrenme Çıktıları ve Süreç Bileşenleri
                 </td>
-                <td colSpan={3} className="border border-[#4bacc6] px-3 py-2 align-middle">
+                <td
+                  colSpan={3}
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 align-top"
+                >
                   {isEditing ? (
                     <textarea
                       rows={4}
@@ -513,7 +546,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
                           Ogrenme_Ciktilari_ve_Surec_Bilesenleri: e.target.value,
                         })
                       }
-                      className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
                     />
                   ) : (
                     renderOgrenmeCiktilari(
@@ -525,12 +558,16 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
               {/* İçerik Çerçevesi */}
               <tr>
-                <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle">
+                <td
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
+                >
                   İçerik Çerçevesi
                 </td>
                 <td
                   colSpan={3}
-                  className="border border-[#4bacc6] px-3 py-2 font-bold align-middle"
+                  valign="top"
+                  className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top"
                 >
                   {isEditing ? (
                     <input
@@ -542,7 +579,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
                           Icerik_Cercevesi: e.target.value,
                         })
                       }
-                      className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-normal"
+                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-normal"
                     />
                   ) : (
                     plan.Icerik_Cercevesi
@@ -568,7 +605,8 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  valign="top"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-2.5 py-1 font-bold text-black uppercase align-top"
                 >
                   ÖĞRENME-ÖĞRETME YAŞANTILARI
                 </td>
@@ -657,7 +695,8 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  valign="top"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-2.5 py-1 font-bold text-black uppercase align-top"
                 >
                   FARKLILAŞTIRMA
                 </td>
@@ -683,12 +722,12 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         </div>
 
         {/* Official Signature Footer (Matches Sample Screenshot 4) */}
-        <div className="print-sig-block grid grid-cols-2 gap-8 pt-6 text-xs md:text-sm text-black">
-          <div className="text-center flex flex-col justify-end space-y-1.5 pt-8">
+        <div className="print-sig-block grid grid-cols-2 gap-8 pt-4 text-xs md:text-sm text-black">
+          <div className="text-center flex flex-col justify-end space-y-1 pt-6">
             <div>{displayOgretmenAd}</div>
             <div className="font-bold">{displayOgretmenBrans}</div>
           </div>
-          <div className="text-center flex flex-col justify-end space-y-1.5">
+          <div className="text-center flex flex-col justify-end space-y-1">
             <div>UYGUNDUR</div>
             <div className="tabular-nums">{displayOnayTarihi}</div>
             <div>{displayOkulMuduru}</div>
@@ -717,12 +756,16 @@ const EditableSingleRow: React.FC<EditableSingleRowProps> = ({
 }) => {
   return (
     <tr>
-      <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle w-[22%]">
+      <td
+        valign="top"
+        className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top w-[22%]"
+      >
         {label}
       </td>
       <td
         colSpan={3}
-        className="border border-[#4bacc6] px-3 py-2 align-middle whitespace-pre-line"
+        valign="top"
+        className="border border-[#4bacc6] px-2.5 py-1 align-top whitespace-pre-line"
       >
         {isEditing ? (
           multiline ? (
@@ -730,14 +773,14 @@ const EditableSingleRow: React.FC<EditableSingleRowProps> = ({
               rows={4}
               value={value}
               onChange={(e) => onChange(e.target.value)}
-              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+              className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
             />
           ) : (
             <input
               type="text"
               value={value}
               onChange={(e) => onChange(e.target.value)}
-              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+              className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
             />
           )
         ) : (
@@ -767,22 +810,29 @@ const EditableAsteriskArrayRow: React.FC<EditableAsteriskArrayRowProps> = ({
 }) => {
   return (
     <tr>
-      <td className="border border-[#4bacc6] px-3 py-2 font-bold align-middle w-[22%]">
+      <td
+        valign="top"
+        className="border border-[#4bacc6] px-2.5 py-1 font-bold align-top w-[22%]"
+      >
         <div>{label}</div>
         {isEditing && (
           <button
             type="button"
             onClick={onAddItem}
-            className="no-print mt-2 inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-900"
+            className="no-print mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-900"
           >
             <Plus className="w-3.5 h-3.5" />
             Madde Ekle
           </button>
         )}
       </td>
-      <td colSpan={3} className="border border-[#4bacc6] px-3 py-2 align-middle">
+      <td
+        colSpan={3}
+        valign="top"
+        className="border border-[#4bacc6] px-2.5 py-1 align-top"
+      >
         {isEditing ? (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {items.map((item, idx) => (
               <div key={idx} className="flex items-start gap-2">
                 <span className="text-xs font-bold pt-1.5">*</span>
@@ -790,7 +840,7 @@ const EditableAsteriskArrayRow: React.FC<EditableAsteriskArrayRowProps> = ({
                   rows={2}
                   value={item}
                   onChange={(e) => onUpdateItem(idx, e.target.value)}
-                  className="flex-1 border border-slate-300 rounded px-2.5 py-1 text-xs"
+                  className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs"
                 />
                 <button
                   type="button"
@@ -804,7 +854,7 @@ const EditableAsteriskArrayRow: React.FC<EditableAsteriskArrayRowProps> = ({
             ))}
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             {items.map((item, idx) => {
               const cleaned = (item || "").trim().replace(/^\*\s*/, "");
               return <div key={idx}>* {cleaned}</div>;

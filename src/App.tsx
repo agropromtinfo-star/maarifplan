@@ -13,7 +13,6 @@ import {
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
-import { YillikPlanTimeline } from "./components/YillikPlanTimeline";
 import { downloadWordDoc } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
@@ -21,6 +20,7 @@ import {
   safeReadJsonResponse,
   buildXmlContextPayloadWithAnalysis,
   inferApprovalDateClient,
+  parseQuickWeeksClient,
 } from "./utils/clientFileExtractor";
 import {
   enforceAndMergeLessonPlan,
@@ -223,11 +223,38 @@ export default function App() {
     }
   };
 
+  // Automatically recompute weeks and unit names whenever Yıllık Plan, Ders Bilgi Formu, or Ders Materyali changes
+  useEffect(() => {
+    if (!yillikPlan.trim()) {
+      setExtractedWeeks([]);
+      setSelectedWeekId("meb-1");
+      return;
+    }
+    const recomputed = parseQuickWeeksClient(
+      yillikPlan,
+      dersBilgiFormu,
+      dersMateryali
+    );
+    if (recomputed.length > 0) {
+      setExtractedWeeks(recomputed);
+      setSelectedWeekId((prevId) => {
+        const exists = recomputed.some((w) => w.id === prevId);
+        return exists ? prevId : recomputed[0].id;
+      });
+    }
+  }, [yillikPlan, dersBilgiFormu, dersMateryali]);
+
   // Extracts structured weeks & dates from the uploaded/pasted Yıllık Plan
   const analyzeWeeksFromYillikPlan = async (planText: string) => {
     if (!planText.trim()) return;
     setIsParsingWeeks(true);
     try {
+      const localDeterministicWeeks = parseQuickWeeksClient(
+        planText,
+        dersBilgiFormu,
+        dersMateryali
+      );
+
       const response = await fetch("/api/parse-weeks", {
         method: "POST",
         headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -246,14 +273,49 @@ export default function App() {
         parsed.data.weeks.length > 0
       ) {
         const data = parsed.data;
-        setExtractedWeeks(data.weeks!);
-        const firstWeek = data.weeks![0];
+        const aiWeeks = data.weeks!;
+        // Check if AI returned the exact same unit name for every week while local deterministic parser found distinct units
+        const distinctAiUnits = new Set(
+          aiWeeks.map((w) => (w.ogrenmeBirimi || "").trim()).filter(Boolean)
+        );
+        const distinctLocalUnits = new Set(
+          localDeterministicWeeks
+            .map((w) => (w.ogrenmeBirimi || "").trim())
+            .filter(Boolean)
+        );
+
+        const mergedWeeks: YillikPlanWeekItem[] = aiWeeks.map((aiW) => {
+          const localMatch = localDeterministicWeeks.find(
+            (lw) => lw.haftaNo === aiW.haftaNo
+          );
+          const preferLocalUnit =
+            localMatch?.ogrenmeBirimi &&
+            (!aiW.ogrenmeBirimi ||
+              (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1));
+
+          return {
+            ...aiW,
+            tarihAraligi: resolveValidDateRange(
+              aiW.tarihAraligi || localMatch?.tarihAraligi || "",
+              aiW.haftaNo
+            ),
+            ogrenmeBirimi: preferLocalUnit
+              ? localMatch!.ogrenmeBirimi
+              : aiW.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
+            konuVeCiktiOzeti:
+              localMatch?.konuVeCiktiOzeti || aiW.konuVeCiktiOzeti || "",
+            sure: aiW.sure || localMatch?.sure || "",
+          };
+        });
+
+        setExtractedWeeks(mergedWeeks);
+        const firstWeek = mergedWeeks[0];
         setSelectedWeekId(firstWeek.id);
         setMeta((prev) => ({
           ...prev,
-          okulAdi: prev.okulAdi.trim() || data.okulAdi || "",
-          dersIsmi: prev.dersIsmi.trim() || data.dersIsmi || "",
-          sinifDuzeyi: prev.sinifDuzeyi.trim() || data.sinifDuzeyi || "",
+          okulAdi: data.okulAdi?.trim() || prev.okulAdi.trim() || "",
+          dersIsmi: data.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+          sinifDuzeyi: data.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
           haftaEtiketi: firstWeek.haftaEtiketi,
           tarihAraligi: firstWeek.tarihAraligi,
           onayTarihi: firstWeek.onayTarihi || prev.onayTarihi,
@@ -320,22 +382,39 @@ export default function App() {
         [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
       }));
 
-      // Auto-populate Okul Adı, Ders İsmi, and Sınıf Düzeyi if empty and detected in any uploaded document
+      // Overwrite Okul Adı, Ders İsmi, and Sınıf Düzeyi whenever detected in the newly uploaded document
       if (result.detectedMeta) {
         setMeta((prev) => ({
           ...prev,
-          okulAdi: prev.okulAdi.trim() || result.detectedMeta.okulAdi || "",
-          dersIsmi: prev.dersIsmi.trim() || result.detectedMeta.dersIsmi || "",
+          okulAdi:
+            result.detectedMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
+          dersIsmi:
+            result.detectedMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
           sinifDuzeyi:
-            prev.sinifDuzeyi.trim() || result.detectedMeta.sinifDuzeyi || "",
+            result.detectedMeta.sinifDuzeyi?.trim() ||
+            prev.sinifDuzeyi.trim() ||
+            "",
         }));
       }
 
-      // If user uploaded Yıllık Plan, immediately populate quickWeeks and trigger full AI week/date analysis!
+      // If user uploaded Yıllık Plan, reset old course's active plan, immediately populate quickWeeks, and trigger week/date analysis!
       if (fieldKey === "yillik_plan") {
-        if (Array.isArray(result.quickWeeks) && result.quickWeeks.length > 0) {
-          setExtractedWeeks(result.quickWeeks);
-          const first = result.quickWeeks[0];
+        setCurrentPlan(null);
+        const computedWeeks = parseQuickWeeksClient(
+          extractedText,
+          dersBilgiFormu,
+          dersMateryali
+        );
+        const initialWeeks =
+          computedWeeks.length > 0
+            ? computedWeeks
+            : Array.isArray(result.quickWeeks)
+            ? result.quickWeeks
+            : [];
+
+        if (initialWeeks.length > 0) {
+          setExtractedWeeks(initialWeeks);
+          const first = initialWeeks[0];
           setSelectedWeekId(first.id);
           setMeta((prev) => ({
             ...prev,
@@ -997,20 +1076,6 @@ export default function App() {
                         )}
                       </div>
                     )}
-
-                  {/* Visual Annual Plan Timeline Component for Easy Week Selection */}
-                  <YillikPlanTimeline
-                    weeks={activeWeekList}
-                    selectedWeekId={selectedWeekId}
-                    onSelectWeek={handleSelectWeek}
-                    onSelectAndGenerate={
-                      yillikPlan.trim().length > 0 && dersMateryali.trim().length > 0
-                        ? (weekId) => handleGeneratePlan(weekId)
-                        : undefined
-                    }
-                    isFromUploadedPlan={extractedWeeks.length > 0}
-                    isGenerating={isGenerating}
-                  />
                 </div>
 
                 {/* Row 3: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}

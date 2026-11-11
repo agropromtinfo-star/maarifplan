@@ -13,6 +13,7 @@ import {
   resolveValidDateRange,
   sanitizeOutcomeOrSubSentence,
   sanitizeShortTopicTitle,
+  deriveUnitNameFromOutcome,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -82,11 +83,25 @@ export function extractDocumentMetadataClient(text: string): {
   };
 }
 
-export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
-  const lines = stripFrontMatter(text || "")
+export function parseQuickWeeksClient(
+  text: string,
+  dersBilgiFormuText = "",
+  dersMateryaliText = ""
+): YillikPlanWeekItem[] {
+  const cleanYillik = stripFrontMatter(text || "");
+  const lines = cleanYillik
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
+
+  if (lines.length === 0) return [];
+
+  // Parse structured DBF/Materyal + Yıllık Plan so unitsByNumber and outcomesMap reflect the current course
+  const structuredDbf = parseDersBilgiFormuStructured(
+    dersBilgiFormuText || "",
+    cleanYillik,
+    dersMateryaliText || ""
+  );
 
   const rawHits: { wNo: number; lineIdx: number }[] = [];
   const seenWeeks = new Set<number>();
@@ -108,6 +123,10 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
   const weeks: YillikPlanWeekItem[] = [];
   let activeUnitCarryover = "";
   let activeOutcomeCarryover = "";
+  let activeUnitNoCarryover = 0;
+
+  const outcomeRegex =
+    /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?\s+([^|]{6,140})/;
 
   for (let idx = 0; idx < rawHits.length; idx++) {
     const { wNo, lineIdx: i } = rawHits[idx];
@@ -116,7 +135,6 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
       idx + 1 < rawHits.length ? rawHits[idx + 1].lineIdx : lines.length;
 
     // 1. Resolve date range strictly from this week's anchor (same line -> 1 line above -> 1 line below)
-    // Never scan down to nextIdx - 1 where next week's date sits in ogretmenevrak PDFs!
     let datePart = extractDateRangeFromText(lines[i]);
     if (!datePart && i - 1 > prevIdx) {
       datePart = extractDateRangeFromText(lines[i - 1]);
@@ -144,19 +162,35 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
     const sureMatch = blockText.match(
       /\b(\d{1,2})\s*(?:Ders\s*)?Saat[i]?\b/i
     );
-    const sure = sureMatch ? `${sureMatch[1]} Ders Saati` : "2 Ders Saati";
+    const sure = sureMatch
+      ? `${sureMatch[1]} Ders Saati`
+      : structuredDbf.sure || "2 Ders Saati";
 
-    // Match clean outcome code + sentence without Maarif code spillover
-    const outcomeMatch = blockText.match(
-      /\b([A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\.?\s+[^|]{6,140})/
-    );
-    if (outcomeMatch) {
-      const cleanedOutcome = sanitizeOutcomeOrSubSentence(outcomeMatch[1]);
-      if (cleanedOutcome.length >= 8) {
-        activeOutcomeCarryover = cleanedOutcome;
+    // 3. Match clean outcome code + sentence for THIS week
+    let currentWeekOutcome = "";
+    let currentUnitNo = 0;
+
+    for (const bLine of blockLines) {
+      const m = bLine.match(outcomeRegex);
+      if (m && !/^(?:SDB|KB|OB|AB|E|D)$/i.test(m[1])) {
+        const n1 = Number(m[2]);
+        const n2 = Number(m[3]);
+        const n3 = m[4] ? Number(m[4]) : null;
+        currentUnitNo = n3 !== null ? n2 : n1;
+        const fullOutcomeCandidate = sanitizeOutcomeOrSubSentence(m[0]);
+        if (fullOutcomeCandidate.length >= 8) {
+          currentWeekOutcome = fullOutcomeCandidate;
+          activeOutcomeCarryover = fullOutcomeCandidate;
+          activeUnitNoCarryover = currentUnitNo;
+          break;
+        }
       }
     }
 
+    const displayOutcome = currentWeekOutcome || activeOutcomeCarryover;
+    const effectiveUnitNo = currentUnitNo || activeUnitNoCarryover;
+
+    // 4. Resolve Öğrenme Birimi dynamically for THIS week and THIS course (never hardcoded)
     let ogrenmeBirimi = "";
     const unitMatch = blockText.match(
       /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|]{3,55})/i
@@ -164,22 +198,27 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
     if (unitMatch && !/^VE\s*SÜRE$/i.test(unitMatch[1].trim())) {
       ogrenmeBirimi = sanitizeShortTopicTitle(unitMatch[1], "");
     }
+
+    if (!ogrenmeBirimi && effectiveUnitNo > 0 && structuredDbf.unitsByNumber[effectiveUnitNo]) {
+      ogrenmeBirimi = structuredDbf.unitsByNumber[effectiveUnitNo];
+    }
+
+    if (!ogrenmeBirimi && displayOutcome) {
+      ogrenmeBirimi = deriveUnitNameFromOutcome(displayOutcome);
+    }
+
     if (ogrenmeBirimi) {
       activeUnitCarryover = ogrenmeBirimi;
     } else if (activeUnitCarryover) {
       ogrenmeBirimi = activeUnitCarryover;
     }
 
-    // Capture sub-process components (a), b), c), ç), d), e)) for week preview
+    // 5. Capture sub-process components (a), b), c), ç), d), e)) for week preview
     const rawSubMatches =
       blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,110}/gi) || [];
     const subMatches = rawSubMatches
       .map((s) => sanitizeOutcomeOrSubSentence(s))
       .filter((s) => s.length >= 6);
-
-    const displayOutcome = outcomeMatch
-      ? sanitizeOutcomeOrSubSentence(outcomeMatch[1])
-      : activeOutcomeCarryover;
 
     const meaningfulSummary = displayOutcome
       ? [displayOutcome, ...subMatches.slice(0, 3)].join(" · ")
@@ -204,7 +243,7 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
       haftaEtiketi: `${wNo}. HAFTA`,
       tarihAraligi: validDateRange,
       onayTarihi: inferApprovalDateClient(validDateRange),
-      ogrenmeBirimi: ogrenmeBirimi || "Onarıcı tarım",
+      ogrenmeBirimi: ogrenmeBirimi || "",
       konuVeCiktiOzeti: meaningfulSummary.slice(0, 220),
       sure,
     });
