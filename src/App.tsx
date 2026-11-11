@@ -17,6 +17,7 @@ import {
   extractDocumentMetadataClient,
   safeReadJsonResponse,
   buildXmlContextPayloadWithAnalysis,
+  inferApprovalDateClient,
 } from "./utils/clientFileExtractor";
 import { enforceAndMergeLessonPlan } from "./shared/maarifPlanEngine";
 import {
@@ -412,10 +413,15 @@ export default function App() {
         });
 
       let aiCandidatePlan: Partial<MaarifLessonPlan> | null = null;
+      let serverDetectedWeekMeta: {
+        haftaEtiketi?: string;
+        tarihAraligi?: string;
+        onayTarihi?: string;
+      } | null = null;
 
       try {
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 28000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 45000);
 
         const response = await fetch("/api/generate-plan", {
           method: "POST",
@@ -430,11 +436,20 @@ export default function App() {
 
         const parsed = await safeReadJsonResponse<{
           plan?: MaarifLessonPlan;
+          detectedWeekMeta?: {
+            haftaEtiketi?: string;
+            tarihAraligi?: string;
+            onayTarihi?: string;
+          };
+          verificationSummary?: string;
           error?: string;
         }>(response);
 
         if (parsed.ok && parsed.data?.plan) {
           aiCandidatePlan = parsed.data.plan;
+          if (parsed.data.detectedWeekMeta) {
+            serverDetectedWeekMeta = parsed.data.detectedWeekMeta;
+          }
         }
       } catch (networkOrProxyErr) {
         console.warn(
@@ -443,7 +458,16 @@ export default function App() {
         );
       }
 
-      // Enforce 1:1 verbatim integrity for Ders Bilgi Formu & Yıllık Plan fields + merge week-specific AI synthesis for Ders Materyali fields
+      // Sync verified date range from server/AI verification onto weekData before final merge
+      if (
+        serverDetectedWeekMeta?.tarihAraligi &&
+        serverDetectedWeekMeta.tarihAraligi.trim().length >= 5 &&
+        !/^\d+\s*\.\s*hafta$/i.test(serverDetectedWeekMeta.tarihAraligi.trim())
+      ) {
+        weekData.tarihAraligi = serverDetectedWeekMeta.tarihAraligi.trim();
+      }
+
+      // Enforce 1:1 verbatim integrity for Ders Bilgi Formu & Yıllık Plan fields + merge verified outcomes & week-specific AI synthesis
       const generated = enforceAndMergeLessonPlan(
         aiCandidatePlan,
         structuredDbf,
@@ -455,24 +479,33 @@ export default function App() {
         }
       );
 
-      if (
-        !meta.dersIsmi.trim() ||
-        !meta.sinifDuzeyi.trim() ||
-        !meta.okulAdi.trim()
-      ) {
-        setMeta((prev) => ({
-          ...prev,
-          okulAdi: prev.okulAdi.trim() || effectiveOkulAdi,
-          dersIsmi: prev.dersIsmi.trim() || generated.Ders_Bilgisi.Ders,
-          sinifDuzeyi: prev.sinifDuzeyi.trim() || generated.Ders_Bilgisi.Sinif,
-        }));
-      }
+      const finalTarihAraligi =
+        (weekData.tarihAraligi &&
+        !/^\d+\s*\.\s*hafta$/i.test(weekData.tarihAraligi)
+          ? weekData.tarihAraligi
+          : meta.tarihAraligi) || meta.tarihAraligi;
+      const finalOnayTarihi =
+        serverDetectedWeekMeta?.onayTarihi ||
+        inferApprovalDateClient(finalTarihAraligi) ||
+        meta.onayTarihi;
+
+      const updatedMeta: DocumentHeaderFooterMeta = {
+        ...meta,
+        okulAdi: meta.okulAdi.trim() || effectiveOkulAdi,
+        dersIsmi: meta.dersIsmi.trim() || generated.Ders_Bilgisi.Ders,
+        sinifDuzeyi: meta.sinifDuzeyi.trim() || generated.Ders_Bilgisi.Sinif,
+        haftaEtiketi: weekData.haftaEtiketi || meta.haftaEtiketi,
+        tarihAraligi: finalTarihAraligi,
+        onayTarihi: finalOnayTarihi,
+      };
+      setMeta(updatedMeta);
 
       setCurrentPlan(generated);
       const newRecord: SavedLessonPlanRecord = {
         id: `plan-${Date.now()}`,
-        createdAt: meta.onayTarihi || new Date().toISOString().slice(0, 10),
-        title: `${meta.haftaEtiketi} (${meta.tarihAraligi}) — ${
+        createdAt:
+          updatedMeta.onayTarihi || new Date().toISOString().slice(0, 10),
+        title: `${updatedMeta.haftaEtiketi} (${updatedMeta.tarihAraligi}) — ${
           generated.Ders_Bilgisi?.Ders || "Ders Planı"
         }`,
         department: generated.Ders_Bilgisi?.Sinif || "",
@@ -481,7 +514,7 @@ export default function App() {
           ders_materyali: materyalSlice,
           ders_bilgi_formu: dersBilgiFormu.slice(0, 12000),
         },
-        meta: { ...meta },
+        meta: updatedMeta,
         plan: generated,
       };
       setSavedPlans((prev) => [newRecord, ...prev]);

@@ -434,6 +434,47 @@ export interface StructuredDersBilgiFormu {
   allOgretmeUygulamalariBullets: string[];
   farklilastirma: string;
   rawActivityCodes: string[];
+  rawOutcomesCatalogText?: string;
+  rawDbfText?: string;
+  rawYillikPlanText?: string;
+}
+
+export const TURKISH_MONTH_NAMES_PATTERN =
+  "(?:Ocak|OCAK|ocak|Şubat|ŞUBAT|şubat|Subat|SUBAT|subat|Mart|MART|mart|Nisan|NİSAN|NISAN|nisan|Mayıs|MAYIS|mayıs|Mayis|mayis|Haziran|HAZİRAN|HAZIRAN|haziran|Temmuz|TEMMUZ|temmuz|Ağustos|AĞUSTOS|ağustos|Agustos|AGUSTOS|agustos|Eylül|EYLÜL|eylül|Eylul|EYLUL|eylul|Ekim|EKİM|EKIM|ekim|Kasım|KASIM|kasım|Kasim|kasim|Aralık|ARALIK|aralık|Aralik|aralik)";
+
+export function normalizeDateForMatch(dateStr: string): string {
+  return (dateStr || "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/\b20\d{2}\b/g, "")
+    .replace(/^\d{1,2}\s*\.\s*hafta$/i, "")
+    .replace(/[-–/.,()]/g, " ")
+    .replace(/\b0(\d)\b/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function extractDateRangeFromText(text: string): string {
+  if (!text) return "";
+  const regex1 = new RegExp(
+    `(\\b\\d{1,2}\\s*(?:${TURKISH_MONTH_NAMES_PATTERN})?\\s*[-–/]\\s*\\d{1,2}\\s*${TURKISH_MONTH_NAMES_PATTERN}(?:\\s*20\\d{2})?)`,
+    "i"
+  );
+  const m1 = text.match(regex1);
+  if (m1) return m1[1].replace(/\s+/g, " ").trim();
+
+  const regex2 = new RegExp(
+    `(${TURKISH_MONTH_NAMES_PATTERN}\\s*[-–/:]?\\s*\\d{1,2}\\s*[-–/]\\s*\\d{1,2})`,
+    "i"
+  );
+  const m2 = text.match(regex2);
+  if (m2) return m2[1].replace(/\s+/g, " ").trim();
+
+  const regex3 =
+    /\b(\d{1,2}[./]\d{1,2}(?:[./]20\d{2})?\s*[-–]\s*\d{1,2}[./]\d{1,2}(?:[./]20\d{2})?)\b/;
+  const m3 = text.match(regex3);
+  if (m3) return m3[1].replace(/\s+/g, " ").trim();
+
+  return "";
 }
 
 /**
@@ -729,15 +770,19 @@ export function parseDersBilgiFormuStructured(
       "Coğrafya, Biyoloji, Matematik";
   }
 
-  // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, ST.2.1, etc.) and Sub-Process Components (a, b, c, ç, d, e)
+  // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, ST.2.1, etc.) and Sub-Process Components (a, b, c, ç, d, e, f, g, ğ, h)
+  // Supports multi-line wrapped outcome sentences and multi-line wrapped sub-components in PDF/DOCX tables!
   const outcomesMap: Record<string, ParsedOutcomeEntry> = {};
   const unitsByNumber: Record<number, string> = {};
 
   const outcomeLineRegex =
-    /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?\s+([A-ZÇĞİÖŞÜa-zçğıöşü].*)$/;
-  const subCompLineRegex = /^([a-zçğıöşü])\)\s+(.+)$/i;
+    /(?:^|\s|\|)\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?(?:\s+([A-ZÇĞİÖŞÜa-zçğıöşü].*))?$/;
+  const subCompStartRegex =
+    /^(?:\*|\-|\•)?\s*([a-zçğıöşü])\s*[)]\s*(.*)$/i;
   const inlineSubRegex =
-    /(?:^|\s)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
+    /(?:^|\s|\|)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
+  const stopContinuationRegex =
+    /^(?:\d{1,2}\s*\.\s*HAFTA|HAFTA\s*\d{1,2}|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖLÇME\s*VE\s*DEĞERLENDİRME|TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|Öğrenme\s*Birimi|ÜNİTE|TEMA)(?=$|\s|[:|-])/i;
 
   let currentOutcomeCode: string | null = null;
 
@@ -759,14 +804,42 @@ export function parseDersBilgiFormuStructured(
         const unitNumber = n3 !== null ? n2 : n1;
         const outcomeNumber = n3 !== null ? n3 : n2;
 
-        const fullRest = outcomeMatch[5].split(/\s*\|\s*/)[0].trim();
+        let fullRest = (outcomeMatch[5] || "").split(/\s*\|\s*/)[0].trim();
+
+        // If the outcome code was on its own line or the sentence wrapped onto the next line(s), join continuation lines!
+        let lookahead = i + 1;
+        while (
+          lookahead < combinedLines.length &&
+          lookahead <= i + 4 &&
+          (!fullRest ||
+            (!/[.!?]$/.test(fullRest.replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "").trim()) &&
+              !/\s+[a-zçğıöşü]\)\s+/i.test(fullRest)))
+        ) {
+          const nextLine = combinedLines[lookahead].split(/\s*\|\s*/)[0].trim();
+          if (
+            !nextLine ||
+            subCompStartRegex.test(nextLine) ||
+            outcomeLineRegex.test(nextLine) ||
+            stopContinuationRegex.test(nextLine) ||
+            Boolean(extractDateRangeFromText(nextLine))
+          ) {
+            break;
+          }
+          fullRest = fullRest ? `${fullRest} ${nextLine}` : nextLine;
+          i = lookahead;
+          lookahead++;
+        }
+
         // Strip any inline sub-components ("a) ... b) ... c) ...") from the main outcome header sentence!
         const cleanMainSentence = fullRest
-          .replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "")
+          .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
           .replace(/\s+\d{1,2}\s*Ders\s*Saati.*$/i, "")
           .trim();
 
-        const headerLine = `${code}. ${cleanMainSentence}`;
+        const headerLine = cleanMainSentence
+          ? `${code}. ${cleanMainSentence}`
+          : outcomesMap[code]?.headerLine || `${code}.`;
+
         if (!outcomesMap[code]) {
           outcomesMap[code] = {
             code,
@@ -777,17 +850,30 @@ export function parseDersBilgiFormuStructured(
             subComponents: {},
             orderedSubKeys: [],
           };
+        } else if (
+          cleanMainSentence.length >
+          outcomesMap[code].headerLine.length - code.length - 2
+        ) {
+          outcomesMap[code].headerLine = headerLine;
+          outcomesMap[code].derivedTopicHeading =
+            deriveTopicHeadingFromOutcome(headerLine);
         }
 
-        // Also extract any inline sub-components ("a) ... b) ...") that appeared on the same line
+        // Extract any inline sub-components ("a) ... b) ...") that appeared on the same line
         let inlineMatch: RegExpExecArray | null;
         inlineSubRegex.lastIndex = 0;
         while ((inlineMatch = inlineSubRegex.exec(fullRest)) !== null) {
           const letter = inlineMatch[1].toLocaleLowerCase("tr-TR");
-          const subText = inlineMatch[2].trim();
-          if (subText.length >= 5 && !outcomesMap[code].subComponents[letter]) {
-            outcomesMap[code].subComponents[letter] = `${letter}) ${subText}`;
-            outcomesMap[code].orderedSubKeys.push(letter);
+          const subText = inlineMatch[2]
+            .replace(/(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme).*$/i, "")
+            .trim();
+          if (subText.length >= 4) {
+            const candidateSub = `${letter}) ${subText}`;
+            const existing = outcomesMap[code].subComponents[letter];
+            if (!existing || candidateSub.length > existing.length) {
+              if (!existing) outcomesMap[code].orderedSubKeys.push(letter);
+              outcomesMap[code].subComponents[letter] = candidateSub;
+            }
           }
         }
 
@@ -796,31 +882,74 @@ export function parseDersBilgiFormuStructured(
       }
     }
 
-    const subMatch = line.match(subCompLineRegex);
+    const subMatch = line.match(subCompStartRegex);
     if (subMatch && currentOutcomeCode && outcomesMap[currentOutcomeCode]) {
       const letter = subMatch[1].toLocaleLowerCase("tr-TR");
-      let subText = subMatch[2].split(/\s*\|\s*/)[0].trim();
-      if (
-        i + 1 < combinedLines.length &&
-        !/[.!?]$/.test(subText) &&
-        !subCompLineRegex.test(combinedLines[i + 1]) &&
-        !outcomeLineRegex.test(combinedLines[i + 1]) &&
-        !/^(?:\d{1,2}\s*\.\s*HAFTA|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖĞRENME-ÖĞRETME)/i.test(
-          combinedLines[i + 1]
-        )
+      let subText = (subMatch[2] || "").split(/\s*\|\s*/)[0].trim();
+
+      // Join multi-line wrapped sub-components (up to 4 wrapped lines until sentence end or next item)
+      let lookahead = i + 1;
+      while (
+        lookahead < combinedLines.length &&
+        lookahead <= i + 4 &&
+        (!subText || !/[.!?]$/.test(subText))
       ) {
-        subText = `${subText} ${combinedLines[i + 1].split(/\s*\|\s*/)[0].trim()}`;
-        i++;
+        const nextLine = combinedLines[lookahead].split(/\s*\|\s*/)[0].trim();
+        if (
+          !nextLine ||
+          subCompStartRegex.test(nextLine) ||
+          outcomeLineRegex.test(nextLine) ||
+          stopContinuationRegex.test(nextLine) ||
+          Boolean(extractDateRangeFromText(nextLine))
+        ) {
+          break;
+        }
+        subText = subText ? `${subText} ${nextLine}` : nextLine;
+        i = lookahead;
+        lookahead++;
       }
 
-      const formattedSub = `${letter}) ${subText}`;
-      const entry = outcomesMap[currentOutcomeCode];
-      if (!entry.subComponents[letter]) {
-        entry.subComponents[letter] = formattedSub;
-        entry.orderedSubKeys.push(letter);
+      // Check if multiple sub-components were packed on this line (e.g. "a) ... b) ...")
+      if (/\s+[a-zçğıöşü]\)\s+/i.test(subText)) {
+        const packedLine = `${letter}) ${subText}`;
+        let pm: RegExpExecArray | null;
+        inlineSubRegex.lastIndex = 0;
+        while ((pm = inlineSubRegex.exec(packedLine)) !== null) {
+          const pLetter = pm[1].toLocaleLowerCase("tr-TR");
+          const pText = pm[2]
+            .replace(/(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme).*$/i, "")
+            .trim();
+          if (pText.length >= 4) {
+            const formattedPacked = `${pLetter}) ${pText}`;
+            const entry = outcomesMap[currentOutcomeCode];
+            const existing = entry.subComponents[pLetter];
+            if (!existing || formattedPacked.length > existing.length) {
+              if (!existing) entry.orderedSubKeys.push(pLetter);
+              entry.subComponents[pLetter] = formattedPacked;
+            }
+          }
+        }
+      } else if (subText.length >= 4) {
+        const formattedSub = `${letter}) ${subText}`;
+        const entry = outcomesMap[currentOutcomeCode];
+        const existing = entry.subComponents[letter];
+        if (!existing || formattedSub.length > existing.length) {
+          if (!existing) entry.orderedSubKeys.push(letter);
+          entry.subComponents[letter] = formattedSub;
+        }
       }
     }
   }
+
+  // Build full formatted outcomes catalog string for XML context & AI verification
+  const rawOutcomesCatalogText = Object.values(outcomesMap)
+    .map((entry) => {
+      const subs = entry.orderedSubKeys
+        .map((k) => entry.subComponents[k])
+        .filter(Boolean);
+      return [entry.headerLine, ...subs].join("\n");
+    })
+    .join("\n\n");
 
   // 5. Extract Öğrenme Kanıtları (Full verbatim multi-paragraph block from Ders Bilgi Formu)
   const ogrenmeKanitlari = extractSectionBetweenHeadings(
@@ -1002,6 +1131,9 @@ export function parseDersBilgiFormuStructured(
     allOgretmeUygulamalariBullets,
     farklilastirma,
     rawActivityCodes,
+    rawOutcomesCatalogText,
+    rawDbfText: cleanDbf,
+    rawYillikPlanText: cleanYillik,
   };
 }
 
@@ -1037,111 +1169,279 @@ export function extractWeekPlanStructured(
   const weekNumMatch = (haftaEtiketi || "").match(/(\d{1,2})/);
   const targetWeekNo =
     selectedWeekObj?.haftaNo || (weekNumMatch ? Number(weekNumMatch[1]) : 1);
-  const cleanDate = (tarihAraligi || "").trim();
+  const inputDate = (
+    tarihAraligi ||
+    selectedWeekObj?.tarihAraligi ||
+    ""
+  ).trim();
+  const normInputDate = normalizeDateForMatch(inputDate);
 
-  // 1. Find the exact line range for targetWeekNo in Yıllık Plan
-  let startIdx = -1;
-  let endIdx = lines.length;
+  // 1. Scan all week/date anchors across the Yıllık Plan so we know exact boundaries
+  // (including vertically-centered PDF table rows where top lines of a cell appear 1-5 lines ABOVE the week/date anchor!)
+  interface WeekRowAnchor {
+    weekNo: number;
+    lineIdx: number;
+    dateRange: string;
+  }
+  const anchors: WeekRowAnchor[] = [];
+  const seenWeekNos = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const exactWeekRegex = new RegExp(
-      `\\b${targetWeekNo}\\s*\\.\\s*HAFTA(?=$|\\s|[|(])`,
-      "i"
+    const wMatch = line.match(
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/i
     );
-    const hasDate =
-      cleanDate.length >= 5 &&
-      !/^\d+\s*\.\s*hafta$/i.test(cleanDate) &&
-      line
-        .toLocaleLowerCase("tr-TR")
-        .includes(cleanDate.toLocaleLowerCase("tr-TR"));
+    const lineDate = extractDateRangeFromText(line);
 
-    if (exactWeekRegex.test(line) || (startIdx === -1 && hasDate)) {
-      startIdx = i;
-      for (let j = i + 1; j < Math.min(lines.length, i + 45); j++) {
+    if (wMatch) {
+      const wNo = Number(wMatch[1] || wMatch[2]);
+      if (wNo >= 1 && wNo <= 42 && !seenWeekNos.has(wNo)) {
+        seenWeekNos.add(wNo);
+        let foundDate = lineDate;
+        if (!foundDate) {
+          for (
+            let k = Math.max(0, i - 2);
+            k <= Math.min(lines.length - 1, i + 3);
+            k++
+          ) {
+            const nearDate = extractDateRangeFromText(lines[k]);
+            if (nearDate) {
+              foundDate = nearDate;
+              break;
+            }
+          }
+        }
+        anchors.push({ weekNo: wNo, lineIdx: i, dateRange: foundDate });
+      }
+    }
+  }
+
+  // Find the best anchor matching EITHER the exact date range OR the targetWeekNo
+  let matchedAnchorIdx = -1;
+  if (normInputDate.length >= 4) {
+    matchedAnchorIdx = anchors.findIndex((a) => {
+      const normAnchorDate = normalizeDateForMatch(a.dateRange);
+      return (
+        normAnchorDate.length >= 4 &&
+        (normAnchorDate === normInputDate ||
+          normAnchorDate.includes(normInputDate) ||
+          normInputDate.includes(normAnchorDate))
+      );
+    });
+  }
+  if (matchedAnchorIdx === -1) {
+    matchedAnchorIdx = anchors.findIndex((a) => a.weekNo === targetWeekNo);
+  }
+
+  let anchorLineIdx = -1;
+  let prevAnchorLineIdx = -1;
+  let nextAnchorLineIdx = lines.length;
+  let detectedTarihAraligi = inputDate;
+
+  if (matchedAnchorIdx !== -1) {
+    const currentAnchor = anchors[matchedAnchorIdx];
+    anchorLineIdx = currentAnchor.lineIdx;
+    if (currentAnchor.dateRange) {
+      detectedTarihAraligi = currentAnchor.dateRange;
+    }
+    if (matchedAnchorIdx > 0) {
+      prevAnchorLineIdx = anchors[matchedAnchorIdx - 1].lineIdx;
+    }
+    if (matchedAnchorIdx + 1 < anchors.length) {
+      nextAnchorLineIdx = anchors[matchedAnchorIdx + 1].lineIdx;
+    }
+  } else {
+    // Fallback: search directly by date string or week regex in lines
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const exactWeekRegex = new RegExp(
+        `\\b${targetWeekNo}\\s*\\.\\s*HAFTA(?=$|\\s|[|(:])`,
+        "i"
+      );
+      const lineDate = extractDateRangeFromText(line);
+      const normLineDate = normalizeDateForMatch(lineDate || line);
+      const hasDateMatch =
+        normInputDate.length >= 4 &&
+        normLineDate.includes(normInputDate);
+
+      if (hasDateMatch || exactWeekRegex.test(line)) {
+        anchorLineIdx = i;
+        if (lineDate) detectedTarihAraligi = lineDate;
+        for (let j = i + 1; j < Math.min(lines.length, i + 45); j++) {
+          if (
+            /\b\d{1,2}\s*\.\s*HAFTA(?=$|\s|[|(:])/i.test(lines[j])
+          ) {
+            nextAnchorLineIdx = j;
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // Handle vertically-centered PDF table rows:
+  // Check up to 5 lines ABOVE anchorLineIdx (but strictly after prevAnchorLineIdx) for outcome codes or sub-components that belong to the top of this same row!
+  let effectiveStartIdx = anchorLineIdx;
+  let effectiveEndIdx = Math.min(lines.length, nextAnchorLineIdx);
+
+  if (anchorLineIdx !== -1) {
+    const minLookbehind =
+      prevAnchorLineIdx !== -1
+        ? Math.max(prevAnchorLineIdx + 1, anchorLineIdx - 5)
+        : Math.max(0, anchorLineIdx - 5);
+
+    // Only pull in lines above anchorLineIdx if anchorLineIdx itself is separated from prevAnchorLineIdx by enough lines
+    // and the lines right above anchorLineIdx contain an outcome header or start of this row's cell
+    if (prevAnchorLineIdx === -1 || anchorLineIdx - prevAnchorLineIdx >= 4) {
+      for (let b = anchorLineIdx - 1; b >= minLookbehind; b--) {
+        const bLine = lines[b];
         if (
-          new RegExp(
-            `\\b${targetWeekNo + 1}\\s*\\.\\s*HAFTA(?=$|\\s|[|(])`,
-            "i"
-          ).test(lines[j]) ||
-          (j > i + 2 && /\b\d{1,2}\s*\.\s*HAFTA(?=$|\s|[|(])/i.test(lines[j]))
+          /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(bLine) ||
+          /^(?:Öğrenme\s*Birimi|Ünite|Tema)\s*[:|-]/i.test(bLine)
         ) {
-          endIdx = j;
-          break;
+          effectiveStartIdx = b;
         }
       }
-      break;
+    }
+
+    // Also avoid bleeding into the top of nextAnchorLineIdx if an outcome code appears 1 line right above nextAnchorLineIdx
+    // when the current row already has its own outcome and sub-components
+    if (nextAnchorLineIdx < lines.length && nextAnchorLineIdx - anchorLineIdx >= 4) {
+      const lineBeforeNext = lines[nextAnchorLineIdx - 1];
+      if (
+        /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(lineBeforeNext) &&
+        /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(
+          lines.slice(effectiveStartIdx, nextAnchorLineIdx - 1).join("\n")
+        )
+      ) {
+        effectiveEndIdx = nextAnchorLineIdx - 1;
+      }
     }
   }
 
   const weekLines =
-    startIdx !== -1
-      ? lines.slice(startIdx, endIdx)
+    effectiveStartIdx !== -1
+      ? lines.slice(effectiveStartIdx, effectiveEndIdx)
       : lines.slice(0, Math.min(lines.length, 35));
   const rawWeekWindowText = weekLines.join("\n");
 
-  // 2. Identify Outcome Code in this week's block
+  // If detectedTarihAraligi was still empty or generic ("6. Hafta"), check inside weekLines
+  if (
+    !detectedTarihAraligi ||
+    /^\d+\s*\.\s*hafta$/i.test(detectedTarihAraligi)
+  ) {
+    const inWindowDate = extractDateRangeFromText(rawWeekWindowText);
+    if (inWindowDate) {
+      detectedTarihAraligi = inWindowDate;
+    }
+  }
+
+  // 2. Identify ALL Outcome Codes & Multi-Line Sub-Process Components in this week's block
   const outcomeCodePattern =
     /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b/g;
+  const subStartLineRegex =
+    /^(?:\*|\-|\•)?\s*([a-zçğıöşü])\s*[)]\s*(.*)$/i;
+  const inlineSubRegex =
+    /(?:^|\s|\|)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
+  const stopSubContinuationRegex =
+    /^(?:\d{1,2}\s*\.\s*HAFTA|HAFTA\s*\d{1,2}|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖLÇME\s*VE\s*DEĞERLENDİRME|Öğrenme\s*Birimi|ÜNİTE|TEMA)(?=$|\s|[:|-])/i;
 
-  let detectedCode = "";
+  const detectedCodes: string[] = [];
+  const inlineHeadersByCode: Record<string, string> = {};
   let detectedUnitNo = 1;
-  let inlineOutcomeHeader = "";
 
-  for (const wLine of weekLines) {
+  // First, join wrapped lines in weekLines so multi-line outcome headers and sub-components are never cut in half!
+  const unwrappedWeekLines: string[] = [];
+  for (let i = 0; i < weekLines.length; i++) {
+    let curr = weekLines[i];
+    const isSubOrOutcome =
+      subStartLineRegex.test(curr) ||
+      /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(curr);
+
+    if (isSubOrOutcome) {
+      while (
+        i + 1 < weekLines.length &&
+        !/[.!?]$/.test(curr.split(/\s*\|\s*/)[0].trim()) &&
+        !subStartLineRegex.test(weekLines[i + 1]) &&
+        !/\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(weekLines[i + 1]) &&
+        !stopSubContinuationRegex.test(weekLines[i + 1]) &&
+        !extractDateRangeFromText(weekLines[i + 1])
+      ) {
+        curr = `${curr} ${weekLines[i + 1]}`;
+        i++;
+      }
+    }
+    unwrappedWeekLines.push(curr);
+  }
+
+  for (const wLine of unwrappedWeekLines) {
     let m: RegExpExecArray | null;
     outcomeCodePattern.lastIndex = 0;
     while ((m = outcomeCodePattern.exec(wLine)) !== null) {
       const prefix = m[1];
       if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(prefix)) {
-        detectedCode = m[0];
-        detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
+        const code = m[0];
+        if (!detectedCodes.includes(code)) {
+          detectedCodes.push(code);
+        }
+        if (detectedCodes.length === 1) {
+          detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
+        }
         const afterCode = wLine
           .slice(m.index)
           .split(/\s*\|\s*/)[0]
-          .replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "")
+          .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
+          .replace(/\s+\d{1,2}\s*Ders\s*Saati.*$/i, "")
           .trim();
-        if (afterCode.length > detectedCode.length + 3) {
-          inlineOutcomeHeader = afterCode;
+        if (
+          afterCode.length > code.length + 3 &&
+          (!inlineHeadersByCode[code] ||
+            afterCode.length > inlineHeadersByCode[code].length)
+        ) {
+          inlineHeadersByCode[code] = afterCode;
         }
-        break;
       }
     }
-    if (detectedCode) break;
   }
 
-  // Extract sub-process components (a), b), c), ç), d), e)) explicitly present in this week's lines
+  // Extract sub-process components (a), b), c), ç), d), e), f), g), ğ)) from unwrappedWeekLines
   const weekSubMap = new Map<string, string>();
-  const subRegex =
-    /(?:^|\s|\|)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
-
-  for (const wLine of weekLines) {
+  for (const wLine of unwrappedWeekLines) {
     let sm: RegExpExecArray | null;
-    subRegex.lastIndex = 0;
-    while ((sm = subRegex.exec(wLine)) !== null) {
+    inlineSubRegex.lastIndex = 0;
+    while ((sm = inlineSubRegex.exec(wLine)) !== null) {
       const letter = sm[1].toLocaleLowerCase("tr-TR");
       const textPart = sm[2]
         .replace(
-          /(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme).*$/i,
+          /(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme|Öğrenme\s*Kanıtları|Belirli\s*Gün).*$/i,
           ""
         )
         .trim();
-      if (textPart.length >= 6 && !weekSubMap.has(letter)) {
-        weekSubMap.set(letter, `${letter}) ${textPart}`);
+      if (textPart.length >= 4) {
+        const formatted = `${letter}) ${textPart}`;
+        const existing = weekSubMap.get(letter);
+        if (!existing || formatted.length > existing.length) {
+          weekSubMap.set(letter, formatted);
+        }
       }
     }
   }
 
+  let detectedCode = detectedCodes[0] || "";
+
+  // If no outcome code was explicitly on this week's row, match via sub-component text in outcomesMap or look behind in lines
   if (!detectedCode) {
     if (weekSubMap.size > 0) {
       const firstSubText = Array.from(weekSubMap.values())[0]
         .replace(/^[a-zçğıöşü]\)\s*/i, "")
-        .slice(0, 25)
+        .slice(0, 28)
         .toLocaleLowerCase("tr-TR");
       for (const entry of Object.values(structuredDbf.outcomesMap)) {
         for (const subVal of Object.values(entry.subComponents)) {
           if (subVal.toLocaleLowerCase("tr-TR").includes(firstSubText)) {
             detectedCode = entry.code;
+            detectedCodes.push(detectedCode);
             detectedUnitNo = entry.unitNumber;
             break;
           }
@@ -1149,13 +1449,14 @@ export function extractWeekPlanStructured(
         if (detectedCode) break;
       }
     }
-    if (!detectedCode && startIdx > 0) {
-      for (let b = startIdx - 1; b >= Math.max(0, startIdx - 25); b--) {
+    if (!detectedCode && effectiveStartIdx > 0) {
+      for (let b = effectiveStartIdx - 1; b >= Math.max(0, effectiveStartIdx - 30); b--) {
         outcomeCodePattern.lastIndex = 0;
         let m: RegExpExecArray | null;
         while ((m = outcomeCodePattern.exec(lines[b])) !== null) {
           if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(m[1])) {
             detectedCode = m[0];
+            detectedCodes.push(detectedCode);
             detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
             break;
           }
@@ -1171,28 +1472,39 @@ export function extractWeekPlanStructured(
 
   if (catalogEntry && !detectedCode) {
     detectedCode = catalogEntry.code;
+    detectedCodes.push(detectedCode);
     detectedUnitNo = catalogEntry.unitNumber;
   }
 
-  // 3. Build clean Outcome Header (without inline a), b)!) + Week-Specific Sub-Components
+  // 3. Build clean Outcome Header(s) + Week-Specific Complete Sub-Components
   const outcomeHeader = (
     catalogEntry?.headerLine ||
-    inlineOutcomeHeader ||
+    inlineHeadersByCode[detectedCode] ||
     (selectedWeekObj?.konuVeCiktiOzeti
-      ? selectedWeekObj.konuVeCiktiOzeti.replace(
-          /^.*?(\b[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s+)/,
-          "$1"
-        )
+      ? selectedWeekObj.konuVeCiktiOzeti
+          .split(" · ")[0]
+          .replace(
+            /^.*?(\b[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s+)/,
+            "$1"
+          )
       : `${detectedCode || "ST.1.1"}. Seçilen hafta öğrenme çıktısı.`)
   )
-    .replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "")
+    .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
     .trim();
 
   let finalSubComponents: string[] = [];
   if (weekSubMap.size > 0) {
     for (const [letter, rawLine] of weekSubMap.entries()) {
-      if (catalogEntry?.subComponents[letter]) {
-        finalSubComponents.push(catalogEntry.subComponents[letter]);
+      // Search across all detected outcome codes in outcomesMap for the longest, complete sub-component sentence
+      let catalogSub = catalogEntry?.subComponents[letter] || "";
+      for (const code of detectedCodes) {
+        const cand = structuredDbf.outcomesMap[code]?.subComponents[letter];
+        if (cand && cand.length > catalogSub.length) {
+          catalogSub = cand;
+        }
+      }
+      if (catalogSub && catalogSub.length >= rawLine.length) {
+        finalSubComponents.push(catalogSub);
       } else {
         finalSubComponents.push(rawLine);
       }
@@ -1203,8 +1515,23 @@ export function extractWeekPlanStructured(
     );
   }
 
+  // If the week had additional outcome codes (e.g., 2 outcomes in the same week), include their headers too
+  const additionalHeaders: string[] = [];
+  for (let cIdx = 1; cIdx < detectedCodes.length; cIdx++) {
+    const extraCode = detectedCodes[cIdx];
+    const extraHeader =
+      structuredDbf.outcomesMap[extraCode]?.headerLine ||
+      inlineHeadersByCode[extraCode];
+    if (extraHeader && extraHeader !== outcomeHeader) {
+      additionalHeaders.push(
+        extraHeader.replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "").trim()
+      );
+    }
+  }
+
   const formattedOutcomeAndProcessBlock = [
     outcomeHeader,
+    ...additionalHeaders,
     ...finalSubComponents,
   ]
     .filter(Boolean)
@@ -1244,7 +1571,7 @@ export function extractWeekPlanStructured(
   // 5. Determine İçerik Çerçevesi (Never "16. Hafta")
   let icerikCercevesi = "";
   const icerikInWeek = rawWeekWindowText.match(
-    /İçerik\s*Çerçevesi\s*[:|-]?\s*([^|\n]{4,90})/i
+    /(?:İçerik\s*Çerçevesi|Konu)\s*[:|-]\s*([^|\n]{4,90})/i
   );
   if (
     icerikInWeek &&
@@ -1323,7 +1650,7 @@ export function extractWeekPlanStructured(
   return {
     haftaNo: targetWeekNo,
     haftaEtiketi: haftaEtiketi || `${targetWeekNo}. HAFTA`,
-    tarihAraligi,
+    tarihAraligi: detectedTarihAraligi || tarihAraligi,
     sure,
     ogrenmeBirimi,
     icerikCercevesi,
@@ -1479,6 +1806,811 @@ export function buildWeekSpecificActivitiesFallback(
   };
 }
 
+const TURKISH_STOP_WORDS = new Set([
+  "ve",
+  "veya",
+  "ile",
+  "için",
+  "bir",
+  "bu",
+  "şu",
+  "o",
+  "da",
+  "de",
+  "ki",
+  "mi",
+  "mı",
+  "mu",
+  "mü",
+  "gibi",
+  "kadar",
+  "olarak",
+  "üzere",
+  "göre",
+  "daha",
+  "çok",
+  "en",
+  "her",
+  "tüm",
+  "bütün",
+  "olan",
+  "olup",
+  "olur",
+  "olması",
+  "tarafından",
+  "kapsamında",
+  "üzerinden",
+  "ilgili",
+  "yönelik",
+]);
+
+/**
+ * Normalizes Turkish text for token and n-gram similarity comparisons.
+ */
+export function normalizeForSimilarity(text: string): string {
+  return (text || "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/^\s*[*•\-–]\s*/gm, "")
+    .replace(/[^\p{L}\p{N}\s.]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extracts significant content tokens (excluding stop words) from Turkish text.
+ */
+export function extractSignificantTokens(text: string): string[] {
+  const norm = normalizeForSimilarity(text);
+  if (!norm) return [];
+  return norm
+    .split(" ")
+    .map((t) => t.replace(/^\.+|\.+$/g, "").trim())
+    .filter((t) => t.length >= 3 && !TURKISH_STOP_WORDS.has(t));
+}
+
+export interface TextSimilarityAnalysis {
+  overallScore: number; // 0..1 composite similarity score
+  tokenContainmentScore: number; // fraction of candidate tokens present in source
+  jaccardScore: number; // token set Jaccard overlap
+  bigramOverlapScore: number; // word bigram overlap
+  codeAlignmentScore: number; // Maarif component code overlap (E, SDB, D, OB, KB, outcome codes)
+  hasConflict: boolean; // true if AI text diverges/conflicts with original document text
+}
+
+/**
+ * Computes multi-metric text similarity between a candidate text (e.g. AI output)
+ * and a reference text from the user's uploaded documents (e.g. Ders Bilgi Formu section).
+ */
+export function computeTextSimilarity(
+  candidateText: string,
+  referenceDocumentText: string,
+  conflictThreshold = 0.68
+): TextSimilarityAnalysis {
+  const candNorm = normalizeForSimilarity(candidateText);
+  const refNorm = normalizeForSimilarity(referenceDocumentText);
+
+  if (!candNorm || !refNorm) {
+    return {
+      overallScore: 0,
+      tokenContainmentScore: 0,
+      jaccardScore: 0,
+      bigramOverlapScore: 0,
+      codeAlignmentScore: 0,
+      hasConflict: Boolean(candNorm && refNorm),
+    };
+  }
+
+  if (candNorm === refNorm) {
+    return {
+      overallScore: 1,
+      tokenContainmentScore: 1,
+      jaccardScore: 1,
+      bigramOverlapScore: 1,
+      codeAlignmentScore: 1,
+      hasConflict: false,
+    };
+  }
+
+  // Exact substring containment check
+  const isSubstringMatch =
+    refNorm.includes(candNorm) || candNorm.includes(refNorm);
+
+  const candTokens = extractSignificantTokens(candidateText);
+  const refTokens = extractSignificantTokens(referenceDocumentText);
+
+  if (candTokens.length === 0 || refTokens.length === 0) {
+    const score = isSubstringMatch ? 0.9 : 0;
+    return {
+      overallScore: score,
+      tokenContainmentScore: score,
+      jaccardScore: score,
+      bigramOverlapScore: score,
+      codeAlignmentScore: score,
+      hasConflict: score < conflictThreshold,
+    };
+  }
+
+  const candSet = new Set(candTokens);
+  const refSet = new Set(refTokens);
+
+  // Prefix-stem (first 5 chars) matching to handle Turkish agglutinative suffixes
+  const refStems = new Set(
+    refTokens.map((t) => (t.length >= 6 ? t.slice(0, 5) : t))
+  );
+
+  let matchedCandCount = 0;
+  let exactIntersection = 0;
+
+  for (const token of candSet) {
+    const stem = token.length >= 6 ? token.slice(0, 5) : token;
+    if (refSet.has(token)) {
+      matchedCandCount += 1;
+      exactIntersection += 1;
+    } else if (refStems.has(stem)) {
+      matchedCandCount += 0.85;
+    }
+  }
+
+  const tokenContainmentScore = Math.min(
+    1,
+    matchedCandCount / Math.max(1, candSet.size)
+  );
+  const unionSize = candSet.size + refSet.size - exactIntersection;
+  const jaccardScore =
+    unionSize > 0 ? Math.min(1, matchedCandCount / unionSize) : 0;
+
+  // Bigram overlap for phrase order preservation
+  const buildBigrams = (tokens: string[]): Set<string> => {
+    const bg = new Set<string>();
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const a = tokens[i].length >= 6 ? tokens[i].slice(0, 5) : tokens[i];
+      const b =
+        tokens[i + 1].length >= 6 ? tokens[i + 1].slice(0, 5) : tokens[i + 1];
+      bg.add(`${a}_${b}`);
+    }
+    return bg;
+  };
+
+  const candBigrams = buildBigrams(candTokens);
+  const refBigrams = buildBigrams(refTokens);
+  let bigramMatches = 0;
+  for (const bg of candBigrams) {
+    if (refBigrams.has(bg)) bigramMatches++;
+  }
+  const bigramOverlapScore =
+    candBigrams.size > 0
+      ? bigramMatches / Math.min(candBigrams.size, Math.max(1, refBigrams.size))
+      : tokenContainmentScore;
+
+  // Maarif & Outcome Code alignment check (E1.4, SDB2.2, D3, OB1, KB2.2, ST.1.1, etc.)
+  const codeRegex = /\b(?:SDB|KB|OB|E|D|[A-ZÇĞİÖŞÜ]{2,6})\.?\d{1,2}(?:\.\d{1,2})*\b/gi;
+  const candCodes = new Set(
+    (candidateText.match(codeRegex) || []).map((c) => c.toUpperCase())
+  );
+  const refCodes = new Set(
+    (referenceDocumentText.match(codeRegex) || []).map((c) => c.toUpperCase())
+  );
+
+  let codeAlignmentScore = 1;
+  if (candCodes.size > 0 || refCodes.size > 0) {
+    if (candCodes.size > 0 && refCodes.size > 0) {
+      let matchedCodes = 0;
+      for (const c of candCodes) {
+        if (refCodes.has(c)) matchedCodes++;
+      }
+      codeAlignmentScore = matchedCodes / Math.max(candCodes.size, 1);
+    } else {
+      codeAlignmentScore = 0.4;
+    }
+  }
+
+  let overallScore =
+    tokenContainmentScore * 0.5 +
+    bigramOverlapScore * 0.25 +
+    jaccardScore * 0.15 +
+    codeAlignmentScore * 0.1;
+
+  if (isSubstringMatch) {
+    overallScore = Math.max(overallScore, 0.92);
+  }
+
+  return {
+    overallScore: Number(overallScore.toFixed(3)),
+    tokenContainmentScore: Number(tokenContainmentScore.toFixed(3)),
+    jaccardScore: Number(jaccardScore.toFixed(3)),
+    bigramOverlapScore: Number(bigramOverlapScore.toFixed(3)),
+    codeAlignmentScore: Number(codeAlignmentScore.toFixed(3)),
+    hasConflict: overallScore < conflictThreshold,
+  };
+}
+
+export type DocumentSectionKey =
+  | "Ogrenme_Kanitlari"
+  | "Temel_Kabuller"
+  | "On_Degerlendirme_Sureci"
+  | "Kopru_Kurma"
+  | "Ogretme_Uygulamalari"
+  | "Farklilastirma"
+  | "Alan_Becerileri"
+  | "Disiplinler_Arasi_Iliski"
+  | "Ogrenme_Ciktilari_ve_Surec_Bilesenleri"
+  | "Icerik_Cercevesi";
+
+interface SectionSearchProfile {
+  headerRegex: RegExp;
+  stopRegex: RegExp;
+  semanticKeywords: string[];
+  characteristicPhrases: RegExp[];
+  minChars: number;
+  maxChars: number;
+}
+
+const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> = {
+  Ogrenme_Kanitlari: {
+    headerRegex:
+      /^(?:ÖĞRENME\s*KANITLARI|ÖLÇME\s*VE\s*DEĞERLENDİRME|DEĞERLENDİRME\s*SÜRECİ|Ölçme\s*Araçları)(?=$|\s|[:|(-])/i,
+    stopRegex:
+      /^(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*DEĞERLENDİRME|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "gözlem formu",
+      "akran değerlendirme",
+      "öz değerlendirme",
+      "derecelendirme ölçeği",
+      "dereceli puanlama anahtarı",
+      "rubrik",
+      "kontrol listesi",
+      "ölçme araçlarından",
+      "geri bildirim",
+      "öğrenci performansını",
+    ],
+    characteristicPhrases: [
+      /(?:gözlem\s+formu|dereceli\s+puanlama\s+anahtarı|rubrik|kontrol\s+listesi|öz\s+değerlendirme)/i,
+      /(?:değerlendirilirken|ölçme\s+araçlarından|geri\s+bildirim)/i,
+    ],
+    minChars: 60,
+    maxChars: 3600,
+  },
+  Temel_Kabuller: {
+    headerRegex:
+      /^(?:TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*BİLGİLER|HAZIRBULUNUŞLUK)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "kabul edilmektedir",
+      "kabul edilir",
+      "varsayılmaktadır",
+      "ön bilgilere sahip",
+      "fark edebildikleri",
+      "gözlemleyebildikleri",
+      "bilimsel süreç becerilerini",
+    ],
+    characteristicPhrases: [
+      /Öğrencilerin[\s\S]{15,500}?(?:kabul\s+edilmektedir|kabul\s+edilir|varsayılmaktadır)\./i,
+    ],
+    minChars: 30,
+    maxChars: 1300,
+  },
+  On_Degerlendirme_Sureci: {
+    headerRegex:
+      /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|TANILAYICI\s*DEĞERLENDİRME)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "açık uçlu sorular",
+      "kavram haritaları",
+      "beyin fırtınası",
+      "ön bilgilerini",
+      "farkındalıklarını",
+      "tutumlarını belirlemek",
+      "kısa tartışmalar",
+      "paylaşmaları istenir",
+    ],
+    characteristicPhrases: [
+      /Öğrencilerin[\s\S]{15,600}?(?:açık\s+uçlu\s+sorular|kavram\s+haritaları|beyin\s+fırtınası|ön\s+bilgilerini[\s\S]{1,120}?belirlemek|paylaşmaları\s+istenir)[\s\S]{0,120}?\./i,
+    ],
+    minChars: 30,
+    maxChars: 1300,
+  },
+  Kopru_Kurma: {
+    headerRegex:
+      /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|İLİŞKİLENDİRME)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "bağ kurulur",
+      "ilişki kurulur",
+      "yeni konuya geçiş",
+      "günlük yaşamda karşılaştıkları",
+      "yakın çevrelerindeki",
+      "karşılaştırılarak yeni konuya",
+    ],
+    characteristicPhrases: [
+      /(?:Öğrencilerin\s+günlük|Günlük\s+hayatta|Önceki\s+öğrenmeler)[\s\S]{15,600}?(?:bağ\s+kurulur|ilişki\s+kurulur|geçiş\s+sağlanır|geçiş\s+yapılır)\./i,
+    ],
+    minChars: 30,
+    maxChars: 1400,
+  },
+  Ogretme_Uygulamalari: {
+    headerRegex:
+      /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:FARKLILAŞTIRMA|Farklılaştırma|ZENGİNLEŞTİRME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "öğrenme birimi işlenirken",
+      "araştırma görevi verilir",
+      "sınıfta paylaşmaları sağlanır",
+      "grup tartışmaları yapılır",
+      "örnek olaylar üzerinden",
+      "dereceli puanlama anahtarı",
+    ],
+    characteristicPhrases: [
+      /\((?:[A-Z]{1,3}\d+(?:\.\d+)?(?:,\s*)?){2,}\)\./,
+    ],
+    minChars: 40,
+    maxChars: 4000,
+  },
+  Farklilastirma: {
+    headerRegex:
+      /^(?:FARKLILAŞTIRMA|Farklılaştırma|ZENGİNLEŞTİRME\s*VE\s*DESTEKLEME)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:UYGUNDUR|ÖĞRETMEN|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i,
+    semanticKeywords: [
+      "zenginleştirme",
+      "destekleme",
+      "bireysel farklılıklar",
+      "ek süre",
+      "ileri düzey",
+    ],
+    characteristicPhrases: [
+      /(?:Zenginleştirme|Destekleme)\s*[:|-][\s\S]{20,600}/i,
+    ],
+    minChars: 20,
+    maxChars: 1200,
+  },
+  Alan_Becerileri: {
+    headerRegex: /^(?:ALAN\s*BECERİLERİ|Alan\s*Becerileri)(?=$|\s|[:|-])/i,
+    stopRegex: /^(?:EĞİLİMLER|PROGRAMLAR\s*ARASI|SOSYAL\s*[-–]?\s*DUYGUSAL)(?=$|\s|[:|-])/i,
+    semanticKeywords: ["yöntemlerini uygulama", "becerisi", "uygulama yapma"],
+    characteristicPhrases: [
+      /ALAN\s*BECERİLERİ\s*[:|-]?\s*([^\n|]{5,120})/i,
+    ],
+    minChars: 5,
+    maxChars: 250,
+  },
+  Disiplinler_Arasi_Iliski: {
+    headerRegex:
+      /^(?:DİSİPLİNLER\s*ARASI\s*İLİŞKİ(?:LER)?|Disiplinler\s*Arası\s*İlişki(?:ler)?)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:BECERİLER\s*ARASI|ÖĞRENME\s*ÇIKTILARI|İÇERİK\s*ÇERÇEVESİ)(?=$|\s|[:|-])/i,
+    semanticKeywords: ["coğrafya", "biyoloji", "matematik", "kimya", "fizik", "ekonomi"],
+    characteristicPhrases: [
+      /DİSİPLİNLER\s*ARASI\s*İLİŞKİ(?:LER)?\s*[:|-]?\s*([^\n|]{3,140})/i,
+    ],
+    minChars: 3,
+    maxChars: 220,
+  },
+  Ogrenme_Ciktilari_ve_Surec_Bilesenleri: {
+    headerRegex:
+      /^(?:ÖĞRENME\s*ÇIKTILARI\s*VE\s*SÜREÇ\s*BİLEŞENLERİ|KAZANIMLAR\s*VE\s*AÇIKLAMALARI)(?=$|\s|[:|-])/i,
+    stopRegex:
+      /^(?:İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME)(?=$|\s|[:|-])/i,
+    semanticKeywords: ["açıklar", "sıralar", "uygular", "açıklanır", "sıralanır"],
+    characteristicPhrases: [
+      /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s+[^\n]+/,
+    ],
+    minChars: 15,
+    maxChars: 1200,
+  },
+  Icerik_Cercevesi: {
+    headerRegex: /^(?:İÇERİK\s*ÇERÇEVESİ|KONU(?:\s*BAŞLIĞI)?)(?=$|\s|[:|-])/i,
+    stopRegex: /^(?:ÖĞRENME\s*KANITLARI|ANAHTAR\s*KAVRAMLAR|ÖĞRENME\s*ÇIKTILARI)(?=$|\s|[:|-])/i,
+    semanticKeywords: ["ilkeleri", "yönetimi", "uygulamaları", "yöntemleri"],
+    characteristicPhrases: [
+      /(?:İÇERİK\s*ÇERÇEVESİ|Konu)\s*[:|-]\s*([^\n|]{4,100})/i,
+    ],
+    minChars: 4,
+    maxChars: 150,
+  },
+};
+
+/**
+ * Automatically searches the raw uploaded documents (Ders Bilgi Formu, Yıllık Plan, Ders Materyali)
+ * for a specific section when AI cannot find it or returns conflicting/hallucinated data.
+ * Uses a 3-stage search:
+ *   1. Header / Synonym boundary scan
+ *   2. Characteristic regex pattern extraction
+ *   3. Sliding window semantic keyword density + AI cue matching
+ */
+export function autoSearchDocumentSectionFallback(
+  sectionKey: DocumentSectionKey,
+  rawDbfText: string,
+  rawYillikPlanText: string,
+  materyalSlice: string,
+  weekData: WeekSpecificExtraction,
+  aiHintText?: string
+): string {
+  const profile = SECTION_SEARCH_PROFILES[sectionKey];
+  const combinedSource = [rawDbfText || "", rawYillikPlanText || ""]
+    .filter(Boolean)
+    .join("\n");
+  if (!combinedSource.trim()) return "";
+
+  const sourceLines = combinedSource
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // Stage 1: Direct Header & Synonym Boundary Scan
+  const stage1Match = extractSectionBetweenHeadings(
+    sourceLines,
+    profile.headerRegex,
+    profile.stopRegex,
+    profile.minChars,
+    profile.maxChars
+  );
+  if (stage1Match && stage1Match.length >= profile.minChars) {
+    return stage1Match;
+  }
+
+  // Stage 2: Characteristic Regex Pattern Match across the raw text
+  for (const regex of profile.characteristicPhrases) {
+    const match = combinedSource.match(regex);
+    if (match) {
+      const captured = (match[1] || match[0]).trim();
+      if (captured.length >= profile.minChars) {
+        return captured.slice(0, profile.maxChars);
+      }
+    }
+  }
+
+  // Stage 3: Sliding Window Semantic Keyword Density + AI Hint Similarity Scan
+  // Splits the raw documents into paragraph blocks and finds the block with highest semantic density
+  const paragraphs = combinedSource
+    .split(/\n{2,}|(?=\b(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|ÖĞRENME\s*KANITLARI|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\b)/i)
+    .map((p) => p.replace(/\s+/g, " ").trim())
+    .filter((p) => p.length >= profile.minChars);
+
+  let bestParagraph = "";
+  let bestScore = 0;
+
+  for (const para of paragraphs) {
+    // Skip obvious copyright/front-matter noise
+    if (
+      /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır/i.test(
+        para
+      )
+    ) {
+      continue;
+    }
+
+    const lowerPara = para.toLocaleLowerCase("tr-TR");
+    let keywordHits = 0;
+    for (const kw of profile.semanticKeywords) {
+      if (lowerPara.includes(kw.toLocaleLowerCase("tr-TR"))) {
+        keywordHits++;
+      }
+    }
+
+    let score =
+      profile.semanticKeywords.length > 0
+        ? keywordHits / profile.semanticKeywords.length
+        : 0;
+
+    // If AI provided a partial/paraphrased hint, boost paragraphs that share tokens with it
+    if (aiHintText && aiHintText.trim().length >= 20) {
+      const sim = computeTextSimilarity(aiHintText, para);
+      score = Math.max(score, sim.tokenContainmentScore * 0.85);
+    }
+
+    if (score > bestScore && score >= 0.28) {
+      bestScore = score;
+      bestParagraph = para;
+    }
+  }
+
+  if (bestParagraph) {
+    return bestParagraph.slice(0, profile.maxChars);
+  }
+
+  // Special handling if searching for Ogrenme_Ciktilari_ve_Surec_Bilesenleri in Yıllık Plan / Materyal
+  if (
+    sectionKey === "Ogrenme_Ciktilari_ve_Surec_Bilesenleri" &&
+    weekData.formattedOutcomeAndProcessBlock
+  ) {
+    return weekData.formattedOutcomeAndProcessBlock;
+  }
+
+  if (sectionKey === "Icerik_Cercevesi" && weekData.icerikCercevesi) {
+    return weekData.icerikCercevesi;
+  }
+
+  // Also check materyalSlice if still not found and AI hint exists
+  if (aiHintText && materyalSlice) {
+    const matLines = materyalSlice
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length >= profile.minChars);
+    for (const mLine of matLines) {
+      const sim = computeTextSimilarity(aiHintText, mLine);
+      if (sim.overallScore >= 0.65) {
+        return mLine.slice(0, profile.maxChars);
+      }
+    }
+  }
+
+  return "";
+}
+
+/**
+ * Automatically searches the raw Ders Bilgi Formu for the active learning unit's
+ * Öğretme-Öğrenme Uygulamaları bullet items if AI could not find them or returned conflicting items.
+ */
+export function autoSearchOgretmeUygulamalariBulletsFallback(
+  structuredDbf: StructuredDersBilgiFormu,
+  weekData: WeekSpecificExtraction,
+  aiCandidateBullets?: string[]
+): string[] {
+  // 1. Check pre-indexed unit bullets in structuredDbf
+  if (weekData.unitOgretmeUygulamalari.length > 0) {
+    return weekData.unitOgretmeUygulamalari;
+  }
+
+  const rawDbf = structuredDbf.rawDbfText || "";
+  const unitName = (weekData.ogrenmeBirimi || "").trim();
+
+  // 2. Search rawDbfText directly around the unit name heading (e.g. "* Onarıcı Tarım:")
+  if (rawDbf && unitName && unitName.length >= 3) {
+    const escapedUnit = unitName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const unitBlockRegex = new RegExp(
+      `(?:^|\\n)\\s*\\*?\\s*${escapedUnit}\\s*:\\s*([\\s\\S]{40,3500}?)(?=\\n\\s*\\*?\\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\\s-]{2,40}:\\s|\\n\\s*(?:FARKLILAŞTIRMA|Farklılaştırma|UYGUNDUR)|$)`,
+      "i"
+    );
+    const match = rawDbf.match(unitBlockRegex);
+    if (match && match[1]) {
+      const bullets = splitOgretmeUygulamalariIntoBullets(
+        `${unitName}:\n${match[1].trim()}`,
+        unitName
+      );
+      if (bullets.length >= 2) {
+        return bullets;
+      }
+    }
+  }
+
+  // 3. Auto-search the entire Öğretme-Öğrenme Uygulamaları section in rawDbfText
+  const rawSection = autoSearchDocumentSectionFallback(
+    "Ogretme_Uygulamalari",
+    rawDbf,
+    structuredDbf.rawYillikPlanText || "",
+    "",
+    weekData,
+    aiCandidateBullets?.join(" ")
+  );
+  if (rawSection) {
+    const bullets = splitOgretmeUygulamalariIntoBullets(rawSection, unitName);
+    if (bullets.length >= 2) {
+      return bullets;
+    }
+  }
+
+  // 4. If structuredDbf has allOgretmeUygulamalariBullets, filter or return them
+  if (structuredDbf.allOgretmeUygulamalariBullets.length > 0) {
+    return structuredDbf.allOgretmeUygulamalariBullets;
+  }
+
+  // 5. If AI provided candidate bullets, verify each bullet's similarity against the raw documents
+  if (aiCandidateBullets && aiCandidateBullets.length > 0 && rawDbf) {
+    const verifiedBullets = aiCandidateBullets
+      .map((b) => b.replace(/^\*\s*/, "").trim())
+      .filter((b) => {
+        if (
+          b.length < 15 ||
+          /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır|\.{4,}/i.test(
+            b
+          )
+        ) {
+          return false;
+        }
+        const sim = computeTextSimilarity(b, rawDbf, 0.55);
+        return !sim.hasConflict;
+      });
+
+    if (verifiedBullets.length >= 2) {
+      return verifiedBullets;
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Resolves a single Ders Bilgi Formu section by running text similarity analysis
+ * between the AI output and the original document section:
+ * - Prevents AI outputs from conflicting with or overwriting the user's original Ders Bilgi Formu text.
+ * - If the pre-parsed field is empty or AI couldn't find it in the document, triggers `autoSearchDocumentSectionFallback`.
+ */
+export function resolveDbfSectionWithSimilarityAndFallback(
+  sectionKey: DocumentSectionKey,
+  preExtractedDbfValue: string,
+  aiCandidateValue: string | undefined,
+  structuredDbf: StructuredDersBilgiFormu,
+  weekData: WeekSpecificExtraction,
+  materyalSlice: string,
+  synthesizedLastResortFallback: string
+): string {
+  const cleanPreExtracted = (preExtractedDbfValue || "").trim();
+  const cleanAi = (aiCandidateValue || "").trim();
+  const rawDbf = structuredDbf.rawDbfText || "";
+  const rawYillik = structuredDbf.rawYillikPlanText || "";
+  const combinedRawDocs = `${rawDbf}\n${rawYillik}`.trim();
+
+  // Case 1: Pre-extracted verbatim section from Ders Bilgi Formu exists
+  if (cleanPreExtracted.length >= 25) {
+    if (!cleanAi) {
+      return cleanPreExtracted;
+    }
+
+    // Run text similarity analysis between AI output and the original Ders Bilgi Formu section
+    const similarity = computeTextSimilarity(
+      cleanAi,
+      cleanPreExtracted,
+      0.75
+    );
+
+    // If AI output conflicts with the original document (or is shorter/truncated), lock in the original document text
+    if (
+      similarity.hasConflict ||
+      cleanAi.length < cleanPreExtracted.length * 0.9
+    ) {
+      return cleanPreExtracted;
+    }
+
+    // Even when AI is very similar, verify against raw document so zero words are altered
+    return cleanPreExtracted;
+  }
+
+  // Case 2: Pre-extracted value was empty -> Automatically search the raw uploaded documents!
+  const autoSearchedFromDoc = autoSearchDocumentSectionFallback(
+    sectionKey,
+    rawDbf,
+    rawYillik,
+    materyalSlice,
+    weekData,
+    cleanAi
+  );
+
+  if (autoSearchedFromDoc && autoSearchedFromDoc.length >= 25) {
+    // If AI also returned a value, check if AI conflicts with the newly found document section
+    if (cleanAi.length >= 25) {
+      const simWithAutoFound = computeTextSimilarity(
+        cleanAi,
+        autoSearchedFromDoc,
+        0.72
+      );
+      if (simWithAutoFound.hasConflict) {
+        // Prevent conflict: always prefer the section found directly in the uploaded document
+        return autoSearchedFromDoc;
+      }
+    }
+    return autoSearchedFromDoc;
+  }
+
+  // Case 3: Check if AI's candidate actually exists inside the raw uploaded document (via similarity analysis)
+  if (cleanAi.length >= 30 && combinedRawDocs.length >= 50) {
+    const simWithRawDoc = computeTextSimilarity(
+      cleanAi,
+      combinedRawDocs,
+      0.55
+    );
+    if (
+      !simWithRawDoc.hasConflict &&
+      !/MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır|VE\s*SÜRE/i.test(
+        cleanAi
+      )
+    ) {
+      return cleanAi;
+    }
+  }
+
+  // Case 4: Last resort document-grounded pedagogical fallback
+  return synthesizedLastResortFallback;
+}
+
+/**
+ * Validates AI-generated week-specific activity bullets (Güdüleme, Dikkat Çekme, Ek Öğretme Uygulamaları)
+ * against the uploaded documents (Ders Materyali + Yıllık Plan + Ders Bilgi Formu) using text similarity analysis.
+ * Filters out any bullet that conflicts with the course/week context or contains front-matter noise,
+ * and automatically supplements missing items from the document-grounded fallback.
+ */
+export function verifyAndMergeDynamicBullets(
+  aiBullets: string[] | undefined,
+  fallbackBullets: string[],
+  referenceCorpus: string,
+  weekData: WeekSpecificExtraction,
+  options: {
+    minCount: number;
+    minLength: number;
+    requireQuestionMark?: boolean;
+    requireMaarifCodeSuffix?: boolean;
+    defaultCodes?: string[];
+  }
+): string[] {
+  const validAiBullets: string[] = [];
+  const referenceContext = [
+    referenceCorpus,
+    weekData.ogrenmeBirimi,
+    weekData.icerikCercevesi,
+    weekData.formattedOutcomeAndProcessBlock,
+    weekData.searchKeywords.join(" "),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  if (Array.isArray(aiBullets)) {
+    for (const rawBullet of aiBullets) {
+      if (typeof rawBullet !== "string") continue;
+      let cleaned = rawBullet.replace(/^\s*[*•\-–]\s*/, "").trim();
+      if (cleaned.length < options.minLength) continue;
+
+      // Reject copyright / front-matter / placeholder noise
+      if (
+        /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır|YARDIMCI\s*VE\s*KAYNAK|\.{4,}|"16\.\s*Hafta"|"VE\s*SÜRE"/i.test(
+          cleaned
+        )
+      ) {
+        continue;
+      }
+
+      if (options.requireQuestionMark && !cleaned.endsWith("?")) {
+        continue;
+      }
+
+      // Run similarity / topical overlap analysis against the uploaded document corpus
+      if (referenceContext.length >= 40) {
+        const sim = computeTextSimilarity(cleaned, referenceContext, 0.14);
+        // If the AI bullet has zero topical overlap with the uploaded course documents, skip it
+        if (sim.tokenContainmentScore < 0.12 && sim.overallScore < 0.12) {
+          continue;
+        }
+      }
+
+      // Ensure parenthesized Maarif code suffix on Ek Öğretme Uygulamaları if required
+      if (
+        options.requireMaarifCodeSuffix &&
+        !/\([A-ZÇĞİÖŞÜ0-9.,\s]+\)\.?\s*$/.test(cleaned)
+      ) {
+        const fallbackCodePair =
+          options.defaultCodes && options.defaultCodes.length >= 2
+            ? `(${options.defaultCodes[0]}, ${options.defaultCodes[1]})`
+            : "(OB1, KB2.2)";
+        cleaned = `${cleaned.replace(/\.$/, "")} ${fallbackCodePair}.`;
+      }
+
+      validAiBullets.push(cleaned);
+    }
+  }
+
+  if (validAiBullets.length >= options.minCount) {
+    return validAiBullets;
+  }
+
+  // If AI couldn't find/produce enough document-aligned items, merge with document-searched fallback items
+  const merged = [...validAiBullets];
+  for (const fb of fallbackBullets) {
+    if (merged.length >= Math.max(options.minCount, fallbackBullets.length)) {
+      break;
+    }
+    const isDuplicate = merged.some(
+      (existing) => computeTextSimilarity(existing, fb).overallScore >= 0.65
+    );
+    if (!isDuplicate) {
+      merged.push(fb);
+    }
+  }
+
+  return merged.length > 0 ? merged : fallbackBullets;
+}
+
 export function enforceAndMergeLessonPlan(
   aiPlan: Partial<MaarifLessonPlan> | null,
   structuredDbf: StructuredDersBilgiFormu,
@@ -1492,6 +2624,12 @@ export function enforceAndMergeLessonPlan(
     materyalSlice
   );
 
+  const rawDbf = structuredDbf.rawDbfText || "";
+  const rawYillik = structuredDbf.rawYillikPlanText || "";
+  const fullDocumentCorpus = [rawDbf, rawYillik, materyalSlice]
+    .filter(Boolean)
+    .join("\n");
+
   const cleanSinif =
     (overrideMeta?.sinifDuzeyi || "").trim() ||
     structuredDbf.sinif ||
@@ -1502,80 +2640,369 @@ export function enforceAndMergeLessonPlan(
     structuredDbf.ders ||
     "MESLEK DERSİ";
 
-  const aiGuduleme = aiPlan?.Ogrenme_Ogretme_Yasantilari?.Guduleme?.filter(
-    (s) => typeof s === "string" && s.trim().length >= 25
+  // 1. Verify & merge dynamic week-specific activities (Güdüleme, Dikkat Çekme, Ek Öğretme Uygulamaları)
+  // using text similarity analysis against Ders Materyali + Yıllık Plan + Ders Bilgi Formu
+  const finalGuduleme = verifyAndMergeDynamicBullets(
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Guduleme,
+    fallbackActivities.Guduleme,
+    fullDocumentCorpus,
+    weekData,
+    {
+      minCount: 4,
+      minLength: 25,
+    }
   );
-  const finalGuduleme =
-    aiGuduleme && aiGuduleme.length >= 3
-      ? aiGuduleme.map((s) => s.replace(/^\*\s*/, "").trim())
-      : fallbackActivities.Guduleme;
 
-  const aiDikkat = aiPlan?.Ogrenme_Ogretme_Yasantilari?.Dikkat_Cekme?.filter(
-    (s) => typeof s === "string" && s.trim().length >= 20
+  const finalDikkat = verifyAndMergeDynamicBullets(
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Dikkat_Cekme,
+    fallbackActivities.Dikkat_Cekme,
+    fullDocumentCorpus,
+    weekData,
+    {
+      minCount: 4,
+      minLength: 20,
+      requireQuestionMark: true,
+    }
   );
-  const finalDikkat =
-    aiDikkat && aiDikkat.length >= 3
-      ? aiDikkat.map((s) => s.replace(/^\*\s*/, "").trim())
-      : fallbackActivities.Dikkat_Cekme;
 
-  const aiEkUygulamalar =
-    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ek_Ogretme_Uygulamalari?.filter(
-      (s) =>
-        typeof s === "string" &&
-        s.trim().length >= 25 &&
-        !/MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır/i.test(
-          s
-        )
-    );
-  const finalEkUygulamalar =
-    aiEkUygulamalar && aiEkUygulamalar.length >= 4
-      ? aiEkUygulamalar.map((s) => s.replace(/^\*\s*/, "").trim())
-      : fallbackActivities.Ek_Ogretme_Uygulamalari;
+  const finalEkUygulamalar = verifyAndMergeDynamicBullets(
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ek_Ogretme_Uygulamalari,
+    fallbackActivities.Ek_Ogretme_Uygulamalari,
+    fullDocumentCorpus,
+    weekData,
+    {
+      minCount: 5,
+      minLength: 25,
+      requireMaarifCodeSuffix: true,
+      defaultCodes: structuredDbf.rawActivityCodes,
+    }
+  );
 
-  let finalOgretmeUygulamalari = weekData.unitOgretmeUygulamalari;
+  // 2. Resolve Öğretme Uygulamaları with similarity conflict protection + automatic document search fallback
+  let finalOgretmeUygulamalari = autoSearchOgretmeUygulamalariBulletsFallback(
+    structuredDbf,
+    weekData,
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari
+  );
   if (finalOgretmeUygulamalari.length === 0) {
-    const aiOgretme =
-      aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari?.filter(
-        (s) =>
-          typeof s === "string" &&
-          s.trim().length >= 10 &&
-          !/MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır|\.{4,}/i.test(
-            s
-          )
+    finalOgretmeUygulamalari = fallbackActivities.Ogretme_Uygulamalari;
+  } else if (
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari &&
+    aiPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.length > 0
+  ) {
+    // Check if AI's Ogretme_Uygulamalari conflicts with the original Ders Bilgi Formu bullets
+    const aiJoined =
+      aiPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.join(" ");
+    const dbfJoined = finalOgretmeUygulamalari.join(" ");
+    const sim = computeTextSimilarity(aiJoined, dbfJoined, 0.78);
+    if (sim.hasConflict) {
+      // Prevent AI from overwriting or conflicting with the user's Ders Bilgi Formu items
+      finalOgretmeUygulamalari = finalOgretmeUygulamalari.map((s) =>
+        s.replace(/^\*\s*/, "").trim()
       );
-    finalOgretmeUygulamalari =
-      aiOgretme && aiOgretme.length >= 3
-        ? aiOgretme.map((s) => s.replace(/^\*\s*/, "").trim())
-        : fallbackActivities.Ogretme_Uygulamalari;
+    }
   }
 
-  const finalOgrenmeKanitlari =
-    structuredDbf.ogrenmeKanitlari ||
-    (aiPlan?.Ogrenme_Kanitlari && aiPlan.Ogrenme_Kanitlari.trim().length >= 60
-      ? aiPlan.Ogrenme_Kanitlari.trim()
-      : `Öğrenci çalışmaları değerlendirilirken kontrol listesi, derecelendirme ölçeği ve dereceli puanlama anahtarı gibi ölçme araçlarından uygun olanlar seçilerek kullanılabilir. Ayrıca öğrencilerin sürece yönelik kendi katkılarını ve grup içi etkileşimlerini değerlendirmeleri amacıyla öz ve akran değerlendirme formlarından yararlanılabilir. Yapılan çalışmalar gözlem formu, kontrol listesi veya dereceli puanlama anahtarı ile değerlendirilebilir. Bu ölçme yöntemleri, sürecin her aşamasında geri bildirim sağlamak ve öğrencilerin gelişimlerini sistematik bir şekilde izlemek için kullanılabilir.`);
+  // 3. Resolve static Ders Bilgi Formu sections using similarity analysis & automatic document section search fallback
+  const finalOgrenmeKanitlari = resolveDbfSectionWithSimilarityAndFallback(
+    "Ogrenme_Kanitlari",
+    structuredDbf.ogrenmeKanitlari,
+    aiPlan?.Ogrenme_Kanitlari,
+    structuredDbf,
+    weekData,
+    materyalSlice,
+    `Öğrenci performansını belirlemeye yönelik çalışmalar değerlendirilirken gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği ve dereceli puanlama anahtarı (rubrik) gibi ölçme araçlarından uygun olanlar seçilerek kullanılabilir.\nAyrıca öz değerlendirme ve akran değerlendirme formları kullanılarak öğrencilerin öğretim sürecine katılımları değerlendirilebilir. Öğrencilerin bilgi düzeyleri, uygulama becerileri, zaman yönetimi ile malzeme kullanımı gibi ölçütler bağlamında değerlendirilerek geri bildirim verilir.`
+  );
 
-  const finalTemelKabuller =
-    structuredDbf.temelKabuller ||
-    (aiPlan?.Ogrenme_Ogretme_Yasantilari?.Temel_Kabuller &&
-    aiPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller.trim().length >= 35
-      ? aiPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller.trim()
-      : `Öğrencilerin; ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ve ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusuyla ilgili temel kavramlara ve günlük yaşam gözlemlerine sahip oldukları kabul edilmektedir.`);
+  const finalTemelKabuller = resolveDbfSectionWithSimilarityAndFallback(
+    "Temel_Kabuller",
+    structuredDbf.temelKabuller,
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Temel_Kabuller,
+    structuredDbf,
+    weekData,
+    materyalSlice,
+    `Öğrencilerin; ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ve ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusuyla ilgili temel kavramlara ve günlük yaşam gözlemlerine sahip oldukları kabul edilmektedir.`
+  );
 
-  const finalOnDegerlendirme =
-    structuredDbf.onDegerlendirmeSureci ||
-    (aiPlan?.Ogrenme_Ogretme_Yasantilari?.On_Degerlendirme_Sureci &&
-    aiPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci.trim().length >=
-      35
-      ? aiPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci.trim()
-      : `Öğrencilerden, ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ve ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusundaki temel kavramlar ve uygulama örnekleri hakkında ön bilgilerini paylaşmaları istenir.`);
+  const finalOnDegerlendirme = resolveDbfSectionWithSimilarityAndFallback(
+    "On_Degerlendirme_Sureci",
+    structuredDbf.onDegerlendirmeSureci,
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.On_Degerlendirme_Sureci,
+    structuredDbf,
+    weekData,
+    materyalSlice,
+    `Öğrencilerden, ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ve ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusundaki temel kavramlar ve uygulama örnekleri hakkında ön bilgilerini paylaşmaları istenir.`
+  );
 
-  const finalKopruKurma =
-    structuredDbf.kopruKurma ||
-    (aiPlan?.Ogrenme_Ogretme_Yasantilari?.Kopru_Kurma &&
-    aiPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma.trim().length >= 35
-      ? aiPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma.trim()
-      : `Günlük hayatta karşılaşılan örnekler ve önceki konularda edinilen bilgiler üzerinden ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ile ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusu arasında ilişki kurularak yeni konuya geçiş yapılır.`);
+  const finalKopruKurma = resolveDbfSectionWithSimilarityAndFallback(
+    "Kopru_Kurma",
+    structuredDbf.kopruKurma,
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Kopru_Kurma,
+    structuredDbf,
+    weekData,
+    materyalSlice,
+    `Günlük hayatta karşılaşılan örnekler ve önceki konularda edinilen bilgiler üzerinden ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} ile ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} konusu arasında ilişki kurularak yeni konuya geçiş yapılır.`
+  );
+
+  const finalFarklilastirma = resolveDbfSectionWithSimilarityAndFallback(
+    "Farklilastirma",
+    structuredDbf.farklilastirma,
+    aiPlan?.Farklilastirma,
+    structuredDbf,
+    weekData,
+    materyalSlice,
+    ""
+  );
+
+  // 4. Cross-Verify & Complete Öğrenme Çıktıları ve Süreç Bileşenleri + İçerik Çerçevesi
+  // Combines deterministic week/date extraction with AI's extraction and cross-checks against Ders Bilgi Formu catalog
+  let finalOutcomesBlock = weekData.formattedOutcomeAndProcessBlock;
+  const aiOutcomesRaw = (
+    aiPlan?.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""
+  ).trim();
+
+  if (aiOutcomesRaw.length >= 15) {
+    const codeRegex =
+      /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b/g;
+    const subLineExtractRegex =
+      /(?:^|\n|\s)([a-zçğıöşü])\)\s*([^\n]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\n|$))/gi;
+
+    const aiCodes: string[] = [];
+    let cm: RegExpExecArray | null;
+    while ((cm = codeRegex.exec(aiOutcomesRaw)) !== null) {
+      if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(cm[1])) {
+        if (!aiCodes.includes(cm[0])) aiCodes.push(cm[0]);
+      }
+    }
+
+    const aiSubMap = new Map<string, string>();
+    let sm: RegExpExecArray | null;
+    while ((sm = subLineExtractRegex.exec(aiOutcomesRaw)) !== null) {
+      const letter = sm[1].toLocaleLowerCase("tr-TR");
+      const text = sm[2].trim();
+      if (text.length >= 5) {
+        aiSubMap.set(letter, `${letter}) ${text}`);
+      }
+    }
+
+    const weekSubMap = new Map<string, string>();
+    for (const sub of weekData.weekSubComponents) {
+      const m = sub.match(/^([a-zçğıöşü])\)\s*(.+)$/i);
+      if (m) {
+        weekSubMap.set(m[1].toLocaleLowerCase("tr-TR"), sub.trim());
+      }
+    }
+
+    const activeCode =
+      weekData.outcomeCode ||
+      aiCodes[0] ||
+      Object.keys(structuredDbf.outcomesMap)[0] ||
+      "";
+    const catalogEntry = activeCode
+      ? structuredDbf.outcomesMap[activeCode]
+      : undefined;
+
+    // Verify if AI found sub-components that also exist in the week's raw window or catalog (and weren't hallucinated)
+    // Only add AI sub-components if weekSubMap was empty OR if the AI sub-component letter is explicitly present in rawWeekWindowText
+    const mergedLetters: string[] = [];
+    const mergedSubMap = new Map<string, string>();
+
+    for (const [letter, wSub] of weekSubMap.entries()) {
+      mergedLetters.push(letter);
+      const catSub = catalogEntry?.subComponents[letter];
+      const aiSub = aiSubMap.get(letter);
+      // Choose the most complete, untruncated version verified against the document
+      let bestSub = wSub;
+      if (catSub && catSub.length >= bestSub.length) {
+        bestSub = catSub;
+      }
+      if (
+        aiSub &&
+        aiSub.length > bestSub.length &&
+        !computeTextSimilarity(aiSub, fullDocumentCorpus, 0.55).hasConflict
+      ) {
+        bestSub = aiSub;
+      }
+      mergedSubMap.set(letter, bestSub);
+    }
+
+    for (const [letter, aiSub] of aiSubMap.entries()) {
+      if (!mergedSubMap.has(letter)) {
+        const letterInWeekWindow = new RegExp(
+          `(?:^|\\s|\\|)${letter}\\)\\s*`,
+          "i"
+        ).test(weekData.rawWeekWindowText);
+        const weekHadNoSubs = weekSubMap.size === 0;
+        const verifiedInCorpus = !computeTextSimilarity(
+          aiSub,
+          fullDocumentCorpus,
+          0.55
+        ).hasConflict;
+
+        if ((letterInWeekWindow || weekHadNoSubs) && verifiedInCorpus) {
+          mergedLetters.push(letter);
+          const catSub = catalogEntry?.subComponents[letter];
+          mergedSubMap.set(
+            letter,
+            catSub && catSub.length >= aiSub.length ? catSub : aiSub
+          );
+        }
+      }
+    }
+
+    // Reconstruct the clean header + verified complete sub-components
+    const bestHeader =
+      catalogEntry?.headerLine ||
+      (weekData.outcomeHeader &&
+      !weekData.outcomeHeader.includes("Seçilen hafta öğrenme çıktısı")
+        ? weekData.outcomeHeader
+        : aiOutcomesRaw.split(/\r?\n/)[0].replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "").trim());
+
+    if (mergedLetters.length > 0) {
+      finalOutcomesBlock = [
+        bestHeader,
+        ...mergedLetters.map((l) => mergedSubMap.get(l)!),
+      ]
+        .filter(Boolean)
+        .join("\n");
+    } else if (
+      !finalOutcomesBlock ||
+      finalOutcomesBlock.includes("Seçilen hafta öğrenme çıktısı")
+    ) {
+      const searchedOutcomes = autoSearchDocumentSectionFallback(
+        "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+        rawDbf,
+        rawYillik,
+        materyalSlice,
+        weekData,
+        aiOutcomesRaw
+      );
+      finalOutcomesBlock = searchedOutcomes || aiOutcomesRaw;
+    }
+  } else if (!finalOutcomesBlock) {
+    finalOutcomesBlock = autoSearchDocumentSectionFallback(
+      "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+      rawDbf,
+      rawYillik,
+      materyalSlice,
+      weekData
+    );
+  }
+
+  let finalIcerikCercevesi = weekData.icerikCercevesi;
+  if (
+    (!finalIcerikCercevesi ||
+      /^\d+\s*\.\s*hafta$/i.test(finalIcerikCercevesi)) &&
+    aiPlan?.Icerik_Cercevesi &&
+    !/^\d+\s*\.\s*hafta$/i.test(aiPlan.Icerik_Cercevesi.trim())
+  ) {
+    const searchedIcerik = autoSearchDocumentSectionFallback(
+      "Icerik_Cercevesi",
+      rawDbf,
+      rawYillik,
+      materyalSlice,
+      weekData,
+      aiPlan.Icerik_Cercevesi
+    );
+    finalIcerikCercevesi = searchedIcerik || aiPlan.Icerik_Cercevesi.trim();
+  }
+
+  // 5. Verify Alan_Becerileri & Disiplinler_Arasi_Iliski with similarity analysis + auto-search fallback
+  let finalAlanBecerileri = structuredDbf.alanBecerileri;
+  if (aiPlan?.Ders_Bilgisi?.Alan_Becerileri) {
+    const simAlan = computeTextSimilarity(
+      aiPlan.Ders_Bilgisi.Alan_Becerileri,
+      finalAlanBecerileri,
+      0.75
+    );
+    if (simAlan.hasConflict && fullDocumentCorpus.length > 0) {
+      const searchedAlan = autoSearchDocumentSectionFallback(
+        "Alan_Becerileri",
+        rawDbf,
+        rawYillik,
+        materyalSlice,
+        weekData,
+        aiPlan.Ders_Bilgisi.Alan_Becerileri
+      );
+      if (
+        searchedAlan &&
+        !/VE\s*SÜRE|BİLGİ\s*FORMU/i.test(searchedAlan) &&
+        computeTextSimilarity(searchedAlan, fullDocumentCorpus, 0.6)
+          .overallScore >= 0.6
+      ) {
+        finalAlanBecerileri = searchedAlan;
+      }
+    }
+  }
+
+  let finalDisiplinlerArasi = structuredDbf.disiplinlerArasiIliski;
+  if (aiPlan?.Programlar_Arasi_Bilesenler?.Disiplinler_Arasi_Iliski) {
+    const simDisiplin = computeTextSimilarity(
+      aiPlan.Programlar_Arasi_Bilesenler.Disiplinler_Arasi_Iliski,
+      finalDisiplinlerArasi,
+      0.75
+    );
+    if (simDisiplin.hasConflict && fullDocumentCorpus.length > 0) {
+      const searchedDisiplin = autoSearchDocumentSectionFallback(
+        "Disiplinler_Arasi_Iliski",
+        rawDbf,
+        rawYillik,
+        materyalSlice,
+        weekData,
+        aiPlan.Programlar_Arasi_Bilesenler.Disiplinler_Arasi_Iliski
+      );
+      if (searchedDisiplin && searchedDisiplin.length >= 3) {
+        finalDisiplinlerArasi = searchedDisiplin;
+      }
+    }
+  }
+
+  // Verify Maarif code lists (Eğilimler, SDB, Değerler, OB, KB): prevent AI from injecting codes that conflict with the document
+  const resolveCodeField = (
+    dbfCodeStr: string,
+    aiCodeStr: string | undefined,
+    prefix: "E" | "SDB" | "D" | "OB" | "KB"
+  ): string => {
+    if (dbfCodeStr && aiCodeStr) {
+      const sim = computeTextSimilarity(aiCodeStr, dbfCodeStr, 0.8);
+      if (!sim.hasConflict) return dbfCodeStr;
+      // If conflict detected, re-verify directly against full raw document corpus
+      if (fullDocumentCorpus.length > 20) {
+        return extractCanonicalMaarifCodes(
+          fullDocumentCorpus,
+          prefix,
+          dbfCodeStr
+        );
+      }
+    }
+    return dbfCodeStr;
+  };
+
+  const finalEgilimler = resolveCodeField(
+    structuredDbf.egilimler,
+    aiPlan?.Ders_Bilgisi?.Egilimler,
+    "E"
+  );
+  const finalSdb = resolveCodeField(
+    structuredDbf.sosyalDuygusalBeceriler,
+    aiPlan?.Programlar_Arasi_Bilesenler?.Sosyal_Duygusal_Ogrenme_Becerileri,
+    "SDB"
+  );
+  const finalDegerler = resolveCodeField(
+    structuredDbf.degerler,
+    aiPlan?.Programlar_Arasi_Bilesenler?.Degerler,
+    "D"
+  );
+  const finalOkuryazarlik = resolveCodeField(
+    structuredDbf.okuryazarlikBecerileri,
+    aiPlan?.Programlar_Arasi_Bilesenler?.Okuryazarlik_Becerileri,
+    "OB"
+  );
+  const finalBecerilerArasi = resolveCodeField(
+    structuredDbf.becerilerArasiIliski,
+    aiPlan?.Programlar_Arasi_Bilesenler?.Beceriler_Arasi_Iliski,
+    "KB"
+  );
 
   return {
     Ders_Bilgisi: {
@@ -1583,19 +3010,18 @@ export function enforceAndMergeLessonPlan(
       Ders: cleanDers,
       Ogrenme_Birimi: weekData.ogrenmeBirimi,
       Sure: weekData.sure,
-      Alan_Becerileri: structuredDbf.alanBecerileri,
-      Egilimler: structuredDbf.egilimler,
+      Alan_Becerileri: finalAlanBecerileri,
+      Egilimler: finalEgilimler,
     },
     Programlar_Arasi_Bilesenler: {
-      Sosyal_Duygusal_Ogrenme_Becerileri: structuredDbf.sosyalDuygusalBeceriler,
-      Degerler: structuredDbf.degerler,
-      Okuryazarlik_Becerileri: structuredDbf.okuryazarlikBecerileri,
-      Disiplinler_Arasi_Iliski: structuredDbf.disiplinlerArasiIliski,
-      Beceriler_Arasi_Iliski: structuredDbf.becerilerArasiIliski,
+      Sosyal_Duygusal_Ogrenme_Becerileri: finalSdb,
+      Degerler: finalDegerler,
+      Okuryazarlik_Becerileri: finalOkuryazarlik,
+      Disiplinler_Arasi_Iliski: finalDisiplinlerArasi,
+      Beceriler_Arasi_Iliski: finalBecerilerArasi,
     },
-    Ogrenme_Ciktilari_ve_Surec_Bilesenleri:
-      weekData.formattedOutcomeAndProcessBlock,
-    Icerik_Cercevesi: weekData.icerikCercevesi,
+    Ogrenme_Ciktilari_ve_Surec_Bilesenleri: finalOutcomesBlock,
+    Icerik_Cercevesi: finalIcerikCercevesi,
     Ogrenme_Kanitlari: finalOgrenmeKanitlari,
     Ogrenme_Ogretme_Yasantilari: {
       Temel_Kabuller: finalTemelKabuller,
@@ -1606,6 +3032,7 @@ export function enforceAndMergeLessonPlan(
       Dikkat_Cekme: finalDikkat,
       Ek_Ogretme_Uygulamalari: finalEkUygulamalar,
     },
-    Farklilastirma: structuredDbf.farklilastirma,
+    Farklilastirma: finalFarklilastirma,
   };
 }
+

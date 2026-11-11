@@ -9,6 +9,7 @@ import {
   extractWeekPlanStructured,
   extractWeekMateryalSlice,
   enforceAndMergeLessonPlan,
+  extractDateRangeFromText,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -38,7 +39,14 @@ export function inferApprovalDateClient(
   dateRange: string,
   defaultYear = 2026
 ): string {
-  const lower = (dateRange || "").toLowerCase();
+  const lower = (dateRange || "").toLocaleLowerCase("tr-TR");
+  const numericDateMatch = lower.match(/\b(\d{1,2})[./](\d{1,2})(?:[./](20\d{2}))?/);
+  if (numericDateMatch) {
+    const d = numericDateMatch[1].padStart(2, "0");
+    const m = numericDateMatch[2].padStart(2, "0");
+    const y = numericDateMatch[3] || (Number(m) >= 9 ? String(defaultYear) : String(defaultYear + 1));
+    return `${d}/${m}/${y}`;
+  }
   const dayMatch = lower.match(/(\d{1,2})/);
   const day = dayMatch ? dayMatch[1].padStart(2, "0") : "01";
   for (const [mName, mNum] of Object.entries(TURKISH_MONTHS)) {
@@ -76,24 +84,30 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
   const weeks: YillikPlanWeekItem[] = [];
   const seenWeeks = new Set<number>();
 
-  const monthPattern =
-    /(?:Ocak|Şubat|Subat|Mart|Nisan|Mayıs|Mayis|Haziran|Temmuz|Ağustos|Agustos|Eylül|Eylul|Ekim|Kasım|Kasim|Aralık|Aralik)/i;
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const m = line.match(/\b(\d{1,2})\s*\.\s*HAFTA(?:\s*\(?([^)|]+)\)?)?/i);
+    const m = line.match(
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)(?:\s*\(?([^)|]+)\)?)?/i
+    );
     if (m) {
-      const wNo = Number(m[1]);
+      const wNo = Number(m[1] || m[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
-        let datePart = (m[2] || "").trim().replace(/^\(|\)$/g, "").trim();
+        let datePart =
+          extractDateRangeFromText(line) ||
+          (m[3] || "").trim().replace(/^\(|\)$/g, "").trim();
 
         const blockLines: string[] = [];
-        for (
-          let j = i;
-          j < Math.min(lines.length, i + 18);
-          j++
+        // Include up to 2 lines above if vertically-centered PDF row has outcome header above HAFTA label
+        if (
+          i > 0 &&
+          !/\b\d{1,2}\s*\.\s*HAFTA/i.test(lines[i - 1]) &&
+          /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}\.\d{1,2}\b/.test(lines[i - 1])
         ) {
+          blockLines.push(lines[i - 1]);
+        }
+
+        for (let j = i; j < Math.min(lines.length, i + 22); j++) {
           if (
             j > i &&
             (new RegExp(`\\b${wNo + 1}\\s*\\.\\s*HAFTA\\b`, "i").test(lines[j]) ||
@@ -106,14 +120,9 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
 
         if (!datePart || /^\d+\s*\.\s*hafta$/i.test(datePart)) {
           for (const bLine of blockLines) {
-            const dateRangeMatch = bLine.match(
-              new RegExp(
-                `(\\d{1,2}\\s*(?:${monthPattern.source})?\\s*[-–/]\\s*\\d{1,2}\\s*${monthPattern.source}|${monthPattern.source}\\s*[-–/]?\\s*\\d{1,2}\\s*[-–]\\s*\\d{1,2})`,
-                "i"
-              )
-            );
-            if (dateRangeMatch) {
-              datePart = dateRangeMatch[1].trim();
+            const foundRange = extractDateRangeFromText(bLine);
+            if (foundRange) {
+              datePart = foundRange;
               break;
             }
           }
@@ -139,14 +148,14 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
           ogrenmeBirimi = unitMatch[1].trim().slice(0, 90);
         }
 
-        // Also capture sub-process components (a), b), c), ç), d), e)) for week preview
+        // Capture sub-process components (a), b), c), ç), d), e)) for week preview
         const subMatches =
-          blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,90}/gi) || [];
+          blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,110}/gi) || [];
 
         const meaningfulSummary = outcomeMatch
-          ? [outcomeMatch[1].trim(), ...subMatches.slice(0, 2)].join(" · ")
+          ? [outcomeMatch[1].trim(), ...subMatches.slice(0, 3)].join(" · ")
           : subMatches.length > 0
-          ? subMatches.slice(0, 2).join(" · ")
+          ? subMatches.slice(0, 3).join(" · ")
           : blockLines
               .filter(
                 (l) =>
@@ -165,7 +174,7 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
           tarihAraligi: datePart || "",
           onayTarihi: inferApprovalDateClient(datePart),
           ogrenmeBirimi,
-          konuVeCiktiOzeti: meaningfulSummary.slice(0, 240),
+          konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
           sure,
         });
       }
@@ -383,8 +392,7 @@ export interface XmlContextPayloadInput {
 /**
  * Decomposes the 3 full documents in memory using our Maarif Plan Engine and builds an
  * explicit XML-tagged context payload (<hedef_hafta_ve_ust_bilgiler>, <yillik_plan>,
- * <ders_bilgi_formu>, <ders_materyali>) where NO section of Ders Bilgi Formu (such as
- * Öğrenme Kanıtları, Temel Kabuller, Köprü Kurma, or Öğretme Uygulamaları at the end of the file)
+ * <ders_bilgi_formu>, <ders_materyali>) where NO section of Ders Bilgi Formu or Yıllık Plan
  * is ever cut off!
  */
 export function buildXmlContextPayloadWithAnalysis(
@@ -416,6 +424,15 @@ export function buildXmlContextPayloadWithAnalysis(
 
   const effectiveDers = input.ders_ismi.trim() || structuredDbf.ders;
   const effectiveSinif = input.sinif_duzeyi.trim() || structuredDbf.sinif;
+  const effectiveTarihAraligi =
+    weekData.tarihAraligi || input.tarih_araligi || "";
+  const effectiveOnayTarihi =
+    inferApprovalDateClient(effectiveTarihAraligi) || input.onay_tarihi || "";
+
+  const cleanYillikTableSlice = stripFrontMatter(input.yillik_plan || "").slice(
+    0,
+    24000
+  );
 
   const xmlPayload = `<ders_plani_baglam_paketi>
 <hedef_hafta_ve_ust_bilgiler>
@@ -424,8 +441,8 @@ export function buildXmlContextPayloadWithAnalysis(
   <ders_ismi>${effectiveDers}</ders_ismi>
   <sinif_duzeyi>${effectiveSinif}</sinif_duzeyi>
   <hafta_etiketi>${weekData.haftaEtiketi}</hafta_etiketi>
-  <tarih_araligi>${input.tarih_araligi || ""}</tarih_araligi>
-  <onay_tarihi>${input.onay_tarihi || ""}</onay_tarihi>
+  <tarih_araligi>${effectiveTarihAraligi}</tarih_araligi>
+  <onay_tarihi>${effectiveOnayTarihi}</onay_tarihi>
   <dosya_adlari>
     <yillik_plan_dosya_adi>${input.dosya_adlari?.yillik_plan || ""}</yillik_plan_dosya_adi>
     <ders_bilgi_formu_dosya_adi>${input.dosya_adlari?.ders_bilgi_formu || ""}</ders_bilgi_formu_dosya_adi>
@@ -433,7 +450,7 @@ export function buildXmlContextPayloadWithAnalysis(
   </dosya_adlari>
 </hedef_hafta_ve_ust_bilgiler>
 
-<yillik_plan baglam="Bu metin Ünitelendirilmiş Yıllık Plandır. Seçilen haftanın Öğrenme Birimi, Süresi (Ders Saati), İçerik Çerçevesi ve SADECE o haftaya ait Öğrenme Çıktıları ve Süreç Bileşenleri (a, b veya c, ç veya d veya e) doğrudan bu etiket içinden alınır.">
+<yillik_plan baglam="Bu metin Ünitelendirilmiş Yıllık Plandır. Hedeflenen hafta (${weekData.haftaEtiketi}) ve tarih aralığı (${effectiveTarihAraligi}) dikkate alınarak Öğrenme Birimi, Süre, İçerik Çerçevesi ve o hafta/tarih aralığına ait TÜM Öğrenme Çıktıları ve Süreç Bileşenleri (a, b, c, ç, d, e...) eksiksiz alınır.">
   <secilen_hafta_ogrenme_birimi>${weekData.ogrenmeBirimi}</secilen_hafta_ogrenme_birimi>
   <secilen_hafta_suresi>${weekData.sure}</secilen_hafta_suresi>
   <secilen_hafta_icerik_cercevesi>${weekData.icerikCercevesi}</secilen_hafta_icerik_cercevesi>
@@ -443,9 +460,12 @@ ${weekData.formattedOutcomeAndProcessBlock}
   <secilen_hafta_ham_kesiti>
 ${weekData.rawWeekWindowText}
   </secilen_hafta_ham_kesiti>
+  <yillik_plan_tam_tablo_metni>
+${cleanYillikTableSlice}
+  </yillik_plan_tam_tablo_metni>
 </yillik_plan>
 
-<ders_bilgi_formu baglam="Bu metin MEB Türkiye Yüzyılı Maarif Modeli resmi Ders Bilgi Formudur. Alan Becerileri, Eğilimler, Programlar Arası Bileşenler (SDB, D, OB, Disiplinler Arası İlişki, KB), Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma ve Öğretme Uygulamaları doğrudan bu etiket içindeki resmi metinlerden birebir alınır.">
+<ders_bilgi_formu baglam="Bu metin MEB Türkiye Yüzyılı Maarif Modeli resmi Ders Bilgi Formudur. Öğrenme Çıktıları ve Süreç Bileşenlerinin tam cümleleri ile Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma ve Öğretme Uygulamaları doğrudan bu etiket içindeki resmi metinlerden birebir alınır.">
   <alan_becerileri>${structuredDbf.alanBecerileri}</alan_becerileri>
   <egilimler>${structuredDbf.egilimler}</egilimler>
   <sosyal_duygusal_ogrenme_becerileri>${structuredDbf.sosyalDuygusalBeceriler}</sosyal_duygusal_ogrenme_becerileri>
@@ -453,6 +473,9 @@ ${weekData.rawWeekWindowText}
   <okuryazarlik_becerileri>${structuredDbf.okuryazarlikBecerileri}</okuryazarlik_becerileri>
   <disiplinler_arasi_iliski>${structuredDbf.disiplinlerArasiIliski}</disiplinler_arasi_iliski>
   <beceriler_arasi_iliski>${structuredDbf.becerilerArasiIliski}</beceriler_arasi_iliski>
+  <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
+${structuredDbf.rawOutcomesCatalogText || ""}
+  </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
   <ogrenme_kanitlari_tam_metin>
 ${structuredDbf.ogrenmeKanitlari}
   </ogrenme_kanitlari_tam_metin>

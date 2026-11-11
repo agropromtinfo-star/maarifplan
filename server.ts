@@ -13,6 +13,7 @@ import {
   extractWeekMateryalSlice,
   enforceAndMergeLessonPlan,
   splitOgretmeUygulamalariIntoBullets,
+  extractDateRangeFromText,
 } from "./src/shared/maarifPlanEngine";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,21 +30,44 @@ const upload = multer({
 
 const SYSTEM_INSTRUCTION = `Sen uzman bir meslek ve kültür dersleri öğretmenisin ve MEB Türkiye Yüzyılı Maarif Modeli öğretim programları konusunda uzmansın.
 Sana her çağrıda 3 kaynak doküman açık XML-benzeri bağlam etiketleriyle sunulmaktadır:
-1) <yillik_plan>: Seçilen haftanın Öğrenme Birimi, Süresi, İçerik Çerçevesi ve SADECE o haftada işlenecek Öğrenme Çıktısı ile alt süreç bileşenleri (a, b veya c, ç veya d veya e) buradadır.
-2) <ders_bilgi_formu>: Resmi MEB Ders Bilgi Formu verileridir (Alan Becerileri, Eğilimler, SDB, Değerler, OB, Disiplinler Arası İlişki, KB, Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma, Öğretme Uygulamaları).
+1) <yillik_plan>: Ünitelendirilmiş Yıllık Plan tablosudur. ÖNCE <hedef_hafta_ve_ust_bilgiler> içindeki <hafta_etiketi> ve <tarih_araligi> bilgisini <yillik_plan> tablosunda bul ve teyit et. O hafta ve tarih aralığına karşılık gelen Öğrenme Birimi, Süre, İçerik Çerçevesi ve o haftada işlenecek TÜM Öğrenme Çıktıları ile alt süreç bileşenlerini (a, b, c, ç, d, e...) hiçbir harfi veya cümleyi eksik bırakmadan eksiksiz çıkar.
+2) <ders_bilgi_formu>: Resmi MEB Ders Bilgi Formu verileridir. <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu> içindeki tam öğrenme çıktısı ve süreç bileşeni cümleleriyle <yillik_plan> içindeki haftalık kazanımları eşleştirerek 100% tam metin olarak yaz. Ayrıca Alan Becerileri, Eğilimler, SDB, Değerler, OB, Disiplinler Arası İlişki, KB, Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma ve Öğretme Uygulamaları bölümlerini birebir koru.
 3) <ders_materyali>: Seçilen haftanın süreç bileşenlerine ait Ders Kitabı / Ders Materyali konu anlatımı kesitidir.
 
 GÖREVİN VE KESİN KURALLAR:
-- Sabit program alanlarını (<ders_bilgi_formu> ve <yillik_plan> içindeki Sınıf, Ders, Öğrenme Birimi, Süre, Alan Becerileri, Eğilimler, SDB, Değerler, OB, Disiplinler Arası İlişki, KB, Öğrenme Çıktıları ve Süreç Bileşenleri, İçerik Çerçevesi, Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma, Öğretme Uygulamaları) KESİNLİKLE kaydırma veya başka bir dersin verisiyle değiştirme.
-- <yillik_plan> içindeki seçilen haftanın Süreç Bileşenlerine (örn. a, b veya c, ç veya d veya e) ve <ders_materyali> içindeki konu anlatımına dayanarak o haftaya özel şu 3 bölümü en yüksek pedagojik kalitede üret:
+- Tarih ve Hafta Aralığı Teyidi: <yillik_plan> tablosunda seçilen hafta numarasını VE tarih aralığını dikkatle kontrol et; başka bir haftanın kazanımlarını karıştırma ve seçilen haftanın hiçbir alt süreç bileşenini (a, b, c, ç, d, e...) eksik bırakma.
+- 'Ogrenme_Ciktilari_ve_Surec_Bilesenleri' alanına önce ana öğrenme çıktısı kodunu ve tam cümlesini (örn: "ST.1.1. Onarıcı tarımın ilkelerini açıklar."), alt satırlara ise o hafta ve tarih aralığında yer alan tüm harfli süreç bileşenlerini ("a) ...", "b) ..." vb.) tam cümle halinde yaz.
+- <yillik_plan> içindeki seçilen haftanın Süreç Bileşenlerine ve <ders_materyali> içindeki konu anlatımına dayanarak o haftaya özel şu 3 bölümü en yüksek pedagojik kalitede üret:
   1) 'Guduleme' (4 madde):
      - İlk madde mutlaka "Bu derste ... öğreneceksiniz." ile başlamalıdır.
      - Diğer 3 madde "... kavrayacaksınız.", "... keşfedeceksiniz.", "... kazanacaksınız." gibi gelecek zaman kipiyle doğrudan öğrenciye hitap etmeli ve SADECE o haftanın süreç bileşenlerini/konusunu anlatmalıdır.
   2) 'Dikkat_Cekme' (4 madde):
      - Doğrudan o haftanın <ders_materyali> konusuna ve süreç bileşenlerine yönelik, öğrencide merak uyandıran 4 özgün soru cümlesi ('?' ile biten) olmalıdır.
   3) 'Ek_Ogretme_Uygulamalari' (6 madde):
-     - O haftanın <ders_materyali> konusunun sınıfta, laboratuvarda veya atölyede nasıl işleneceğini anlatan ("... şematik kesitler incelenebilir", "... karşılaştırmalı olarak analiz edebilir", "... somut saha verileriyle açıklanabilir", "... örnek senaryolar üzerinden tartışılabilir", "... akılcı çözüm önerileri geliştirmeleri sağlanabilir", "... infografiklerle gösterilebilir") 6 somut uygulama maddesi olmalıdır.
-     - HER MADDENİN SONUNDA mutlaka <aktif_maarif_kodlari> içinden seçilmiş 2 veya 3 kod parantez içinde yazılmalıdır (Örn: "(OB1, KB2.2).", "(OB8, E1.4).", "(KB3.2, D3.2).", "(D16.3, SDB3.3).", "(SDB2.2, E2.2, E2.3).", "(OB2, D12.3).").`;
+     - O haftanın <ders_materyali> konusunun sınıfta, laboratuvarda veya atölyede nasıl işleneceğini anlatan 6 somut uygulama maddesi olmalıdır.
+     - HER MADDENİN SONUNDA mutlaka <aktif_maarif_kodlari> içinden seçilmiş 2 veya 3 kod parantez içinde yazılmalıdır (Örn: "(OB1, KB2.2).", "(OB8, E1.4).").`;
+
+const PRE_DELIVERY_VERIFICATION_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    Tarih_ve_Hafta_Uyumlu_Mu: { type: Type.BOOLEAN },
+    Dogrulanan_Hafta_Etiketi: { type: Type.STRING },
+    Dogrulanan_Tarih_Araligi: { type: Type.STRING },
+    Dogrulanan_Ogrenme_Birimi: { type: Type.STRING },
+    Dogrulanan_Icerik_Cercevesi: { type: Type.STRING },
+    Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri: { type: Type.STRING },
+    Teyit_Ozeti: { type: Type.STRING },
+  },
+  required: [
+    "Tarih_ve_Hafta_Uyumlu_Mu",
+    "Dogrulanan_Hafta_Etiketi",
+    "Dogrulanan_Tarih_Araligi",
+    "Dogrulanan_Ogrenme_Birimi",
+    "Dogrulanan_Icerik_Cercevesi",
+    "Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+    "Teyit_Ozeti",
+  ],
+};
 
 const LESSON_PLAN_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -190,7 +214,7 @@ const TURKISH_MONTHS: Record<string, string> = {
 };
 
 function inferApprovalDate(dateRange: string, defaultYear = 2026): string {
-  const lower = (dateRange || "").toLowerCase();
+  const lower = (dateRange || "").toLocaleLowerCase("tr-TR");
   const dayMatch = lower.match(/(\d{1,2})/);
   const day = dayMatch ? dayMatch[1].padStart(2, "0") : "01";
   for (const [mName, mNum] of Object.entries(TURKISH_MONTHS)) {
@@ -228,15 +252,12 @@ function parseWeeksRegexFallback(text: string) {
       const wNo = Number(m[1]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
-        let datePart = (m[2] || "").trim().replace(/^\(|\)$/g, "").trim();
-        if (
-          !datePart &&
-          lines[i + 1] &&
-          /\d{1,2}\s*[-–]\s*\d{1,2}/.test(lines[i + 1])
-        ) {
-          datePart = lines[i + 1].trim();
+        const searchWindow = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 5)).join(" ");
+        let datePart = extractDateRangeFromText(line) || extractDateRangeFromText(searchWindow);
+        if (!datePart) {
+          datePart = (m[2] || "").trim().replace(/^\(|\)$/g, "").trim();
         }
-        const contextSlice = lines.slice(i, i + 6).join(" | ");
+        const contextSlice = lines.slice(Math.max(0, i - 3), i + 6).join(" | ");
         weeks.push({
           id: `week-${wNo}`,
           haftaNo: wNo,
@@ -606,24 +627,49 @@ async function startServer() {
         return;
       }
 
-      // 1. Run our deterministic Maarif Plan Engine on the input tags
+      // 1. Extract full table and catalog sub-tags if XML package was sent
+      const rawYillikTableFromXml = isXmlString
+        ? extractXmlTag(body, "yillik_plan_tam_tablo_metni") ||
+          extractXmlTag(body, "secilen_hafta_ham_kesiti") ||
+          yillik_plan
+        : yillik_plan;
+
+      const rawOutcomesCatalogFromXml = isXmlString
+        ? extractXmlTag(body, "ogrenme_ciktilari_ve_surec_bilesenleri_katalogu")
+        : "";
+
+      const dbfForParsing = rawOutcomesCatalogFromXml
+        ? `${ders_bilgi_formu}\nÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ:\n${rawOutcomesCatalogFromXml}`
+        : ders_bilgi_formu;
+
       const structuredDbf = parseDersBilgiFormuStructured(
-        ders_bilgi_formu,
-        yillik_plan
+        dbfForParsing,
+        rawYillikTableFromXml
       );
 
-      // Also check if the client already pre-extracted verbatim sub-tags inside <ders_bilgi_formu> and <yillik_plan>
       if (isXmlString) {
         const preKanitlar = extractXmlTag(body, "ogrenme_kanitlari_tam_metin");
-        if (preKanitlar && preKanitlar.length > structuredDbf.ogrenmeKanitlari.length) {
+        if (
+          preKanitlar &&
+          preKanitlar.length > structuredDbf.ogrenmeKanitlari.length
+        ) {
           structuredDbf.ogrenmeKanitlari = preKanitlar;
         }
         const preKabuller = extractXmlTag(body, "temel_kabuller_tam_metin");
-        if (preKabuller && preKabuller.length > structuredDbf.temelKabuller.length) {
+        if (
+          preKabuller &&
+          preKabuller.length > structuredDbf.temelKabuller.length
+        ) {
           structuredDbf.temelKabuller = preKabuller;
         }
-        const preOnDeg = extractXmlTag(body, "on_degerlendirme_sureci_tam_metin");
-        if (preOnDeg && preOnDeg.length > structuredDbf.onDegerlendirmeSureci.length) {
+        const preOnDeg = extractXmlTag(
+          body,
+          "on_degerlendirme_sureci_tam_metin"
+        );
+        if (
+          preOnDeg &&
+          preOnDeg.length > structuredDbf.onDegerlendirmeSureci.length
+        ) {
           structuredDbf.onDegerlendirmeSureci = preOnDeg;
         }
         const preKopru = extractXmlTag(body, "kopru_kurma_tam_metin");
@@ -633,7 +679,7 @@ async function startServer() {
       }
 
       const weekData = extractWeekPlanStructured(
-        yillik_plan,
+        rawYillikTableFromXml,
         hafta_etiketi,
         tarih_araligi,
         structuredDbf
@@ -644,8 +690,21 @@ async function startServer() {
           body,
           "secilen_hafta_ogrenme_ciktilari_ve_surec_bilesenleri"
         );
-        if (preOutcomeBlock && preOutcomeBlock.length >= 10) {
+        if (
+          preOutcomeBlock &&
+          preOutcomeBlock.length > weekData.formattedOutcomeAndProcessBlock.length
+        ) {
           weekData.formattedOutcomeAndProcessBlock = preOutcomeBlock;
+        }
+        const preRawWeekWindow = extractXmlTag(
+          body,
+          "secilen_hafta_ham_kesiti"
+        );
+        if (
+          preRawWeekWindow &&
+          preRawWeekWindow.length > weekData.rawWeekWindowText.length
+        ) {
+          weekData.rawWeekWindowText = preRawWeekWindow;
         }
         const preUnit = extractXmlTag(body, "secilen_hafta_ogrenme_birimi");
         if (preUnit && preUnit.length >= 3 && !/VE\s*SÜRE/i.test(preUnit)) {
@@ -686,27 +745,43 @@ async function startServer() {
       );
 
       const apiKey = process.env.GEMINI_API_KEY;
-      let aiCandidatePlan = null;
+      let aiCandidatePlan: Record<string, unknown> | null = null;
+      let verificationSummary =
+        "Deterministik Maarif motoru ve doküman katalog eşleştirmesi ile doğrulandı.";
+
+      const effectiveTarihAraligi = weekData.tarihAraligi || tarih_araligi;
+      const outcomesCatalogText =
+        structuredDbf.rawOutcomesCatalogText ||
+        rawOutcomesCatalogFromXml ||
+        weekData.formattedOutcomeAndProcessBlock;
 
       if (apiKey) {
         try {
+          // AŞAMA 1: XML Bağlam Paketi ile Plan Üretimi (Tam Yıllık Plan Kesiti + Ders Bilgi Formu Kazanım Kataloğu Dahil)
           const xmlPromptForGemini = `<ders_plani_baglam_paketi>
 <hedef_hafta_ve_ust_bilgiler>
   <sinif>${sinif_duzeyi || structuredDbf.sinif}</sinif>
   <ders>${ders_ismi || structuredDbf.ders}</ders>
-  <hafta>${weekData.haftaEtiketi} (${tarih_araligi})</hafta>
+  <hafta_etiketi>${weekData.haftaEtiketi}</hafta_etiketi>
+  <tarih_araligi>${effectiveTarihAraligi}</tarih_araligi>
   <sure>${weekData.sure}</sure>
 </hedef_hafta_ve_ust_bilgiler>
 
-<yillik_plan baglam="Bu metin Ünitelendirilmiş Yıllık Plandır. Seçilen haftanın Öğrenme Birimi, İçerik Çerçevesi ve SADECE o haftaya ait Öğrenme Çıktısı ile Süreç Bileşenleri buradadır.">
-  <ogrenme_birimi>${weekData.ogrenmeBirimi}</ogrenme_birimi>
-  <icerik_cercevesi>${weekData.icerikCercevesi}</icerik_cercevesi>
-  <ogrenme_ciktilari_ve_surec_bilesenleri>
+<yillik_plan baglam="Bu metin Ünitelendirilmiş Yıllık Plandır. Hedeflenen hafta (${weekData.haftaEtiketi}) ve tarih aralığı (${effectiveTarihAraligi}) satırını dikkatle incele. O hafta/tarih aralığındaki Öğrenme Birimi, İçerik Çerçevesi ve o haftaya ait TÜM Öğrenme Çıktıları ve Süreç Bileşenlerini (a, b, c, ç, d, e...) hiçbir maddeyi atlamadan çıkar.">
+  <tespit_edilen_ogrenme_birimi>${weekData.ogrenmeBirimi}</tespit_edilen_ogrenme_birimi>
+  <tespit_edilen_icerik_cercevesi>${weekData.icerikCercevesi}</tespit_edilen_icerik_cercevesi>
+  <tespit_edilen_ogrenme_ciktilari_ve_surec_bilesenleri>
 ${weekData.formattedOutcomeAndProcessBlock}
-  </ogrenme_ciktilari_ve_surec_bilesenleri>
+  </tespit_edilen_ogrenme_ciktilari_ve_surec_bilesenleri>
+  <secilen_hafta_ham_tablo_satirlari>
+${weekData.rawWeekWindowText}
+  </secilen_hafta_ham_tablo_satirlari>
+  <yillik_plan_genel_tablo_baglami>
+${rawYillikTableFromXml.slice(0, 12000)}
+  </yillik_plan_genel_tablo_baglami>
 </yillik_plan>
 
-<ders_bilgi_formu baglam="Bu metin MEB Ders Bilgi Formudur. Alan becerileri, eğilimler, programlar arası bileşenler ve aktif Maarif kodları buradadır.">
+<ders_bilgi_formu baglam="Bu metin MEB Ders Bilgi Formudur. Öğrenme Çıktıları ve Süreç Bileşenlerinin tam cümleleri <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu> içindedir.">
   <alan_becerileri>${structuredDbf.alanBecerileri}</alan_becerileri>
   <egilimler>${structuredDbf.egilimler}</egilimler>
   <sosyal_duygusal_ogrenme_becerileri>${structuredDbf.sosyalDuygusalBeceriler}</sosyal_duygusal_ogrenme_becerileri>
@@ -714,6 +789,9 @@ ${weekData.formattedOutcomeAndProcessBlock}
   <okuryazarlik_becerileri>${structuredDbf.okuryazarlikBecerileri}</okuryazarlik_becerileri>
   <disiplinler_arasi_iliski>${structuredDbf.disiplinlerArasiIliski}</disiplinler_arasi_iliski>
   <beceriler_arasi_iliski>${structuredDbf.becerilerArasiIliski}</beceriler_arasi_iliski>
+  <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
+${outcomesCatalogText}
+  </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
   <aktif_maarif_kodlari>${
     structuredDbf.rawActivityCodes.join(", ") ||
     "OB1, OB2, OB8, KB2.2, KB3.2, E1.4, E2.2, E2.3, E3.2, SDB2.2, SDB3.3, D3.2, D12.3, D16.3, D18.3"
@@ -734,6 +812,113 @@ ${materyalSlice}
             LESSON_PLAN_RESPONSE_SCHEMA
           );
           aiCandidatePlan = JSON.parse(rawJson);
+
+          // AŞAMA 2: Kullanıcıya Çıktıyı Vermeden Önce AI Teyit & Doğrulama Katmanı (Pre-Delivery AI Audit)
+          // Tarih-hafta aralığını ve Öğrenme Çıktıları ve Süreç Bileşenlerinin eksiksizliğini kaynak dokümanlarla teyit eder.
+          try {
+            const candidateOutcomes = String(
+              aiCandidatePlan?.Ogrenme_Ciktilari_ve_Surec_Bilesenleri ||
+                weekData.formattedOutcomeAndProcessBlock ||
+                ""
+            );
+
+            const verificationPrompt = `<teyit_gorevi>
+Kullanıcıya günlük ders planı çıktısını vermeden önce aşağıdaki üretilen verileri kaynak dokümanlarla (<yillik_plan_tablosu> ve <ders_bilgi_formu_kazanim_katalogu>) karşılaştırarak TEYİT ET ve eksik/hatalı kısım varsa düzelt:
+1. HEDEF HAFTA VE TARİH ARALIĞI KONTROLÜ: İstenen hafta "${weekData.haftaEtiketi}" ve tarih aralığı "${effectiveTarihAraligi}". Yıllık planda bu haftanın gerçek tarih aralığı nedir?
+2. ÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ EKSİKSİZLİK KONTROLÜ:
+   - Yıllık planda bu hafta ve tarih aralığına karşılık gelen satırda hangi öğrenme çıktısı kodu (örn: ST.1.1, ST.1.2 vb.) ve hangi alt süreç bileşenleri (a, b, c, ç, d, e...) yer alıyor?
+   - Aday çıktıdaki metin:
+${candidateOutcomes}
+   - Eğer yıllık planda o haftada yer alan herhangi bir alt süreç bileşeni (a, b, c, ç, d, e...) eksik alınmışsa veya cümlesi yarım kalmışsa, <ders_bilgi_formu_kazanim_katalogu> içindeki tam cümlesini alarak 'Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri' alanına ana öğrenme çıktısı başlığı + o haftanın tüm alt süreç bileşenleri şeklinde eksiksiz yaz. Başka haftanın alt bileşenlerini ekleme!
+3. ÖĞRENME BİRİMİ VE İÇERİK ÇERÇEVESİ KONTROLÜ: O hafta ve tarih aralığına ait Öğrenme Birimi ve İçerik Çerçevesi (Konu) adını doğrula.
+</teyit_gorevi>
+
+<yillik_plan_secilen_hafta_kesiti>
+${weekData.rawWeekWindowText}
+</yillik_plan_secilen_hafta_kesiti>
+
+<yillik_plan_tablosu>
+${rawYillikTableFromXml.slice(0, 10000)}
+</yillik_plan_tablosu>
+
+<ders_bilgi_formu_kazanim_katalogu>
+${outcomesCatalogText}
+</ders_bilgi_formu_kazanim_katalogu>`;
+
+            const verifyRawJson = await generateWithFallback(
+              apiKey,
+              verificationPrompt,
+              "Sen MEB Günlük Ders Planı Kalite Kontrol ve Teyit Denetçisisin. Çıktı kullanıcıya sunulmadan önce Hafta-Tarih aralığı eşleşmesini ve Öğrenme Çıktıları ile Süreç Bileşenlerinin (a, b, c, ç, d, e) eksiksizliğini kaynak dokümanlardan teyit edersin.",
+              PRE_DELIVERY_VERIFICATION_SCHEMA
+            );
+            const verifiedData = JSON.parse(verifyRawJson);
+
+            if (
+              verifiedData.Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri &&
+              String(
+                verifiedData.Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+              ).trim().length >= 15
+            ) {
+              const verifiedOutcomes = String(
+                verifiedData.Eksiksiz_Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+              ).trim();
+              if (aiCandidatePlan) {
+                aiCandidatePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri =
+                  verifiedOutcomes;
+              }
+              // If weekData had fewer lines or shorter text than the AI-verified block, update weekData too
+              if (
+                verifiedOutcomes.length >=
+                weekData.formattedOutcomeAndProcessBlock.length
+              ) {
+                weekData.formattedOutcomeAndProcessBlock = verifiedOutcomes;
+              }
+            }
+
+            if (
+              verifiedData.Dogrulanan_Tarih_Araligi &&
+              String(verifiedData.Dogrulanan_Tarih_Araligi).trim().length >= 5 &&
+              !/^\d+\s*\.\s*hafta$/i.test(
+                String(verifiedData.Dogrulanan_Tarih_Araligi).trim()
+              )
+            ) {
+              weekData.tarihAraligi = String(
+                verifiedData.Dogrulanan_Tarih_Araligi
+              ).trim();
+            }
+
+            if (
+              verifiedData.Dogrulanan_Ogrenme_Birimi &&
+              String(verifiedData.Dogrulanan_Ogrenme_Birimi).trim().length >= 3 &&
+              !/VE\s*SÜRE/i.test(String(verifiedData.Dogrulanan_Ogrenme_Birimi))
+            ) {
+              weekData.ogrenmeBirimi = String(
+                verifiedData.Dogrulanan_Ogrenme_Birimi
+              ).trim();
+            }
+
+            if (
+              verifiedData.Dogrulanan_Icerik_Cercevesi &&
+              String(verifiedData.Dogrulanan_Icerik_Cercevesi).trim().length >=
+                3 &&
+              !/^\d+\s*\.\s*hafta$/i.test(
+                String(verifiedData.Dogrulanan_Icerik_Cercevesi).trim()
+              )
+            ) {
+              weekData.icerikCercevesi = String(
+                verifiedData.Dogrulanan_Icerik_Cercevesi
+              ).trim();
+            }
+
+            if (verifiedData.Teyit_Ozeti) {
+              verificationSummary = String(verifiedData.Teyit_Ozeti).trim();
+            }
+          } catch (verifyErr) {
+            console.warn(
+              "Pre-delivery AI verification pass warning (using Stage 1 + deterministic verification):",
+              verifyErr
+            );
+          }
         } catch (aiErr: unknown) {
           const msg = aiErr instanceof Error ? aiErr.message : String(aiErr);
           console.warn(
@@ -743,7 +928,7 @@ ${materyalSlice}
         }
       }
 
-      // 2. Enforce 1:1 verbatim integrity for Ders Bilgi Formu & Yıllık Plan fields + merge week-specific AI synthesis for Ders Materyali fields
+      // 2. Enforce 1:1 verbatim integrity for Ders Bilgi Formu & Yıllık Plan fields + merge verified outcomes & week-specific AI synthesis
       const finalPlan = enforceAndMergeLessonPlan(
         aiCandidatePlan,
         structuredDbf,
@@ -755,7 +940,15 @@ ${materyalSlice}
         }
       );
 
-      res.json({ plan: finalPlan });
+      res.json({
+        plan: finalPlan,
+        detectedWeekMeta: {
+          haftaEtiketi: weekData.haftaEtiketi,
+          tarihAraligi: weekData.tarihAraligi,
+          onayTarihi: inferApprovalDate(weekData.tarihAraligi),
+        },
+        verificationSummary,
+      });
     } catch (err: unknown) {
       console.error("Error generating lesson plan:", err);
       const message =
