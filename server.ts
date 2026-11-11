@@ -14,6 +14,7 @@ import {
   enforceAndMergeLessonPlan,
   splitOgretmeUygulamalariIntoBullets,
   extractDateRangeFromText,
+  resolveValidDateRange,
 } from "./src/shared/maarifPlanEngine";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -257,12 +258,13 @@ function parseWeeksRegexFallback(text: string) {
         if (!datePart) {
           datePart = (m[2] || "").trim().replace(/^\(|\)$/g, "").trim();
         }
+        datePart = resolveValidDateRange(datePart, wNo);
         const contextSlice = lines.slice(Math.max(0, i - 3), i + 6).join(" | ");
         weeks.push({
           id: `week-${wNo}`,
           haftaNo: wNo,
           haftaEtiketi: `${wNo}. HAFTA`,
-          tarihAraligi: datePart || "",
+          tarihAraligi: datePart,
           onayTarihi: inferApprovalDate(datePart),
           ogrenmeBirimi: "",
           konuVeCiktiOzeti: contextSlice.slice(0, 200),

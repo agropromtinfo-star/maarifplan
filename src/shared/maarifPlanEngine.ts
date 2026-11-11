@@ -477,6 +477,94 @@ export function extractDateRangeFromText(text: string): string {
   return "";
 }
 
+export const DEFAULT_MEB_WEEK_DATES: Record<
+  number,
+  { tarihAraligi: string; onayTarihi: string }
+> = {
+  1: { tarihAraligi: "14 - 18 Eylül", onayTarihi: "14/09/2026" },
+  2: { tarihAraligi: "21 - 25 Eylül", onayTarihi: "21/09/2026" },
+  3: { tarihAraligi: "28 Eylül - 02 Ekim", onayTarihi: "28/09/2026" },
+  4: { tarihAraligi: "05 - 09 Ekim", onayTarihi: "05/10/2026" },
+  5: { tarihAraligi: "12 - 16 Ekim", onayTarihi: "12/10/2026" },
+  6: { tarihAraligi: "19 - 23 Ekim", onayTarihi: "19/10/2026" },
+  7: { tarihAraligi: "26 - 30 Ekim", onayTarihi: "26/10/2026" },
+  8: { tarihAraligi: "02 - 06 Kasım", onayTarihi: "02/11/2026" },
+  9: { tarihAraligi: "16 - 20 Kasım", onayTarihi: "16/11/2026" },
+  10: { tarihAraligi: "23 - 27 Kasım", onayTarihi: "23/11/2026" },
+  11: { tarihAraligi: "30 Kasım - 04 Aralık", onayTarihi: "30/11/2026" },
+  12: { tarihAraligi: "07 - 11 Aralık", onayTarihi: "07/12/2026" },
+  13: { tarihAraligi: "14 - 18 Aralık", onayTarihi: "14/12/2026" },
+  14: { tarihAraligi: "21 - 25 Aralık", onayTarihi: "21/12/2026" },
+  15: { tarihAraligi: "28 Aralık - 01 Ocak", onayTarihi: "28/12/2026" },
+  16: { tarihAraligi: "04 - 08 Ocak", onayTarihi: "04/01/2027" },
+  17: { tarihAraligi: "11 - 15 Ocak", onayTarihi: "11/01/2027" },
+  18: { tarihAraligi: "18 - 22 Ocak", onayTarihi: "18/01/2027" },
+  19: { tarihAraligi: "08 - 12 Şubat", onayTarihi: "08/02/2027" },
+  20: { tarihAraligi: "15 - 19 Şubat", onayTarihi: "15/02/2027" },
+  21: { tarihAraligi: "22 - 26 Şubat", onayTarihi: "22/02/2027" },
+  22: { tarihAraligi: "01 - 05 Mart", onayTarihi: "01/03/2027" },
+  23: { tarihAraligi: "08 - 12 Mart", onayTarihi: "08/03/2027" },
+  24: { tarihAraligi: "15 - 19 Mart", onayTarihi: "15/03/2027" },
+  25: { tarihAraligi: "22 - 26 Mart", onayTarihi: "22/03/2027" },
+  26: { tarihAraligi: "29 Mart - 02 Nisan", onayTarihi: "29/03/2027" },
+  27: { tarihAraligi: "12 - 16 Nisan", onayTarihi: "12/04/2027" },
+  28: { tarihAraligi: "19 - 23 Nisan", onayTarihi: "19/04/2027" },
+  29: { tarihAraligi: "26 - 30 Nisan", onayTarihi: "26/04/2027" },
+  30: { tarihAraligi: "03 - 07 Mayıs", onayTarihi: "03/05/2027" },
+  31: { tarihAraligi: "10 - 14 Mayıs", onayTarihi: "10/05/2027" },
+  32: { tarihAraligi: "17 - 21 Mayıs", onayTarihi: "17/05/2027" },
+  33: { tarihAraligi: "24 - 28 Mayıs", onayTarihi: "24/05/2027" },
+  34: { tarihAraligi: "31 Mayıs - 04 Haziran", onayTarihi: "31/05/2027" },
+  35: { tarihAraligi: "07 - 11 Haziran", onayTarihi: "07/06/2027" },
+  36: { tarihAraligi: "14 - 18 Haziran", onayTarihi: "14/06/2027" },
+};
+
+export function resolveValidDateRange(
+  rawDateRange?: string,
+  weekNo?: number
+): string {
+  const trimmed = (rawDateRange || "").trim();
+  const isRedundantOrEmpty =
+    !trimmed ||
+    /^\d+\s*\.\s*hafta$/i.test(trimmed) ||
+    trimmed.length < 4 ||
+    !/\d/.test(trimmed);
+
+  if (!isRedundantOrEmpty) {
+    return trimmed;
+  }
+
+  if (weekNo && DEFAULT_MEB_WEEK_DATES[weekNo]) {
+    return DEFAULT_MEB_WEEK_DATES[weekNo].tarihAraligi;
+  }
+
+  return trimmed || "14 - 18 Eylül";
+}
+
+export function formatFullWeekAndDateRange(
+  rawHaftaEtiketi?: string,
+  rawTarihAraligi?: string
+): string {
+  const haftaEtiketi = (rawHaftaEtiketi || "").trim() || "1. HAFTA";
+  const weekMatch = haftaEtiketi.match(/\b(\d{1,2})\b/);
+  const weekNo = weekMatch ? Number(weekMatch[1]) : 1;
+
+  const validDateRange = resolveValidDateRange(rawTarihAraligi, weekNo);
+
+  // If haftaEtiketi already has parentheses containing a date range, ensure it's not redundant like (16. Hafta)
+  const parenMatch = haftaEtiketi.match(/^(.+?)\s*\(([^)]+)\)$/);
+  if (parenMatch) {
+    const baseHafta = parenMatch[1].trim();
+    const insideParen = parenMatch[2].trim();
+    if (!/^\d+\s*\.\s*hafta$/i.test(insideParen) && /\d/.test(insideParen)) {
+      return `${baseHafta} (${insideParen})`;
+    }
+    return `${baseHafta} (${validDateRange})`;
+  }
+
+  return `${haftaEtiketi} (${validDateRange})`;
+}
+
 /**
  * Converts a Turkish outcome sentence like "Onarıcı tarımın ilkelerini açıklar."
  * or "İyi tarımı açıklayabilme" into its clean Content Framework title ("Onarıcı Tarımın İlkeleri", "İyi Tarım")

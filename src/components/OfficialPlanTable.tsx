@@ -1,7 +1,20 @@
 import React, { useState } from "react";
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
-import { Printer, FileDown, Edit3, Check, Plus, Trash2, ShieldCheck } from "lucide-react";
+import {
+  Printer,
+  FileDown,
+  Edit3,
+  Check,
+  Plus,
+  Trash2,
+  ShieldCheck,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
 import { downloadWordDoc } from "../utils/exportPlan";
+import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
+import { ExportConfigModal } from "./ExportConfigModal";
+import { PlanExportOptions } from "../types/exportOptions";
 
 interface OfficialPlanTableProps {
   plan: MaarifLessonPlan;
@@ -64,6 +77,8 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
   onUpdatePlan,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isCompactView, setIsCompactView] = useState(true); // Kağıt tasarrufu için varsayılan olarak sıkıştırılmış
 
   const displayOkulAdi = meta.okulAdi.trim()
     ? meta.okulAdi.trim().toLocaleUpperCase("tr-TR")
@@ -79,15 +94,11 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
     "9. SINIF"
   ).toLocaleUpperCase("tr-TR");
 
-  const haftaEtiketi = meta.haftaEtiketi?.trim() || "1. HAFTA";
-  const tarihAraligi = meta.tarihAraligi?.trim() || "";
-  const isRedundantDate =
-    !tarihAraligi ||
-    tarihAraligi.toLocaleLowerCase("tr-TR") ===
-      haftaEtiketi.toLocaleLowerCase("tr-TR");
-  const displayHaftaSatiri = isRedundantDate
-    ? haftaEtiketi
-    : `${haftaEtiketi} (${tarihAraligi})`;
+  // Output ALWAYS displays the week together with its real date range
+  const displayHaftaSatiri = formatFullWeekAndDateRange(
+    meta.haftaEtiketi,
+    meta.tarihAraligi
+  );
 
   const displayOnayTarihi = meta.onayTarihi?.trim() || "..../..../202...";
   const displayOgretmenAd = meta.ogretmenAdSoyad.trim() || "........................";
@@ -231,6 +242,30 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
           <button
             type="button"
+            onClick={() => setIsCompactView((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+              isCompactView
+                ? "bg-teal-500/20 text-teal-300 border-teal-500/50 hover:bg-teal-500/30"
+                : "bg-white/10 text-white border-white/20 hover:bg-white/20"
+            }`}
+            title="Kağıttan tasarruf etmek ve tek sayfaya sığdırmak için kenar ve satırları sıkıştırır"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+            {isCompactView ? "Kağıt Tasarrufu: Açık" : "Kağıt Tasarrufu: Kapalı"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsConfigModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-200 bg-sky-950/70 border border-sky-600/50 rounded-lg hover:bg-sky-900/80 transition-colors whitespace-nowrap shrink-0"
+            title="İmza bloğu, tablo genişletme, boş satırları koruma ve kağıt tasarruf ayarları"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            Dışa Aktarma &amp; Kağıt Ayarları
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsEditing((prev) => !prev)}
             className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
               isEditing
@@ -253,8 +288,9 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
           <button
             type="button"
-            onClick={() => downloadWordDoc(plan, meta)}
+            onClick={() => setIsConfigModalOpen(true)}
             className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-white bg-sky-600 border border-sky-500 rounded-lg hover:bg-sky-500 transition-colors whitespace-nowrap shrink-0"
+            title="Dışa aktarma yapılandırıcısını açar"
           >
             <FileDown className="w-3.5 h-3.5" />
             Word (.doc) İndir
@@ -271,10 +307,29 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         </div>
       </div>
 
+      {/* Export & Paper-Saving Configurator Modal */}
+      <ExportConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        plan={plan}
+        meta={meta}
+        onExecutePrint={() => window.print()}
+      />
+
       {/* Official Document Sheet (Matches User's Attached Sample Plan Format 1:1) */}
-      <div className="print-container bg-white border border-slate-200 rounded-xl p-6 md:p-10 text-black shadow-xs">
+      <div
+        className={`print-container bg-white border border-slate-200 rounded-xl text-black shadow-xs ${
+          isCompactView ? "p-4 md:p-6" : "p-6 md:p-10"
+        }`}
+      >
         {/* 3-Line Centered Title Header */}
-        <div className="text-center font-bold text-sm md:text-base leading-snug mb-5 text-black space-y-0.5">
+        <div
+          className={`text-center font-bold leading-snug text-black space-y-0.5 ${
+            isCompactView
+              ? "text-xs md:text-sm mb-3"
+              : "text-sm md:text-base mb-5"
+          }`}
+        >
           <div>{displayOkulAdi}</div>
           <div>{secondTitleLine}</div>
           <div>{displayHaftaSatiri}</div>
@@ -282,7 +337,13 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
         {/* Unified Maarif Modeli Table */}
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse border border-[#4bacc6] text-xs md:text-[13px] text-black leading-relaxed">
+          <table
+            className={`w-full border-collapse border border-[#3b8296] text-black ${
+              isCompactView
+                ? "text-[11.5px] leading-tight"
+                : "text-xs md:text-[13px] leading-relaxed"
+            }`}
+          >
             <tbody>
               {/* SECTION 1: DERS BİLGİSİ */}
               <tr>

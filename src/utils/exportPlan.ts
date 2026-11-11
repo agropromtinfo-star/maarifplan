@@ -1,4 +1,6 @@
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
+import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
+import { PlanExportOptions, DEFAULT_EXPORT_OPTIONS } from "../types/exportOptions";
 
 function escapeHtml(text: string): string {
   return (text || "")
@@ -47,15 +49,21 @@ function formatAsteriskLinesHtml(items: string[]): string {
   return (items || [])
     .map((item) => {
       const cleaned = (item || "").trim().replace(/^\*\s*/, "");
-      return `<div style="margin-bottom:3px;">* ${escapeHtml(cleaned)}</div>`;
+      return `<div style="margin-bottom:2px;">* ${escapeHtml(cleaned)}</div>`;
     })
     .join("");
 }
 
 export function downloadWordDoc(
   plan: MaarifLessonPlan,
-  meta?: DocumentHeaderFooterMeta
+  meta?: DocumentHeaderFooterMeta,
+  exportOptions?: Partial<PlanExportOptions>
 ) {
+  const options: PlanExportOptions = {
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...(exportOptions || {}),
+  };
+
   const {
     Ders_Bilgisi: db,
     Programlar_Arasi_Bilesenler: pab,
@@ -78,24 +86,42 @@ export function downloadWordDoc(
     "9. SINIF"
   ).toLocaleUpperCase("tr-TR");
 
-  const haftaEtiketi = meta?.haftaEtiketi?.trim() || "1. HAFTA";
-  const tarihAraligi = meta?.tarihAraligi?.trim() || "";
-  const isRedundantDate =
-    !tarihAraligi ||
-    tarihAraligi.toLocaleLowerCase("tr-TR") ===
-      haftaEtiketi.toLocaleLowerCase("tr-TR");
-  const haftaSatiri = isRedundantDate
-    ? haftaEtiketi
-    : `${haftaEtiketi} (${tarihAraligi})`;
+  // Output ALWAYS displays the week label and the date range together
+  const haftaSatiri = formatFullWeekAndDateRange(
+    meta?.haftaEtiketi,
+    meta?.tarihAraligi
+  );
 
   const onayTarihi = meta?.onayTarihi?.trim() || "..../..../202...";
-  const ogretmenAdSoyad = meta?.ogretmenAdSoyad?.trim() || "........................";
+  const ogretmenAdSoyad =
+    meta?.ogretmenAdSoyad?.trim() || "........................";
   const ogretmenBransi = meta?.ogretmenBransi?.trim() || "Ders Öğretmeni";
-  const okulMuduruAdSoyad = meta?.okulMuduruAdSoyad?.trim() || "........................";
+  const okulMuduruAdSoyad =
+    meta?.okulMuduruAdSoyad?.trim() || "........................";
 
   const secondTitleLine = `${sinifDuzeyi} ${dersIsmi}${
     dersIsmi.endsWith("DERSİ") ? "" : " DERSİ"
   } GÜNLÜK DERS PLANI`;
+
+  // Paper-saving & printer-friendly calculations
+  const marginVal = `${options.marginCm}cm`;
+  const fontSizeVal = `${options.fontSizePt}pt`;
+  const lineHeightVal = options.compactPaperSaver ? "1.16" : "1.34";
+  const cellPaddingVal = options.compactPaperSaver ? "2.5px 5px" : "5px 7px";
+  const headerFontSizeVal = options.compactPaperSaver ? "10pt" : "11pt";
+  const headerMarginVal = options.compactPaperSaver ? "6px" : "12px";
+  const borderColorVal = options.printerFriendlyBorders ? "#3b8296" : "#4bacc6";
+  const bannerBgVal = options.printerFriendlyBorders ? "#d8e6c3" : "#c2d69b";
+
+  // Filter helper for 'Boş satırları koru' setting
+  const shouldRenderRow = (textValue?: string, arrayValue?: string[]) => {
+    if (options.preserveEmptyRows) return true;
+    if (textValue && textValue.trim().length > 0) return true;
+    if (arrayValue && arrayValue.some((item) => item && item.trim().length > 0)) {
+      return true;
+    }
+    return false;
+  };
 
   const htmlContent = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -107,39 +133,47 @@ export function downloadWordDoc(
   <style>
     @page {
       size: A4 portrait;
-      margin: 1.5cm 1.5cm 1.5cm 1.5cm;
+      margin: ${marginVal} ${marginVal} ${marginVal} ${marginVal};
+      mso-header-margin: 0.5cm;
+      mso-footer-margin: 0.5cm;
     }
     body {
       font-family: Arial, Helvetica, sans-serif;
-      font-size: 9.5pt;
+      font-size: ${fontSizeVal};
       color: #000000;
-      line-height: 1.38;
+      line-height: ${lineHeightVal};
+      margin: 0;
+      padding: 0;
     }
     .doc-header {
       text-align: center;
       font-weight: bold;
-      font-size: 11pt;
-      margin-bottom: 12px;
-      line-height: 1.45;
+      font-size: ${headerFontSizeVal};
+      margin-bottom: ${headerMarginVal};
+      line-height: 1.3;
     }
     table.plan-table {
-      width: 100%;
+      width: ${options.expandTable ? "100%" : "98%"};
+      margin: 0 auto;
       border-collapse: collapse;
-      border: 1px solid #4bacc6;
+      border: 1px solid ${borderColorVal};
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
     }
     table.plan-table td {
-      border: 1px solid #4bacc6;
-      padding: 6px 8px;
+      border: 1px solid ${borderColorVal};
+      padding: ${cellPaddingVal};
       vertical-align: middle;
       text-align: left;
     }
     .section-banner {
-      background-color: #c2d69b;
+      background-color: ${bannerBgVal};
       font-weight: bold;
-      font-size: 10pt;
+      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
       color: #000000;
       text-transform: uppercase;
-      padding: 6px 8px;
+      padding: ${options.compactPaperSaver ? "3px 5px" : "5px 7px"};
+      mso-background-source: auto;
     }
     .label-cell {
       font-weight: bold;
@@ -158,14 +192,15 @@ export function downloadWordDoc(
     .sig-table {
       width: 100%;
       border: none;
-      margin-top: 18px;
+      margin-top: ${options.compactPaperSaver ? "8px" : "16px"};
+      page-break-inside: avoid;
     }
     .sig-table td {
       border: none;
       text-align: center;
       vertical-align: bottom;
-      font-size: 10pt;
-      line-height: 1.5;
+      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
+      line-height: 1.35;
     }
   </style>
 </head>
@@ -192,38 +227,69 @@ export function downloadWordDoc(
       <td class="label-cell-mid">Süre</td>
       <td class="value-cell-right"><strong>${escapeHtml(db.Sure)}</strong></td>
     </tr>
-    <tr>
+    ${
+      shouldRenderRow(db.Alan_Becerileri)
+        ? `<tr>
       <td class="label-cell">Alan Becerileri</td>
       <td colspan="3">${formatWithBoldCodesHtml(db.Alan_Becerileri)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(db.Egilimler)
+        ? `<tr>
       <td class="label-cell">Eğilimler</td>
       <td colspan="3">${formatWithBoldCodesHtml(db.Egilimler)}</td>
-    </tr>
+    </tr>`
+        : ""
+    }
 
     <tr>
       <td colspan="4" class="section-banner">PROGRAMLAR ARASI BİLEŞENLER</td>
     </tr>
-    <tr>
+    ${
+      shouldRenderRow(pab.Sosyal_Duygusal_Ogrenme_Becerileri)
+        ? `<tr>
       <td class="label-cell">Sosyal-Duygusal Öğr. Bec.</td>
-      <td colspan="3">${formatWithBoldCodesHtml(pab.Sosyal_Duygusal_Ogrenme_Becerileri)}</td>
-    </tr>
-    <tr>
+      <td colspan="3">${formatWithBoldCodesHtml(
+        pab.Sosyal_Duygusal_Ogrenme_Becerileri
+      )}</td>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(pab.Degerler)
+        ? `<tr>
       <td class="label-cell">Değerler</td>
       <td colspan="3">${formatWithBoldCodesHtml(pab.Degerler)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(pab.Okuryazarlik_Becerileri)
+        ? `<tr>
       <td class="label-cell">Okuryazarlık Becerileri</td>
       <td colspan="3">${formatWithBoldCodesHtml(pab.Okuryazarlik_Becerileri)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(pab.Disiplinler_Arasi_Iliski)
+        ? `<tr>
       <td class="label-cell">Disiplinler Arası İlişki</td>
       <td colspan="3">${formatWithBoldCodesHtml(pab.Disiplinler_Arasi_Iliski)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(pab.Beceriler_Arasi_Iliski)
+        ? `<tr>
       <td class="label-cell">Beceriler Arası İlişki</td>
       <td colspan="3">${formatWithBoldCodesHtml(pab.Beceriler_Arasi_Iliski)}</td>
-    </tr>
+    </tr>`
+        : ""
+    }
+
     <tr>
       <td class="label-cell">Öğrenme Çıktıları ve Süreç Bileşenleri</td>
       <td colspan="3">${formatOgrenmeCiktilariHtml(ocsb)}</td>
@@ -232,48 +298,80 @@ export function downloadWordDoc(
       <td class="label-cell">İçerik Çerçevesi</td>
       <td colspan="3"><strong>${escapeHtml(ic)}</strong></td>
     </tr>
-    <tr>
+    ${
+      shouldRenderRow(ok)
+        ? `<tr>
       <td class="label-cell">Öğrenme Kanıtları</td>
       <td colspan="3">${formatWithBoldCodesHtml(ok)}</td>
-    </tr>
+    </tr>`
+        : ""
+    }
 
     <tr>
       <td colspan="4" class="section-banner">ÖĞRENME-ÖĞRETME YAŞANTILARI</td>
     </tr>
-    <tr>
+    ${
+      shouldRenderRow(ooy.Temel_Kabuller)
+        ? `<tr>
       <td class="label-cell">Temel Kabuller</td>
       <td colspan="3">${formatWithBoldCodesHtml(ooy.Temel_Kabuller)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(ooy.On_Degerlendirme_Sureci)
+        ? `<tr>
       <td class="label-cell">Ön Değerlendirme Süreci</td>
       <td colspan="3">${formatWithBoldCodesHtml(ooy.On_Degerlendirme_Sureci)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(ooy.Kopru_Kurma)
+        ? `<tr>
       <td class="label-cell">Köprü Kurma</td>
       <td colspan="3">${formatWithBoldCodesHtml(ooy.Kopru_Kurma)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(undefined, ooy.Ogretme_Uygulamalari)
+        ? `<tr>
       <td class="label-cell">Öğretme Uygulamaları</td>
       <td colspan="3">${formatAsteriskLinesHtml(ooy.Ogretme_Uygulamalari)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(undefined, ooy.Guduleme)
+        ? `<tr>
       <td class="label-cell">Güdüleme</td>
       <td colspan="3">${formatAsteriskLinesHtml(ooy.Guduleme)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(undefined, ooy.Dikkat_Cekme)
+        ? `<tr>
       <td class="label-cell">Dikkat Çekme</td>
       <td colspan="3">${formatAsteriskLinesHtml(ooy.Dikkat_Cekme)}</td>
-    </tr>
-    <tr>
+    </tr>`
+        : ""
+    }
+    ${
+      shouldRenderRow(undefined, ooy.Ek_Ogretme_Uygulamalari)
+        ? `<tr>
       <td class="label-cell">Ek Öğretme Uygulamaları</td>
       <td colspan="3">${formatAsteriskLinesHtml(ooy.Ek_Ogretme_Uygulamalari)}</td>
-    </tr>
+    </tr>`
+        : ""
+    }
 
     <tr>
       <td colspan="4" class="section-banner">FARKLILAŞTIRMA</td>
     </tr>
     ${
-      fark && fark.trim().length > 0
+      shouldRenderRow(fark)
         ? `<tr>
       <td class="label-cell">Farklılaştırma Uygulamaları</td>
       <td colspan="3">${formatWithBoldCodesHtml(fark)}</td>
@@ -282,10 +380,12 @@ export function downloadWordDoc(
     }
   </table>
 
-  <table class="sig-table">
+  ${
+    options.includeSignatureBlock
+      ? `<table class="sig-table">
     <tr>
       <td style="width:50%;">
-        <br/><br/>
+        <br/>
         <div>${escapeHtml(ogretmenAdSoyad)}</div>
         <div><strong>${escapeHtml(ogretmenBransi)}</strong></div>
       </td>
@@ -296,7 +396,9 @@ export function downloadWordDoc(
         <div><strong>Okul Müdürü</strong></div>
       </td>
     </tr>
-  </table>
+  </table>`
+      : ""
+  }
 </body>
 </html>`;
 
@@ -305,7 +407,7 @@ export function downloadWordDoc(
   });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const safeCourse = `${haftaEtiketi}-${dersIsmi}`
+  const safeCourse = `${haftaSatiri}-${dersIsmi}`
     .toLowerCase()
     .replace(/[^a-z0-9ğüşıöç]+/gi, "-")
     .replace(/^-+|-+$/g, "");

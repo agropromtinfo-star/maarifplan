@@ -12,6 +12,7 @@ import {
 } from "./types/lessonPlan";
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
+import { ExportConfigModal } from "./components/ExportConfigModal";
 import { downloadWordDoc } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
@@ -20,7 +21,11 @@ import {
   buildXmlContextPayloadWithAnalysis,
   inferApprovalDateClient,
 } from "./utils/clientFileExtractor";
-import { enforceAndMergeLessonPlan } from "./shared/maarifPlanEngine";
+import {
+  enforceAndMergeLessonPlan,
+  formatFullWeekAndDateRange,
+  resolveValidDateRange,
+} from "./shared/maarifPlanEngine";
 import {
   Upload,
   FileText,
@@ -91,6 +96,7 @@ function formatFileSize(bytes: number): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("workspace");
+  const [isExportConfigOpen, setIsExportConfigOpen] = useState<boolean>(false);
 
   // Header & Footer Document Metadata Fields
   const [meta, setMeta] = useState<DocumentHeaderFooterMeta>({
@@ -203,11 +209,15 @@ export default function App() {
     setSelectedWeekId(weekId);
     const found = activeWeekList.find((w) => w.id === weekId);
     if (found) {
+      const validDate = resolveValidDateRange(found.tarihAraligi, found.haftaNo);
       setMeta((prev) => ({
         ...prev,
         haftaEtiketi: found.haftaEtiketi,
-        tarihAraligi: found.tarihAraligi,
-        onayTarihi: found.onayTarihi || prev.onayTarihi,
+        tarihAraligi: validDate,
+        onayTarihi:
+          found.onayTarihi ||
+          inferApprovalDateClient(validDate) ||
+          prev.onayTarihi,
       }));
     }
   };
@@ -480,11 +490,17 @@ export default function App() {
         }
       );
 
-      const finalTarihAraligi =
+      const rawCandidateDate =
         (weekData.tarihAraligi &&
         !/^\d+\s*\.\s*hafta$/i.test(weekData.tarihAraligi)
           ? weekData.tarihAraligi
           : meta.tarihAraligi) || meta.tarihAraligi;
+
+      const finalTarihAraligi = resolveValidDateRange(
+        rawCandidateDate,
+        weekData.haftaNo
+      );
+
       const finalOnayTarihi =
         serverDetectedWeekMeta?.onayTarihi ||
         inferApprovalDateClient(finalTarihAraligi) ||
@@ -585,9 +601,10 @@ export default function App() {
     );
   });
 
-  const displayHaftaSatiri = meta.tarihAraligi.trim()
-    ? `${meta.haftaEtiketi} (${meta.tarihAraligi})`
-    : meta.haftaEtiketi;
+  const displayHaftaSatiri = formatFullWeekAndDateRange(
+    meta.haftaEtiketi,
+    meta.tarihAraligi
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100/80 text-slate-900">
@@ -651,16 +668,11 @@ export default function App() {
           </a>
         </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            disabled={isGenerating}
-            onClick={handleGeneratePlan}
-            className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-400 rounded-lg hover:bg-amber-300 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
-          >
-            {isGenerating ? "Plan Üretiliyor..." : "Günlük Plan Oluştur"}
-          </button>
+        {/* Zone 3: Clean minimal status (Yellow button removed per user request) */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+            MEB Maarif Modeli
+          </span>
         </div>
       </header>
 
@@ -1483,7 +1495,7 @@ export default function App() {
                             .getElementById("official-table-sheet-workspace")
                             ?.scrollIntoView({ behavior: "smooth" });
                         }}
-                        onExportWord={() => downloadWordDoc(currentPlan, meta)}
+                        onExportWord={() => setIsExportConfigOpen(true)}
                         onPrint={() => window.print()}
                         isOpenInitially={true}
                       />
@@ -1522,7 +1534,7 @@ export default function App() {
                       .getElementById("official-table-sheet-tab2")
                       ?.scrollIntoView({ behavior: "smooth" });
                   }}
-                  onExportWord={() => downloadWordDoc(currentPlan, meta)}
+                  onExportWord={() => setIsExportConfigOpen(true)}
                   onPrint={() => window.print()}
                   isOpenInitially={false}
                 />
@@ -1704,6 +1716,17 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Export & Paper-Saving Configurator Modal */}
+      {currentPlan && (
+        <ExportConfigModal
+          isOpen={isExportConfigOpen}
+          onClose={() => setIsExportConfigOpen(false)}
+          plan={currentPlan}
+          meta={meta}
+          onExecutePrint={() => window.print()}
+        />
+      )}
     </div>
   );
 }

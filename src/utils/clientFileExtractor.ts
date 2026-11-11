@@ -10,6 +10,7 @@ import {
   extractWeekMateryalSlice,
   enforceAndMergeLessonPlan,
   extractDateRangeFromText,
+  resolveValidDateRange,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -167,12 +168,13 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
               .replace(/\s+/g, " ")
               .trim();
 
+        const validDateRange = resolveValidDateRange(datePart, wNo);
         weeks.push({
           id: `week-${wNo}`,
           haftaNo: wNo,
           haftaEtiketi: `${wNo}. HAFTA`,
-          tarihAraligi: datePart || "",
-          onayTarihi: inferApprovalDateClient(datePart),
+          tarihAraligi: validDateRange,
+          onayTarihi: inferApprovalDateClient(validDateRange),
           ogrenmeBirimi,
           konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
           sure,
