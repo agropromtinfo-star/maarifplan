@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
-import { Printer, FileDown, Edit3, Check, Plus, Trash2 } from "lucide-react";
+import { Printer, FileDown, Edit3, Check, Plus, Trash2, ShieldCheck } from "lucide-react";
 import { downloadWordDoc } from "../utils/exportPlan";
 
 interface OfficialPlanTableProps {
@@ -212,6 +212,23 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              const el =
+                document.getElementById("plan-validator-anchor") ||
+                document.getElementById("plan-validator-anchor-tab2");
+              if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-300 bg-emerald-950/70 border border-emerald-600/50 rounded-lg hover:bg-emerald-900/80 transition-colors whitespace-nowrap shrink-0"
+            title="Öğrenme çıktıları, boş alanlar ve tarih uyuşmazlığı kontrol raporunu aç"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Doğrulama &amp; Kontrol Raporu
+          </button>
+
           <button
             type="button"
             onClick={() => setIsEditing((prev) => !prev)}

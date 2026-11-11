@@ -11,6 +11,7 @@ import {
   YillikPlanWeekItem,
 } from "./types/lessonPlan";
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
+import { PlanValidator } from "./components/PlanValidator";
 import { downloadWordDoc } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
@@ -518,6 +519,14 @@ export default function App() {
         plan: generated,
       };
       setSavedPlans((prev) => [newRecord, ...prev]);
+
+      // Focus the user's attention directly on the Plan Validator before official table
+      window.setTimeout(() => {
+        const validatorAnchor = document.getElementById("plan-validator-anchor");
+        if (validatorAnchor) {
+          validatorAnchor.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 150);
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error
@@ -1459,11 +1468,34 @@ export default function App() {
                       </div>
                     </div>
 
-                    <OfficialPlanTable
-                      plan={currentPlan}
-                      meta={meta}
-                      onUpdatePlan={(updated) => setCurrentPlan(updated)}
-                    />
+                    {/* Trigger Plan Validator Before Official Table */}
+                    <div id="plan-validator-anchor" className="scroll-mt-24">
+                      <PlanValidator
+                        plan={currentPlan}
+                        meta={meta}
+                        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                        onUpdateMeta={(updated) => setMeta(updated)}
+                        availableWeeks={
+                          extractedWeeks.length > 0 ? extractedWeeks : DEFAULT_MEB_WEEKS
+                        }
+                        onProceedToTable={() => {
+                          document
+                            .getElementById("official-table-sheet-workspace")
+                            ?.scrollIntoView({ behavior: "smooth" });
+                        }}
+                        onExportWord={() => downloadWordDoc(currentPlan, meta)}
+                        onPrint={() => window.print()}
+                        isOpenInitially={true}
+                      />
+                    </div>
+
+                    <div id="official-table-sheet-workspace">
+                      <OfficialPlanTable
+                        plan={currentPlan}
+                        meta={meta}
+                        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1474,11 +1506,36 @@ export default function App() {
         {/* TAB 2: OFFICIAL MAARIF MODELI TABLE VIEW (Editable + Print Ready) */}
         {activeTab === "official-table" && (
           currentPlan ? (
-            <OfficialPlanTable
-              plan={currentPlan}
-              meta={meta}
-              onUpdatePlan={(updated) => setCurrentPlan(updated)}
-            />
+            <div className="space-y-6">
+              {/* Trigger Plan Validator Before Official Table in Full Table View */}
+              <div id="plan-validator-anchor-tab2" className="scroll-mt-24">
+                <PlanValidator
+                  plan={currentPlan}
+                  meta={meta}
+                  onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                  onUpdateMeta={(updated) => setMeta(updated)}
+                  availableWeeks={
+                    extractedWeeks.length > 0 ? extractedWeeks : DEFAULT_MEB_WEEKS
+                  }
+                  onProceedToTable={() => {
+                    document
+                      .getElementById("official-table-sheet-tab2")
+                      ?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  onExportWord={() => downloadWordDoc(currentPlan, meta)}
+                  onPrint={() => window.print()}
+                  isOpenInitially={false}
+                />
+              </div>
+
+              <div id="official-table-sheet-tab2">
+                <OfficialPlanTable
+                  plan={currentPlan}
+                  meta={meta}
+                  onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                />
+              </div>
+            </div>
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl p-12 text-center space-y-3 shadow-xs">
               <p className="text-sm font-semibold text-indigo-950">
