@@ -11,6 +11,8 @@ import {
   enforceAndMergeLessonPlan,
   extractDateRangeFromText,
   resolveValidDateRange,
+  sanitizeOutcomeOrSubSentence,
+  sanitizeShortTopicTitle,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -41,11 +43,15 @@ export function inferApprovalDateClient(
   defaultYear = 2026
 ): string {
   const lower = (dateRange || "").toLocaleLowerCase("tr-TR");
-  const numericDateMatch = lower.match(/\b(\d{1,2})[./](\d{1,2})(?:[./](20\d{2}))?/);
+  const numericDateMatch = lower.match(
+    /\b(\d{1,2})[./](\d{1,2})(?:[./](20\d{2}))?/
+  );
   if (numericDateMatch) {
     const d = numericDateMatch[1].padStart(2, "0");
     const m = numericDateMatch[2].padStart(2, "0");
-    const y = numericDateMatch[3] || (Number(m) >= 9 ? String(defaultYear) : String(defaultYear + 1));
+    const y =
+      numericDateMatch[3] ||
+      (Number(m) >= 9 ? String(defaultYear) : String(defaultYear + 1));
     return `${d}/${m}/${y}`;
   }
   const dayMatch = lower.match(/(\d{1,2})/);
@@ -82,105 +88,126 @@ export function parseQuickWeeksClient(text: string): YillikPlanWeekItem[] {
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const weeks: YillikPlanWeekItem[] = [];
+  const rawHits: { wNo: number; lineIdx: number }[] = [];
   const seenWeeks = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const m = line.match(
-      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)(?:\s*\(?([^)|]+)\)?)?/i
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/i
     );
     if (m) {
       const wNo = Number(m[1] || m[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
-        let datePart =
-          extractDateRangeFromText(line) ||
-          (m[3] || "").trim().replace(/^\(|\)$/g, "").trim();
-
-        const blockLines: string[] = [];
-        // Include up to 2 lines above if vertically-centered PDF row has outcome header above HAFTA label
-        if (
-          i > 0 &&
-          !/\b\d{1,2}\s*\.\s*HAFTA/i.test(lines[i - 1]) &&
-          /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}\.\d{1,2}\b/.test(lines[i - 1])
-        ) {
-          blockLines.push(lines[i - 1]);
-        }
-
-        for (let j = i; j < Math.min(lines.length, i + 22); j++) {
-          if (
-            j > i &&
-            (new RegExp(`\\b${wNo + 1}\\s*\\.\\s*HAFTA\\b`, "i").test(lines[j]) ||
-              /\b\d{1,2}\s*\.\s*HAFTA\b/i.test(lines[j]))
-          ) {
-            break;
-          }
-          blockLines.push(lines[j]);
-        }
-
-        if (!datePart || /^\d+\s*\.\s*hafta$/i.test(datePart)) {
-          for (const bLine of blockLines) {
-            const foundRange = extractDateRangeFromText(bLine);
-            if (foundRange) {
-              datePart = foundRange;
-              break;
-            }
-          }
-        }
-
-        const blockText = blockLines.join(" | ");
-
-        const sureMatch = blockText.match(
-          /\b(\d{1,2})\s*(?:Ders\s*)?Saat[i]?\b/i
-        );
-        const sure = sureMatch ? `${sureMatch[1]} Ders Saati` : "";
-
-        // Match clean outcome code + sentence without preceding column spillover
-        const outcomeMatch = blockText.match(
-          /\b([A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\.?\s+[^|]{6,140})/
-        );
-
-        let ogrenmeBirimi = "";
-        const unitMatch = blockText.match(
-          /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|]+)/i
-        );
-        if (unitMatch && !/^VE\s*SÜRE$/i.test(unitMatch[1].trim())) {
-          ogrenmeBirimi = unitMatch[1].trim().slice(0, 90);
-        }
-
-        // Capture sub-process components (a), b), c), ç), d), e)) for week preview
-        const subMatches =
-          blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,110}/gi) || [];
-
-        const meaningfulSummary = outcomeMatch
-          ? [outcomeMatch[1].trim(), ...subMatches.slice(0, 3)].join(" · ")
-          : subMatches.length > 0
-          ? subMatches.slice(0, 3).join(" · ")
-          : blockLines
-              .filter(
-                (l) =>
-                  !/^\d{1,2}\s*\.\s*HAFTA$/i.test(l) &&
-                  !/^\d{1,2}\s*(?:Ders\s*)?Saat[i]?$/i.test(l)
-              )
-              .slice(0, 3)
-              .join(" | ")
-              .replace(/\s+/g, " ")
-              .trim();
-
-        const validDateRange = resolveValidDateRange(datePart, wNo);
-        weeks.push({
-          id: `week-${wNo}`,
-          haftaNo: wNo,
-          haftaEtiketi: `${wNo}. HAFTA`,
-          tarihAraligi: validDateRange,
-          onayTarihi: inferApprovalDateClient(validDateRange),
-          ogrenmeBirimi,
-          konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
-          sure,
-        });
+        rawHits.push({ wNo, lineIdx: i });
       }
     }
+  }
+
+  const weeks: YillikPlanWeekItem[] = [];
+  let activeUnitCarryover = "";
+  let activeOutcomeCarryover = "";
+
+  for (let idx = 0; idx < rawHits.length; idx++) {
+    const { wNo, lineIdx: i } = rawHits[idx];
+    const prevIdx = idx > 0 ? rawHits[idx - 1].lineIdx : -1;
+    const nextIdx =
+      idx + 1 < rawHits.length ? rawHits[idx + 1].lineIdx : lines.length;
+
+    // 1. Resolve date range strictly from this week's anchor (same line -> 1 line above -> 1 line below)
+    // Never scan down to nextIdx - 1 where next week's date sits in ogretmenevrak PDFs!
+    let datePart = extractDateRangeFromText(lines[i]);
+    if (!datePart && i - 1 > prevIdx) {
+      datePart = extractDateRangeFromText(lines[i - 1]);
+    }
+    if (!datePart && i + 1 < nextIdx - 1) {
+      datePart = extractDateRangeFromText(lines[i + 1]);
+    }
+    if (!datePart && i - 2 > prevIdx + 1) {
+      datePart = extractDateRangeFromText(lines[i - 2]);
+    }
+
+    // 2. Collect lines belonging to this week's row (excluding nextIdx - 1 if it holds next week's date)
+    let endRowIdx = Math.min(lines.length, nextIdx, i + 20);
+    if (
+      nextIdx < lines.length &&
+      nextIdx - 1 > i &&
+      extractDateRangeFromText(lines[nextIdx - 1])
+    ) {
+      endRowIdx = Math.min(endRowIdx, nextIdx - 1);
+    }
+
+    const blockLines = lines.slice(i, endRowIdx);
+    const blockText = blockLines.join(" | ");
+
+    const sureMatch = blockText.match(
+      /\b(\d{1,2})\s*(?:Ders\s*)?Saat[i]?\b/i
+    );
+    const sure = sureMatch ? `${sureMatch[1]} Ders Saati` : "2 Ders Saati";
+
+    // Match clean outcome code + sentence without Maarif code spillover
+    const outcomeMatch = blockText.match(
+      /\b([A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\.?\s+[^|]{6,140})/
+    );
+    if (outcomeMatch) {
+      const cleanedOutcome = sanitizeOutcomeOrSubSentence(outcomeMatch[1]);
+      if (cleanedOutcome.length >= 8) {
+        activeOutcomeCarryover = cleanedOutcome;
+      }
+    }
+
+    let ogrenmeBirimi = "";
+    const unitMatch = blockText.match(
+      /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|]{3,55})/i
+    );
+    if (unitMatch && !/^VE\s*SÜRE$/i.test(unitMatch[1].trim())) {
+      ogrenmeBirimi = sanitizeShortTopicTitle(unitMatch[1], "");
+    }
+    if (ogrenmeBirimi) {
+      activeUnitCarryover = ogrenmeBirimi;
+    } else if (activeUnitCarryover) {
+      ogrenmeBirimi = activeUnitCarryover;
+    }
+
+    // Capture sub-process components (a), b), c), ç), d), e)) for week preview
+    const rawSubMatches =
+      blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,110}/gi) || [];
+    const subMatches = rawSubMatches
+      .map((s) => sanitizeOutcomeOrSubSentence(s))
+      .filter((s) => s.length >= 6);
+
+    const displayOutcome = outcomeMatch
+      ? sanitizeOutcomeOrSubSentence(outcomeMatch[1])
+      : activeOutcomeCarryover;
+
+    const meaningfulSummary = displayOutcome
+      ? [displayOutcome, ...subMatches.slice(0, 3)].join(" · ")
+      : subMatches.length > 0
+      ? subMatches.slice(0, 3).join(" · ")
+      : blockLines
+          .map((l) => sanitizeOutcomeOrSubSentence(l))
+          .filter(
+            (l) =>
+              l.length >= 4 &&
+              !/^\d{1,2}\s*\.\s*HAFTA$/i.test(l) &&
+              !/^\d{1,2}\s*(?:Ders\s*)?Saat[i]?$/i.test(l)
+          )
+          .slice(0, 2)
+          .join(" · ")
+          .trim();
+
+    const validDateRange = resolveValidDateRange(datePart, wNo);
+    weeks.push({
+      id: `week-${wNo}`,
+      haftaNo: wNo,
+      haftaEtiketi: `${wNo}. HAFTA`,
+      tarihAraligi: validDateRange,
+      onayTarihi: inferApprovalDateClient(validDateRange),
+      ogrenmeBirimi: ogrenmeBirimi || "Onarıcı tarım",
+      konuVeCiktiOzeti: meaningfulSummary.slice(0, 220),
+      sure,
+    });
   }
 
   return weeks.sort((a, b) => a.haftaNo - b.haftaNo);
@@ -407,7 +434,8 @@ export function buildXmlContextPayloadWithAnalysis(
 } {
   const structuredDbf = parseDersBilgiFormuStructured(
     input.ders_bilgi_formu || "",
-    input.yillik_plan
+    input.yillik_plan,
+    input.ders_materyali
   );
 
   const weekData = extractWeekPlanStructured(
@@ -530,7 +558,8 @@ export function synthesizePlanClientSide(
 ): MaarifLessonPlan {
   const structuredDbf = parseDersBilgiFormuStructured(
     inputs.ders_bilgi_formu || "",
-    inputs.yillik_plan
+    inputs.yillik_plan,
+    inputs.ders_materyali
   );
   const weekData = extractWeekPlanStructured(
     inputs.yillik_plan,

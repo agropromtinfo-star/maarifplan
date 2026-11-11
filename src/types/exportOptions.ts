@@ -13,7 +13,7 @@ export const DEFAULT_EXPORT_OPTIONS: PlanExportOptions = {
   expandTable: true,
   preserveEmptyRows: true,
   compactPaperSaver: true, // Açık: Kağıttan maksimum tasarruf için sıkıştırılmış
-  printerFriendlyBorders: true, // Yazıcı dostu net, sıkı çerçeveler
-  fontSizePt: 8.5, // Tek sayfaya maksimum yazı alabilmek için 8.5pt
+  printerFriendlyBorders: false, // Örnek PDF tasarımı (#4bacc6 tablo kenarlığı ve #c2d69b yeşil başlıklar)
+  fontSizePt: 9.0, // Örnek PDF ile birebir uyumlu 9pt yazı boyutu
   marginCm: 0.8, // Sıkıştırılmış 0.8cm kenar boşluğu
 };

@@ -13,6 +13,7 @@ import {
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
+import { YillikPlanTimeline } from "./components/YillikPlanTimeline";
 import { downloadWordDoc } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
@@ -383,7 +384,7 @@ export default function App() {
     await processSelectedFile(file, fieldKey, setter, null);
   };
 
-  const handleGeneratePlan = async () => {
+  const handleGeneratePlan = async (overrideWeekId?: string) => {
     if (!yillikPlan.trim() || !dersMateryali.trim()) {
       setErrorMessage(
         "Lütfen 'Ünitelendirilmiş Yıllık Plan' ve 'Ders Materyali' alanlarını doldurun veya dosya (.pdf, .docx, .xlsx) yükleyin."
@@ -396,6 +397,25 @@ export default function App() {
     setErrorMessage(null);
 
     try {
+      const targetWeekObj = overrideWeekId
+        ? activeWeekList.find((w) => w.id === overrideWeekId) || selectedWeekObj
+        : selectedWeekObj;
+
+      const targetHaftaEtiketi =
+        overrideWeekId && targetWeekObj
+          ? targetWeekObj.haftaEtiketi
+          : meta.haftaEtiketi;
+      const targetTarihAraligi =
+        overrideWeekId && targetWeekObj
+          ? resolveValidDateRange(targetWeekObj.tarihAraligi, targetWeekObj.haftaNo)
+          : meta.tarihAraligi;
+      const targetOnayTarihi =
+        overrideWeekId && targetWeekObj
+          ? targetWeekObj.onayTarihi ||
+            inferApprovalDateClient(targetTarihAraligi) ||
+            meta.onayTarihi
+          : meta.onayTarihi;
+
       const detectedDocMeta = extractDocumentMetadataClient(
         `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
       );
@@ -412,14 +432,14 @@ export default function App() {
           yillik_plan: yillikPlan,
           ders_materyali: dersMateryali,
           ders_bilgi_formu: dersBilgiFormu,
-          hafta_etiketi: meta.haftaEtiketi,
-          tarih_araligi: meta.tarihAraligi,
-          onay_tarihi: meta.onayTarihi,
+          hafta_etiketi: targetHaftaEtiketi,
+          tarih_araligi: targetTarihAraligi,
+          onay_tarihi: targetOnayTarihi,
           okul_adi: effectiveOkulAdi,
           egitim_ogretim_yili: meta.egitimOgretimYili,
           ders_ismi: effectiveDersIsmi,
           sinif_duzeyi: effectiveSinifDuzeyi,
-          secilen_hafta_verisi: selectedWeekObj,
+          secilen_hafta_verisi: targetWeekObj,
           dosya_adlari: uploadedFileNames,
         });
 
@@ -977,6 +997,20 @@ export default function App() {
                         )}
                       </div>
                     )}
+
+                  {/* Visual Annual Plan Timeline Component for Easy Week Selection */}
+                  <YillikPlanTimeline
+                    weeks={activeWeekList}
+                    selectedWeekId={selectedWeekId}
+                    onSelectWeek={handleSelectWeek}
+                    onSelectAndGenerate={
+                      yillikPlan.trim().length > 0 && dersMateryali.trim().length > 0
+                        ? (weekId) => handleGeneratePlan(weekId)
+                        : undefined
+                    }
+                    isFromUploadedPlan={extractedWeeks.length > 0}
+                    isGenerating={isGenerating}
+                  />
                 </div>
 
                 {/* Row 3: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}
@@ -1051,10 +1085,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* Two-Column Split Workspace */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left Column: 3 Source Documents with PDF/DOCX/XLSX Upload (Max 40 MB) */}
-              <div className="lg:col-span-5 bg-white border border-slate-200/90 rounded-xl overflow-hidden flex flex-col justify-between shadow-xs">
+            {/* Two-Column Split Workspace (Collapses to pure full-width table on print) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start print:block print:w-full">
+              {/* Left Column: 3 Source Documents with PDF/DOCX/XLSX Upload (Max 40 MB) - NEVER PRINTED */}
+              <div className="no-print lg:col-span-5 bg-white border border-slate-200/90 rounded-xl overflow-hidden flex flex-col justify-between shadow-xs">
                 <div>
                   <div className="bg-gradient-to-r from-sky-900 to-teal-900 px-6 py-4 text-white flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -1388,7 +1422,7 @@ export default function App() {
                   <button
                     type="button"
                     disabled={isGenerating || isAnyUploading}
-                    onClick={handleGeneratePlan}
+                    onClick={() => handleGeneratePlan()}
                     className="w-full py-3.5 px-4 rounded-lg bg-gradient-to-r from-indigo-900 via-sky-800 to-teal-800 hover:from-indigo-800 hover:via-sky-700 hover:to-teal-700 disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-xs transition-all"
                   >
                     {isGenerating ? (
@@ -1410,10 +1444,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Column: Direct Official Table Output Preview */}
-              <div className="lg:col-span-7 space-y-4">
+              {/* Right Column: Direct Official Table Output Preview (Full Width on Print) */}
+              <div className="lg:col-span-7 space-y-4 print:w-full print:space-y-0">
                 {isGenerating ? (
-                  <div className="bg-white border border-slate-200 rounded-xl p-8 space-y-4 animate-pulse shadow-xs">
+                  <div className="no-print bg-white border border-slate-200 rounded-xl p-8 space-y-4 animate-pulse shadow-xs">
                     <div className="h-6 bg-indigo-100 rounded w-2/3 mx-auto" />
                     <div className="h-4 bg-slate-200 rounded w-1/2 mx-auto" />
                     <div className="h-10 bg-[#c2d69b]/60 rounded" />
@@ -1422,7 +1456,7 @@ export default function App() {
                     <div className="h-48 bg-slate-100 rounded border border-slate-200" />
                   </div>
                 ) : !currentPlan ? (
-                  <div className="bg-white border border-slate-200 rounded-xl p-12 text-center space-y-4 shadow-xs">
+                  <div className="no-print bg-white border border-slate-200 rounded-xl p-12 text-center space-y-4 shadow-xs">
                     <div className="w-12 h-12 rounded-xl bg-indigo-950 text-amber-300 flex items-center justify-center mx-auto shadow-xs">
                       <FileText className="w-6 h-6" />
                     </div>
@@ -1444,7 +1478,7 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-3 print:space-y-0">
                     <div className="no-print flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs">
                       <span className="font-medium text-slate-600">
                         Aktif Plan:{" "}
@@ -1480,8 +1514,8 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Trigger Plan Validator Before Official Table */}
-                    <div id="plan-validator-anchor" className="scroll-mt-24">
+                    {/* Trigger Plan Validator Before Official Table (Never Printed) */}
+                    <div id="plan-validator-anchor" className="no-print scroll-mt-24">
                       <PlanValidator
                         plan={currentPlan}
                         meta={meta}
@@ -1518,9 +1552,9 @@ export default function App() {
         {/* TAB 2: OFFICIAL MAARIF MODELI TABLE VIEW (Editable + Print Ready) */}
         {activeTab === "official-table" && (
           currentPlan ? (
-            <div className="space-y-6">
+            <div className="space-y-6 print:space-y-0">
               {/* Trigger Plan Validator Before Official Table in Full Table View */}
-              <div id="plan-validator-anchor-tab2" className="scroll-mt-24">
+              <div id="plan-validator-anchor-tab2" className="no-print scroll-mt-24">
                 <PlanValidator
                   plan={currentPlan}
                   meta={meta}
@@ -1549,7 +1583,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center space-y-3 shadow-xs">
+            <div className="no-print bg-white border border-slate-200 rounded-xl p-12 text-center space-y-3 shadow-xs">
               <p className="text-sm font-semibold text-indigo-950">
                 Görüntülenecek aktif bir günlük ders planı bulunmuyor.
               </p>
@@ -1572,7 +1606,7 @@ export default function App() {
 
         {/* TAB 3: SAVED PLANS ARCHIVE */}
         {activeTab === "saved-plans" && (
-          <div className="space-y-6">
+          <div className="no-print space-y-6">
             <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-sky-950 text-white rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-xs">
               <div>
                 <div className="flex items-center gap-2 text-xs text-sky-200">
@@ -1686,6 +1720,17 @@ export default function App() {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Fallback Print-Only Product Sheet when user prints while on Saved Plans tab */}
+        {activeTab === "saved-plans" && currentPlan && (
+          <div className="hidden print:block">
+            <OfficialPlanTable
+              plan={currentPlan}
+              meta={meta}
+              onUpdatePlan={(updated) => setCurrentPlan(updated)}
+            />
           </div>
         )}
       </main>

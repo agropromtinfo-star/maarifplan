@@ -253,13 +253,24 @@ function parseWeeksRegexFallback(text: string) {
       const wNo = Number(m[1]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
-        const searchWindow = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 5)).join(" ");
-        let datePart = extractDateRangeFromText(line) || extractDateRangeFromText(searchWindow);
+        let nextWeekIdx = lines.length;
+        for (let k = i + 1; k < Math.min(lines.length, i + 15); k++) {
+          if (/\b\d{1,2}\s*\.\s*HAFTA\b/i.test(lines[k])) {
+            nextWeekIdx = k;
+            break;
+          }
+        }
+        const prevLine = i > 0 ? lines[i - 1] : "";
+        let datePart =
+          extractDateRangeFromText(line) ||
+          extractDateRangeFromText(prevLine);
         if (!datePart) {
-          datePart = (m[2] || "").trim().replace(/^\(|\)$/g, "").trim();
+          const safeEnd =
+            nextWeekIdx < lines.length ? Math.max(i + 1, nextWeekIdx - 1) : Math.min(lines.length, i + 3);
+          datePart = extractDateRangeFromText(lines.slice(i, safeEnd).join(" "));
         }
         datePart = resolveValidDateRange(datePart, wNo);
-        const contextSlice = lines.slice(Math.max(0, i - 3), i + 6).join(" | ");
+        const contextSlice = lines.slice(i, Math.min(lines.length, nextWeekIdx)).join(" | ");
         weeks.push({
           id: `week-${wNo}`,
           haftaNo: wNo,
@@ -646,7 +657,8 @@ async function startServer() {
 
       const structuredDbf = parseDersBilgiFormuStructured(
         dbfForParsing,
-        rawYillikTableFromXml
+        rawYillikTableFromXml,
+        ders_materyali
       );
 
       if (isXmlString) {

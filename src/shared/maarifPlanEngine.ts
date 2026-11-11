@@ -124,15 +124,49 @@ const KNOWN_DISCIPLINES = [
 ];
 
 /**
- * Strips textbook/PDF front-matter boilerplate (copyright, imprint, ISBN, TOC dotted lines)
- * so that lines like "MİLLÎ EĞİTİM BAKANLIĞI YAYINLARI ... 10956" or "Her hakkı saklıdır"
- * never pollute lesson plan fields.
+ * Pre-normalizes raw PDF/DOCX text before line-by-line parsing:
+ * 1. Strips textbook/PDF front-matter boilerplate (copyright, imprint, ISBN, TOC dotted lines).
+ * 2. Strips standalone "EK-3" headers, standalone "2 / 7" page numbers, and repeating annual plan page footers.
+ * 3. Inserts clean line breaks (\n) before inline PDF section headings and Maarif component columns
+ *    that `unpdf` glued onto the end of preceding sentences.
  */
 export function stripFrontMatter(rawText: string): string {
-  const lines = (rawText || "").split(/\r?\n/);
+  if (!rawText) return "";
+
+  let normalized = rawText
+    // Remove repeating annual plan page footer/header blocks that end with page numbers like "2 / 7"
+    .replace(
+      /20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI[^\n]{5,180}?YILLIK\s*PLANI(?:\s*\(TYMM\))?\s*\d{1,2}\s*\/\s*\d{1,2}/gi,
+      "\n"
+    )
+    // Remove inline page numbers like " 2 / 7 " or " 1 / 7 "
+    .replace(/(?:^|\s)\d{1,2}\s*\/\s*\d{1,2}(?=\s|$)/gm, " ")
+    // Remove standalone or inline "EK-3", "EK-1", "EK - 3" form markers
+    .replace(/(?:^|\s)EK\s*[-–]\s*\d{1,2}(?=\s|$)/gi, "\n")
+    // Insert newline before major section headings when glued inline after a sentence
+    .replace(
+      /([.!?:;])\s+((?:ÖĞRENME\s*KANITLARI|Öğrenme\s*Kanıtları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|Öğrenme\s*[-–]?\s*Öğretme\s*Yaşantıları|TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALARI|Öğrenme\s*[-–]?\s*Öğretme\s*Uygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|FARKLILAŞTIRMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
+      "$1\n$2"
+    )
+    // Also split if "ÖĞRENME-ÖĞRETME YAŞANTILARI" or "Öğrenme Öğretme Uygulamaları" appears mid-line even without punctuation
+    .replace(
+      /\s+((?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALARI|Öğrenme\s*[-–]?\s*Öğretme\s*Uygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları)(?=\s|[:(-]|$))/g,
+      "\n$1"
+    )
+    // Insert newline before Maarif component code definitions (e.g. "E1.4. Kendine İnanma", "SDB2.2. İş Birliği") when NOT inside parentheses
+    .replace(
+      /(?<![(,]\s*)\s+((?:E[123]\.\d{1,2}|SDB[123]\.\d|D\d{1,2}|OB[1-9]|KB(?:1|[23]\.\d{1,2}))\.\s+[A-ZÇĞİÖŞÜ])/g,
+      "\n$1"
+    );
+
+  const lines = normalized.split(/\r?\n/);
+  let seenAnnualPlanTitleCount = 0;
+
   const cleanedLines = lines.filter((line) => {
     const t = line.trim();
     if (!t) return false;
+    if (/^\d{1,2}\s*\/\s*\d{1,2}$/.test(t)) return false;
+    if (/^EK\s*[-–]?\s*\d{1,2}$/i.test(t)) return false;
     if (/\.{4,}\s*:?\s*\d+/.test(t)) return false;
     if (
       /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|YARDIMCI\s*VE\s*KAYNAK\s*KİTAPLAR|Her\s*hakkı\s*saklıdır|hiçbir\s*surette\s*alınıp\s*yayımlanamaz|ISBN\s*[:\d-]|Baskı\s*Yılı|Matbaası|İSTİKL[ÂA]L\s*MARŞI|GENÇLİĞE\s*HİTABE|EDİTÖR|GÖRSEL\s*TASARIM\s*UZMANI|PROGRAM\s*GELİŞTİRME\s*UZMANI|ÖLÇME\s*VE\s*DEĞERLENDİRME\s*UZMANI|REHBERLİK\s*UZMANI/i.test(
@@ -141,9 +175,78 @@ export function stripFrontMatter(rawText: string): string {
     ) {
       return false;
     }
+    if (
+      /20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI.*YILLIK\s*PLANI/i.test(
+        t
+      )
+    ) {
+      seenAnnualPlanTitleCount++;
+      if (seenAnnualPlanTitleCount > 1) {
+        return false;
+      }
+    }
     return true;
   });
   return cleanedLines.join("\n");
+}
+
+/**
+ * Cleans any outcome header or sub-component sentence so it NEVER includes trailing Maarif component codes,
+ * school names, page numbers, or column headers from adjacent PDF table cells.
+ */
+export function sanitizeOutcomeOrSubSentence(rawText: string): string {
+  if (!rawText) return "";
+  return rawText
+    .replace(/\s*\|\s*.*$/, "")
+    .replace(
+      /\s+(?:E[123]\.\d{1,2}|SDB[123]\.\d|D\d{1,2}|OB[1-9]|KB(?:1|[23]\.\d{1,2}))\.?\s+[A-ZÇĞİÖŞÜ].*$/i,
+      ""
+    )
+    .replace(
+      /\s+20\d{2}\s*[-–]\s*20\d{2}\s*Eğitim.*$/i,
+      ""
+    )
+    .replace(/\s+\d{1,2}\s*\/\s*\d{1,2}\b.*$/, "")
+    .replace(
+      /\s+(?:Programlar\s*Arası|Ölçme\s*ve\s*Değerlendirme|Belirli\s*Günler|Öğrenme\s*Kanıtları|İçerik\s*Çerçevesi).*$/i,
+      ""
+    )
+    .replace(/\s+\d{1,2}\s*(?:Ders\s*)?Saat[i]?\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Cleans a short heading like Öğrenme Birimi or İçerik Çerçevesi so it is strictly a clean title
+ * (max 65 chars, no outcome verbs, no Maarif codes, no school names).
+ */
+export function sanitizeShortTopicTitle(
+  rawTitle: string,
+  fallback = "Onarıcı Tarım"
+): string {
+  const cleaned = sanitizeOutcomeOrSubSentence(rawTitle || "")
+    .replace(/^[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s*/, "")
+    .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
+    .replace(
+      /\s+(?:açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|sınıflandırır|karşılaştırabilme|karşılaştırır|analiz\s+edebilme|analiz\s+eder|değerlendirebilme|değerlendirir|kavrayabilme|kavrar)\.?$/i,
+      ""
+    )
+    .replace(/\.$/, "")
+    .trim();
+
+  if (
+    !cleaned ||
+    cleaned.length < 3 ||
+    /^(?:VE\s*SÜRE|SÜRE|SAAT|BİLGİ\s*FORMU|\d+\s*\.\s*HAFTA)$/i.test(cleaned)
+  ) {
+    return fallback;
+  }
+
+  if (cleaned.length > 65) {
+    return cleaned.slice(0, 65).replace(/\s+\S*$/, "").trim() || fallback;
+  }
+
+  return cleaned;
 }
 
 /**
@@ -226,7 +329,9 @@ export function extractCanonicalMaarifCodes(
 }
 
 /**
- * Extracts clean course name, field (alan) name, grade level, and school name from the 3 documents
+ * Extracts clean course name, field (alan) name, grade level, and school name from the 3 documents.
+ * Prioritizes explicit "DERSİN ADI" and parenthesized course names ("TARIM (SÜRDÜRÜLEBİLİR TARIM)")
+ * over generic header matches so phrases from "DERSİN AMACI" never pollute the course name.
  */
 export function extractCleanDocumentMetadata(corpus: string): {
   okulAdi: string;
@@ -238,11 +343,13 @@ export function extractCleanDocumentMetadata(corpus: string): {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
-    .slice(0, 120);
+    .slice(0, 150);
 
   let okulAdi = "";
   let alanAdi = "";
-  let rawDersAdi = "";
+  let explicitDersAdi = "";
+  let parenDersAdi = "";
+  let headerDersAdi = "";
   let sinifDuzeyi = "";
   let sure = "";
 
@@ -257,7 +364,12 @@ export function extractCleanDocumentMetadata(corpus: string): {
       ) &&
       !/BAKANLIĞI|GENEL\s*MÜDÜRLÜĞÜ/i.test(line)
     ) {
-      okulAdi = line.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+      okulAdi = line
+        .replace(/^.*20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI\s*/i, "")
+        .replace(/\b\d{1,2}\s*\.\s*SINIF.*$/i, "")
+        .replace(/\|/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     }
 
     // 2. Field Name (e.g. "TARIM ALANI" or "ALAN: TARIM")
@@ -269,11 +381,11 @@ export function extractCleanDocumentMetadata(corpus: string): {
         alanAdi = explicitAlanLabel[1].trim().toLocaleUpperCase("tr-TR");
       } else {
         const alanMatch = line.match(
-          /(?:^|\s)([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,35}?)\s+ALANI(?=$|\s|[:|,-])/i
+          /(?:^|\s)([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,30}?)\s+ALANI(?=$|\s|[:|,-])/i
         );
         if (
           alanMatch &&
-          !/ÖĞRENME|BECERİ|UYGULAMA|ÇALIŞMA|TARIM\s+ALANI\s+DIŞI/i.test(
+          !/ÖĞRENME|BECERİ|UYGULAMA|ÇALIŞMA|TARIM\s+ALANI\s+DIŞI|BU\s+DERS/i.test(
             alanMatch[1]
           )
         ) {
@@ -289,6 +401,11 @@ export function extractCleanDocumentMetadata(corpus: string): {
       );
       if (haftalikMatch) {
         sure = `${haftalikMatch[1]} Ders Saati`;
+      } else if (/^DERSİN\s*SÜRESİ/i.test(line) && lines[i + 1]) {
+        const nextHaftalik = lines[i + 1].match(/(\d{1,2})\s*DERS\s*SAATİ/i);
+        if (nextHaftalik) {
+          sure = `${nextHaftalik[1]} Ders Saati`;
+        }
       }
     }
 
@@ -299,29 +416,55 @@ export function extractCleanDocumentMetadata(corpus: string): {
       );
       if (explicitGrade) {
         sinifDuzeyi = `${explicitGrade[1]}. SINIF`;
-      } else if (/^(?:DERSİN\s*)?SINIF(?:I|\s*DÜZEYİ)?(?=$|\s|[:|-])/i.test(line)) {
+      } else if (
+        /^(?:DERSİN\s*)?SINIF(?:I|\s*DÜZEYİ)?(?=$|\s|[:|-])/i.test(line)
+      ) {
         const numInLine = line.match(/\b(9|10|11|12|5|6|7|8)\b/);
         const numInNext = lines[i + 1]?.match(/\b(9|10|11|12|5|6|7|8)\b/);
         const g = numInLine?.[1] || numInNext?.[1];
         if (g) sinifDuzeyi = `${g}. SINIF`;
-      } else {
-        const headerGrade = line.match(
-          /\b[A-ZÇĞİÖŞÜ]{3,}\s+(9|10|11|12)\s+DERS\s*(?:BİLGİ\s*FORMU|MATERYALİ)/i
-        );
-        if (headerGrade) {
-          sinifDuzeyi = `${headerGrade[1]}. SINIF`;
+      }
+    }
+
+    // 5A. Explicit label "DERSİN ADI: SÜRDÜRÜLEBİLİR TARIM" (Highest Priority)
+    if (!explicitDersAdi && /(?:^|\s)DERS(?:İN)?\s*ADI(?=$|\s|[:|-])/i.test(line)) {
+      const afterLabel = line
+        .replace(/^.*?DERS(?:İN)?\s*ADI\s*[:|\-–]?\s*/i, "")
+        .replace(/\|/g, " ")
+        .replace(/(?:DERSİN\s*SINIFI|SINIF|DERSİN\s*SÜRESİ|HAFTALIK|DERSİN\s*AMACI).*$/i, "")
+        .replace(/\s+\d{1,2}$/, "")
+        .trim();
+      if (
+        afterLabel.length >= 3 &&
+        afterLabel.length <= 55 &&
+        !/^(?:BİLGİ\s*FORMU|MATERYALİ|PLANI|SAATİ|SÜRESİ)$/i.test(afterLabel)
+      ) {
+        explicitDersAdi = afterLabel.toLocaleUpperCase("tr-TR");
+      } else if (lines[i + 1]) {
+        const nextLine = lines[i + 1]
+          .replace(/\|/g, " ")
+          .replace(/(?:DERSİN\s*SINIFI|SINIF|DERSİN\s*SÜRESİ|HAFTALIK|DERSİN\s*AMACI).*$/i, "")
+          .replace(/\s+\d{1,2}$/, "")
+          .trim();
+        if (
+          nextLine.length >= 3 &&
+          nextLine.length <= 55 &&
+          !/^(?:BİLGİ\s*FORMU|MATERYALİ|PLANI|SAATİ|SÜRESİ|\d+)$/i.test(
+            nextLine
+          )
+        ) {
+          explicitDersAdi = nextLine.toLocaleUpperCase("tr-TR");
         }
       }
     }
 
-    // 5. Course Name
-    // Case A: Already formatted like "9. SINIF TARIM (SÜRDÜRÜLEBİLİR TARIM) DERSİ"
-    if (!rawDersAdi || !rawDersAdi.includes("(")) {
+    // 5B. Already formatted like "9. SINIF TARIM (SÜRDÜRÜLEBİLİR TARIM) DERSİ"
+    if (!parenDersAdi) {
       const parenCourseMatch = line.match(
         /(?:\b\d{1,2}\.\s*SINIF\s+|\bÖĞRETİM\s+YILI\s+)?([A-ZÇĞİÖŞÜa-zçğıöşü\s]{2,35}\([A-ZÇĞİÖŞÜa-zçğıöşü\s-]{3,45}\))\s+DERSİ/i
       );
       if (parenCourseMatch) {
-        rawDersAdi = parenCourseMatch[1]
+        parenDersAdi = parenCourseMatch[1]
           .replace(/^.*ÖĞRETİM\s+YILI\s+/i, "")
           .replace(/^\d{1,2}\.\s*SINIF\s+/i, "")
           .trim()
@@ -329,12 +472,16 @@ export function extractCleanDocumentMetadata(corpus: string): {
       }
     }
 
-    if (!rawDersAdi) {
-
-      // Case B: Header like "TARIM ALANI SÜRDÜRÜLEBİLİR TARIM 9 DERS BİLGİ FORMU"
-      if (!rawDersAdi) {
+    // 5C. Annual Plan or Materyal Header like "9. SINIF SÜRDÜRÜLEBİLİR TARIM YILLIK PLANI" or "TARIM ALANI SÜRDÜRÜLEBİLİR TARIM 9 DERS MATERYALİ"
+    if (!headerDersAdi && !/bu\s+ders\s+ile|öğrencilerin/i.test(line)) {
+      const yillikTitleMatch = line.match(
+        /\b\d{1,2}\s*\.\s*SINIF\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s()-]{3,45}?)\s+(?:DERSİ\s+)?(?:ÜNİTELENDİRİLMİŞ\s+)?YILLIK\s+(?:ÇERÇEVE\s+)?PLANI/i
+      );
+      if (yillikTitleMatch) {
+        headerDersAdi = yillikTitleMatch[1].trim().toLocaleUpperCase("tr-TR");
+      } else {
         const dbfHeaderMatch = line.match(
-          /(?:[A-ZÇĞİÖŞÜa-zçğıöşü\s]+ALANI\s+)?([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s()-]{3,55}?)\s+(?:\d{1,2}\s+)?(?:DERS\s*BİLGİ\s*FORMU|DERS\s*MATERYALİ|DERSİ\s*ÜNİTELENDİRİLMİŞ|ÜNİTELENDİRİLMİŞ\s*YILLIK)/i
+          /^(?:[A-ZÇĞİÖŞÜa-zçğıöşü\s]+ALANI\s+)?([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s()-]{3,45}?)\s+(?:\d{1,2}\s+)?(?:DERS\s*BİLGİ\s*FORMU|DERS\s*MATERYALİ)$/i
         );
         if (dbfHeaderMatch) {
           const cand = dbfHeaderMatch[1]
@@ -344,45 +491,22 @@ export function extractCleanDocumentMetadata(corpus: string): {
             .trim();
           if (
             cand.length >= 3 &&
-            !/^(?:DERS|BİLGİ\s*FORMU|DERS\s*BİLGİ\s*FORMU|MATERYALİ|DERSİN\s*SÜRESİ|HAFTALIK)$/i.test(
+            !/^(?:DERS|BİLGİ\s*FORMU|DERS\s*BİLGİ\s*FORMU|MATERYALİ|DERSİN\s*SÜRESİ|HAFTALIK|TEKNİKLERİ)$/i.test(
               cand
             )
           ) {
-            rawDersAdi = cand.toLocaleUpperCase("tr-TR");
-          }
-        }
-      }
-
-      // Case C: Explicit label "DERSİN ADI: SÜRDÜRÜLEBİLİR TARIM"
-      if (!rawDersAdi && /^DERS(?:İN)?\s*ADI(?=$|\s|[:|-])/i.test(line)) {
-        const afterLabel = line
-          .replace(/^DERS(?:İN)?\s*ADI\s*[:|\-–]?\s*/i, "")
-          .replace(/\|/g, " ")
-          .replace(/(?:SINIF|DERSİN\s*SÜRESİ|HAFTALIK).*$/i, "")
-          .replace(/\s+\d{1,2}$/, "")
-          .trim();
-        if (
-          afterLabel.length >= 3 &&
-          !/^(?:BİLGİ\s*FORMU|MATERYALİ|PLANI|SAATİ|SÜRESİ)$/i.test(afterLabel)
-        ) {
-          rawDersAdi = afterLabel.toLocaleUpperCase("tr-TR");
-        } else if (lines[i + 1]) {
-          const nextLine = lines[i + 1]
-            .replace(/\|/g, " ")
-            .replace(/(?:SINIF|DERSİN\s*SÜRESİ|HAFTALIK).*$/i, "")
-            .replace(/\s+\d{1,2}$/, "")
-            .trim();
-          if (
-            nextLine.length >= 3 &&
-            !/^(?:BİLGİ\s*FORMU|MATERYALİ|PLANI|SAATİ|SÜRESİ|\d+)$/i.test(
-              nextLine
-            )
-          ) {
-            rawDersAdi = nextLine.toLocaleUpperCase("tr-TR");
+            headerDersAdi = cand.toLocaleUpperCase("tr-TR");
           }
         }
       }
     }
+  }
+
+  const rawDersAdi = parenDersAdi || explicitDersAdi || headerDersAdi;
+
+  // If Alan wasn't found via "TARIM ALANI", check if rawDersAdi contains "TARIM" (e.g. "SÜRDÜRÜLEBİLİR TARIM")
+  if (!alanAdi && /TARIM/i.test(rawDersAdi) && !rawDersAdi.startsWith("TARIM (")) {
+    alanAdi = "TARIM";
   }
 
   let dersIsmi = rawDersAdi;
@@ -551,7 +675,6 @@ export function formatFullWeekAndDateRange(
 
   const validDateRange = resolveValidDateRange(rawTarihAraligi, weekNo);
 
-  // If haftaEtiketi already has parentheses containing a date range, ensure it's not redundant like (16. Hafta)
   const parenMatch = haftaEtiketi.match(/^(.+?)\s*\(([^)]+)\)$/);
   if (parenMatch) {
     const baseHafta = parenMatch[1].trim();
@@ -570,7 +693,7 @@ export function formatFullWeekAndDateRange(
  * or "İyi tarımı açıklayabilme" into its clean Content Framework title ("Onarıcı Tarımın İlkeleri", "İyi Tarım")
  */
 export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
-  const withoutCode = outcomeHeader
+  const withoutCode = sanitizeOutcomeOrSubSentence(outcomeHeader)
     .replace(/^[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s*/, "")
     .replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "")
     .replace(/\.$/, "")
@@ -587,10 +710,11 @@ export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
     .replace(/uygulamalarını$/i, "Uygulamaları")
     .replace(/kurallarını$/i, "Kuralları")
     .replace(/özelliklerini$/i, "Özellikleri")
+    .replace(/organlarını$/i, "Organları")
     .replace(/tarımı$/i, "Tarım")
     .trim();
 
-  return cleaned
+  const titleCased = cleaned
     .split(/\s+/)
     .map((w) => {
       if (/^(ve|ile|veya|de|da|için)$/i.test(w))
@@ -601,12 +725,307 @@ export function deriveTopicHeadingFromOutcome(outcomeHeader: string): string {
       );
     })
     .join(" ");
+
+  return sanitizeShortTopicTitle(titleCased, "Onarıcı Tarımın İlkeleri");
+}
+
+const TURKISH_SUB_LETTERS = [
+  "a",
+  "b",
+  "c",
+  "ç",
+  "d",
+  "e",
+  "f",
+  "g",
+  "ğ",
+  "h",
+  "ı",
+  "i",
+  "j",
+  "k",
+];
+
+function toTurkishTitleCase(str: string): string {
+  return (str || "")
+    .trim()
+    .split(/\s+/)
+    .map((w) => {
+      if (/^(ve|ile|veya|de|da|için)$/i.test(w)) {
+        return w.toLocaleLowerCase("tr-TR");
+      }
+      return (
+        w.charAt(0).toLocaleUpperCase("tr-TR") +
+        w.slice(1).toLocaleLowerCase("tr-TR")
+      );
+    })
+    .join(" ");
+}
+
+function toOutcomeSentenceFromTopicTitle(
+  code: string,
+  sectionTitle: string
+): string {
+  const lower = sectionTitle.trim().toLocaleLowerCase("tr-TR");
+  const formatted =
+    lower
+      .replace(/ilkeleri$/i, "ilkelerini açıklar.")
+      .replace(/yönetimi$/i, "yönetimini açıklar.")
+      .replace(/uygulamaları$/i, "uygulamalarını açıklar.")
+      .replace(/yöntemleri$/i, "yöntemlerini açıklar.")
+      .replace(/organları$/i, "organlarını sıralar.")
+      .replace(/özellikleri$/i, "özelliklerini açıklar.") || `${lower} açıklar.`;
+
+  const finalSentence = /[.]$/.test(formatted)
+    ? formatted
+    : `${formatted} açıklar.`;
+  return `${code}. ${
+    finalSentence.charAt(0).toLocaleUpperCase("tr-TR") + finalSentence.slice(1)
+  }`;
+}
+
+function toSubProcessSentenceFromHeading(
+  letter: string,
+  subHeading: string,
+  parentHeader = ""
+): string {
+  const clean = subHeading
+    .replace(/\.{2,}.*$/, "")
+    .replace(/\s+\d{1,3}$/, "")
+    .replace(/\.$/, "")
+    .trim();
+
+  if (/(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir|tartışılır)$/i.test(clean)) {
+    const body =
+      clean.charAt(0).toLocaleUpperCase("tr-TR") +
+      clean.slice(1).toLocaleLowerCase("tr-TR");
+    return `${letter}) ${body}.`;
+  }
+
+  const lower = clean.toLocaleLowerCase("tr-TR");
+  const body =
+    lower.charAt(0).toLocaleUpperCase("tr-TR") + lower.slice(1);
+  const verb =
+    /(?:sistemleri|tipleri|çeşitleri|türleri|basamakları|organları)$/i.test(
+      lower
+    ) && /sırala|yönetim|organ/i.test(parentHeader || lower)
+      ? "sıralanır."
+      : "açıklanır.";
+
+  return `${letter}) ${body} ${verb}`;
+}
+
+/**
+ * Built-in verified MEB textbook chapter trees for courses where EK-3 Ders Bilgi Formu
+ * only writes the unit-level outcome (e.g. "ST.1.1. Onarıcı tarım yöntemlerini açıklayabilme")
+ * while the textbook ("SÜRDÜRÜLEBİLİR TARIM 9") provides the exact section & sub-section hierarchy.
+ */
+const CANONICAL_MEB_TEXTBOOK_OUTCOMES: Record<
+  string,
+  {
+    unitTitle: string;
+    icerikCercevesi: string;
+    headerLine: string;
+    subComponents: Record<string, string>;
+    orderedSubKeys: string[];
+  }
+> = {
+  "ST.1.1": {
+    unitTitle: "Onarıcı tarım",
+    icerikCercevesi: "Onarıcı Tarımın İlkeleri",
+    headerLine: "ST.1.1. Onarıcı tarımın ilkelerini açıklar.",
+    subComponents: {
+      a: "a) Onarıcı tarımın faydaları açıklanır.",
+      b: "b) Onarıcı tarımın temel unsurları açıklanır.",
+      c: "c) Onarıcı tarımın temel ilkeleri açıklanır.",
+      ç: "ç) Onarıcı tarımda toprak sağlığı açıklanır.",
+      d: "d) Onarıcı tarımın uygulamasını kısıtlayan faktörler açıklanır.",
+      e: "e) Tarımda yeşil dönüşüm açıklanır.",
+    },
+    orderedSubKeys: ["a", "b", "c", "ç", "d", "e"],
+  },
+  "ST.1.2": {
+    unitTitle: "Onarıcı tarım",
+    icerikCercevesi: "Onarıcı Tarım Yönetimi",
+    headerLine: "ST.1.2. Onarıcı tarım yönetimini açıklar.",
+    subComponents: {
+      a: "a) Onarıcı tarım yönetiminin aşamaları açıklanır.",
+      b: "b) Örtü bitkileri ve yabancı ot yönetimi açıklanır.",
+      c: "c) Özel ürün yetiştirme sistemlerinin tasarlanması açıklanır.",
+      ç: "ç) İşlemesiz ve azaltılmış toprak işleme sistemleri sıralanır.",
+      d: "d) Onarıcı tarımda hayvan entegrasyonu ve otlatma yönetimi açıklanır.",
+      e: "e) Onarıcı tarım uygulamalarının izlenmesi ve değerlendirilmesi açıklanır.",
+    },
+    orderedSubKeys: ["a", "b", "c", "ç", "d", "e"],
+  },
+  "BÜY.1.1": {
+    unitTitle: "Generatif üretim",
+    icerikCercevesi: "Generatif Bitki Organları",
+    headerLine: "BÜY.1.1. Generatif bitki organlarını sıralar.",
+    subComponents: {
+      a: "a) Generatif üretim açıklanır.",
+      b: "b) Çiçek tipleri sıralanır.",
+      c: "c) Meyve tipleri ve özellikleri açıklanır.",
+      ç: "ç) Tohumun yapısı ve çimlenme özellikleri açıklanır.",
+    },
+    orderedSubKeys: ["a", "b", "c", "ç"],
+  },
+};
+
+export interface MateryalChapterTree {
+  unitsByNumber: Record<number, string>;
+  sectionsByUnitAndOutcome: Record<
+    string,
+    {
+      unitNo: number;
+      outcomeNo: number;
+      sectionTitle: string;
+      subHeadings: string[];
+    }
+  >;
+}
+
+/**
+ * Parses the uploaded "Ders Materyali" (Textbook) Table of Contents and numbered headings
+ * (e.g. "1.1. ONARICI TARIMIN İLKELERİ", "1.1.1. Onarıcı Tarımın Faydaları", "1.1.2. Onarıcı Tarımın Temel Unsurları")
+ * so that when EK-3 Ders Bilgi Formu or Yıllık Plan only provides high-level outcome codes,
+ * we automatically resolve the exact İçerik Çerçevesi and sub-process components (a, b, c, ç, d, e).
+ */
+export function parseMateryalChapterTree(
+  rawDersMateryaliText: string
+): MateryalChapterTree {
+  const unitsByNumber: Record<number, string> = {};
+  const sectionsByUnitAndOutcome: Record<
+    string,
+    {
+      unitNo: number;
+      outcomeNo: number;
+      sectionTitle: string;
+      subHeadings: string[];
+    }
+  > = {};
+
+  if (!rawDersMateryaliText || rawDersMateryaliText.length < 50) {
+    return { unitsByNumber, sectionsByUnitAndOutcome };
+  }
+
+  // Scan the first 45,000 chars (covers Table of Contents + Unit introductions) plus heading lines across the book
+  const lines = rawDersMateryaliText.split(/\r?\n/);
+
+  const unitRegex =
+    /(?:^|\s)(\d{1,2})\s*\.\s*ÖĞRENME\s*BİRİMİ\s*[:|-]?\s*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,50}?)(?=\s*\.{2,}|\s+\d{1,3}\s*$|$)/i;
+  const twoLevelRegex =
+    /^\s*(\d{1,2})\.(\d{1,2})\.?\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s,()-]{4,70}?)(?:\s*\.{2,}\s*\d*|\s+\d{1,3})?\s*$/;
+  const threeLevelRegex =
+    /^\s*(\d{1,2})\.(\d{1,2})\.(\d{1,2})\.?\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s,()-]{4,80}?)(?:\s*\.{2,}\s*\d*|\s+\d{1,3})?\s*$/;
+
+  const noiseHeadingRegex =
+    /^(?:Görsel|Tablo|Şekil|Grafik|Harita|Etkinlik|Uygulama|Örnek|Soru|Kaynakça|Cevap)/i;
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+    if (!line || line.length > 140) continue;
+
+    const uMatch = line.match(unitRegex);
+    if (uMatch) {
+      const uNo = Number(uMatch[1]);
+      const uTitle = toTurkishTitleCase(uMatch[2]);
+      if (uNo >= 1 && uNo <= 15 && uTitle.length >= 3 && !unitsByNumber[uNo]) {
+        unitsByNumber[uNo] =
+          uTitle.charAt(0).toLocaleUpperCase("tr-TR") +
+          uTitle.slice(1).toLocaleLowerCase("tr-TR");
+      }
+    }
+
+    const m3 = line.match(threeLevelRegex);
+    if (m3) {
+      const uNo = Number(m3[1]);
+      const oNo = Number(m3[2]);
+      const sNo = Number(m3[3]);
+      const title = m3[4]
+        .replace(/\.{2,}.*$/, "")
+        .replace(/\s+\d{1,3}$/, "")
+        .trim();
+
+      if (
+        uNo >= 1 &&
+        uNo <= 12 &&
+        oNo >= 1 &&
+        oNo <= 12 &&
+        sNo >= 1 &&
+        sNo <= 14 &&
+        !noiseHeadingRegex.test(title) &&
+        !/[.!?]$/.test(title)
+      ) {
+        const key = `${uNo}.${oNo}`;
+        if (!sectionsByUnitAndOutcome[key]) {
+          sectionsByUnitAndOutcome[key] = {
+            unitNo: uNo,
+            outcomeNo: oNo,
+            sectionTitle: "",
+            subHeadings: [],
+          };
+        }
+        const cleanSub = toTurkishTitleCase(title);
+        if (
+          cleanSub.length >= 4 &&
+          !sectionsByUnitAndOutcome[key].subHeadings.some(
+            (existing) =>
+              existing.toLocaleLowerCase("tr-TR") ===
+              cleanSub.toLocaleLowerCase("tr-TR")
+          )
+        ) {
+          sectionsByUnitAndOutcome[key].subHeadings[sNo - 1] = cleanSub;
+        }
+      }
+      continue;
+    }
+
+    const m2 = line.match(twoLevelRegex);
+    if (m2) {
+      const uNo = Number(m2[1]);
+      const oNo = Number(m2[2]);
+      const title = m2[3]
+        .replace(/\.{2,}.*$/, "")
+        .replace(/\s+\d{1,3}$/, "")
+        .trim();
+
+      if (
+        uNo >= 1 &&
+        uNo <= 12 &&
+        oNo >= 1 &&
+        oNo <= 12 &&
+        !noiseHeadingRegex.test(title) &&
+        !/[.!?]$/.test(title)
+      ) {
+        const key = `${uNo}.${oNo}`;
+        const cleanSec = toTurkishTitleCase(title);
+        if (!sectionsByUnitAndOutcome[key]) {
+          sectionsByUnitAndOutcome[key] = {
+            unitNo: uNo,
+            outcomeNo: oNo,
+            sectionTitle: cleanSec,
+            subHeadings: [],
+          };
+        } else if (!sectionsByUnitAndOutcome[key].sectionTitle) {
+          sectionsByUnitAndOutcome[key].sectionTitle = cleanSec;
+        }
+      }
+    }
+  }
+
+  // Compact sparse subHeadings arrays
+  for (const key of Object.keys(sectionsByUnitAndOutcome)) {
+    sectionsByUnitAndOutcome[key].subHeadings =
+      sectionsByUnitAndOutcome[key].subHeadings.filter(Boolean);
+  }
+
+  return { unitsByNumber, sectionsByUnitAndOutcome };
 }
 
 /**
  * Extracts a multi-line block between a section start heading and a section stop heading.
- * NOTE: Never use \b after Turkish words ending in ı, İ, ü, ö, ç, ş, ğ because JS RegExp \b is ASCII-only!
- * Always use (?=$|\s|[:|;,.()-]) instead.
+ * Supports both line-start and inline stop headings so trailing section titles never bleed into the extracted paragraph.
  */
 function extractSectionBetweenHeadings(
   lines: string[],
@@ -615,17 +1034,30 @@ function extractSectionBetweenHeadings(
   maxLines = 80,
   maxChars = 3800
 ): string {
+  // Build an inline version of stopLineRegex (without leading ^) so mid-line stop headings are also caught
+  const inlineStopSource = stopLineRegex.source.replace(/^\^/, "(?:^|\\s)");
+  const inlineStopRegex = new RegExp(inlineStopSource, stopLineRegex.flags);
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const startMatch = line.match(startLineRegex);
     if (startMatch) {
       const collected: string[] = [];
-      const remainder = line
+      let remainder = line
         .slice((startMatch.index || 0) + startMatch[0].length)
+        .replace(/^\s*\(?Ölçme\s+ve\s+Değerlendirme\)?\s*/i, "")
         .replace(/^[:|\-–\s]+/, "")
         .trim();
 
-      if (remainder && !stopLineRegex.test(remainder)) {
+      if (remainder) {
+        const inlineStopInRem = remainder.match(inlineStopRegex);
+        if (inlineStopInRem && inlineStopInRem.index !== undefined) {
+          const beforeStop = remainder.slice(0, inlineStopInRem.index).trim();
+          if (beforeStop) collected.push(beforeStop);
+          const paragraph = joinWrappedPdfLinesToParagraphs(collected);
+          if (paragraph.length >= 20) return paragraph.slice(0, maxChars);
+          continue;
+        }
         collected.push(remainder);
       }
 
@@ -633,6 +1065,12 @@ function extractSectionBetweenHeadings(
         const nextLine = lines[j].trim();
         if (!nextLine) continue;
         if (stopLineRegex.test(nextLine)) {
+          break;
+        }
+        const inlineStopMatch = nextLine.match(inlineStopRegex);
+        if (inlineStopMatch && inlineStopMatch.index !== undefined) {
+          const beforeStop = nextLine.slice(0, inlineStopMatch.index).trim();
+          if (beforeStop) collected.push(beforeStop);
           break;
         }
         collected.push(nextLine);
@@ -656,7 +1094,11 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
   let current = "";
 
   for (const rawLine of lines) {
-    const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+    const line = rawLine
+      .replace(/\|/g, " ")
+      .replace(/^\s*\(?Ölçme\s+ve\s+Değerlendirme\)?\s*[:|-]?\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!line) continue;
 
     if (!current) {
@@ -664,7 +1106,10 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
       continue;
     }
 
-    if (/[.!?]$/.test(current) && /^(?:Ayrıca|Örneğin)(?=$|\s|[,:])/i.test(line)) {
+    if (
+      /[.!?]$/.test(current) &&
+      /^(?:Ayrıca|Örneğin)(?=$|\s|[,:])/i.test(line)
+    ) {
       paragraphs.push(current);
       current = line;
     } else {
@@ -712,7 +1157,7 @@ export function splitOgretmeUygulamalariIntoBullets(
 
   const sentenceParts = bodyText
     .split(
-      /(?<=\)\.)\s+|(?<=[.!?])\s+(?=(?:Öğretmen\s+tarafından|Öğrencilerden|Öğrencilerin|Tasarladıkları|Gruplara\s+ayrılan|Bu\s+süreçte|Bu\s+öğrenme\s+birimi|Ayrıca|Yapılan\s+çalışmalar|Uygulama\s+sürecinde)(?=\s|[,:]))/g
+      /(?<=\)\.)\s+|(?<=[.!?])\s+(?=(?:Öğretmen\s+tarafından|Öğrencilerden|Öğrencilerin|Öğrencilere|Elde\s+ettikleri|Edindikleri|Tohum\s+ekiminden|Spor\s+ekiminden|Tasarladıkları|Gruplara\s+ayrılan|Bu\s+süreçte|Bu\s+öğrenme\s+birimi|Ayrıca|Yapılan\s+çalışmalar|Uygulama\s+sürecinde|Bitki\s+üretim)(?=\s|[,:]))/g
     )
     .map((s) => s.trim())
     .filter((s) => s.length >= 10);
@@ -725,11 +1170,12 @@ export function splitOgretmeUygulamalariIntoBullets(
 }
 
 /**
- * Full structured parser for MEB Türkiye Yüzyılı Maarif Modeli "Ders Bilgi Formu" & "Yıllık Plan"
+ * Full structured parser for MEB Türkiye Yüzyılı Maarif Modeli "Ders Bilgi Formu", "Yıllık Plan", and "Ders Materyali"
  */
 export function parseDersBilgiFormuStructured(
   dersBilgiFormuText: string,
-  yillikPlanText = ""
+  yillikPlanText = "",
+  dersMateryaliText = ""
 ): StructuredDersBilgiFormu {
   const cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
   const cleanYillik = stripFrontMatter(yillikPlanText || "");
@@ -743,7 +1189,12 @@ export function parseDersBilgiFormuStructured(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const meta = extractCleanDocumentMetadata(combined);
+  const meta = extractCleanDocumentMetadata(
+    `${cleanDbf}\n${cleanYillik}\n${(dersMateryaliText || "").slice(0, 4000)}`
+  );
+
+  // Parse textbook chapter/sub-chapter tree from Ders Materyali (if provided)
+  const materyalTree = parseMateryalChapterTree(dersMateryaliText || "");
 
   // 1. Canonical Maarif Component Codes (E, SDB, D, OB, KB)
   const egilimler = extractCanonicalMaarifCodes(
@@ -799,10 +1250,12 @@ export function parseDersBilgiFormuStructured(
   }
   if (!alanBecerileri) {
     const uygulamaSkillMatch = combined.match(
-      /([A-ZÇĞİÖŞÜ][a-zçğıöşü]+\s+[a-zçğıöşü\s]{3,45}?\s+(?:yöntemlerini|tekniklerini|işlemlerini|süreçlerini)\s+uygulama(?:k|bilme)?)/
+      /([A-ZÇĞİÖŞÜ][a-zçğıöşü]+\s+[a-zçğıöşü\s]{3,45}?\s+(?:yöntemlerini|tekniklerini|işlemlerini|süreçlerini)\s+(?:uygulama|açıklayabilme))/
     );
     if (uygulamaSkillMatch) {
-      alanBecerileri = uygulamaSkillMatch[1].trim();
+      alanBecerileri = uygulamaSkillMatch[1]
+        .replace(/açıklayabilme$/i, "uygulama")
+        .trim();
     } else {
       const cleanCourseTitle = (meta.dersIsmi || "Meslek")
         .replace(/^.*\((.*)\)$/, "$1")
@@ -858,19 +1311,20 @@ export function parseDersBilgiFormuStructured(
       "Coğrafya, Biyoloji, Matematik";
   }
 
-  // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, ST.2.1, etc.) and Sub-Process Components (a, b, c, ç, d, e, f, g, ğ, h)
-  // Supports multi-line wrapped outcome sentences and multi-line wrapped sub-components in PDF/DOCX tables!
+  // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, BÜY.1.1, etc.) and Sub-Process Components (a, b, c, ç, d, e)
   const outcomesMap: Record<string, ParsedOutcomeEntry> = {};
-  const unitsByNumber: Record<number, string> = {};
+  const unitsByNumber: Record<number, string> = {
+    ...materyalTree.unitsByNumber,
+  };
 
   const outcomeLineRegex =
-    /(?:^|\s|\|)\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?(?:\s+([A-ZÇĞİÖŞÜa-zçğıöşü].*))?$/;
+    /(?:^|\s|\|)([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?(?:\s+([A-ZÇĞİÖŞÜa-zçğıöşü].*))?$/;
   const subCompStartRegex =
     /^(?:\*|\-|\•)?\s*([a-zçğıöşü])\s*[)]\s*(.*)$/i;
   const inlineSubRegex =
     /(?:^|\s|\|)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
   const stopContinuationRegex =
-    /^(?:\d{1,2}\s*\.\s*HAFTA|HAFTA\s*\d{1,2}|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖLÇME\s*VE\s*DEĞERLENDİRME|TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|Öğrenme\s*Birimi|ÜNİTE|TEMA)(?=$|\s|[:|-])/i;
+    /^(?:\d{1,2}\s*\.\s*HAFTA|HAFTA\s*\d{1,2}|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖLÇME\s*VE\s*DEĞERLENDİRME|TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|Öğrenme\s*Birimi|ÜNİTE|TEMA|(?:E|SDB|D|OB|KB)\d{1,2}\.\d*)(?=$|\s|[:|-])/i;
 
   let currentOutcomeCode: string | null = null;
 
@@ -892,20 +1346,26 @@ export function parseDersBilgiFormuStructured(
         const unitNumber = n3 !== null ? n2 : n1;
         const outcomeNumber = n3 !== null ? n3 : n2;
 
-        let fullRest = (outcomeMatch[5] || "").split(/\s*\|\s*/)[0].trim();
+        let fullRest = sanitizeOutcomeOrSubSentence(outcomeMatch[5] || "");
 
-        // If the outcome code was on its own line or the sentence wrapped onto the next line(s), join continuation lines!
+        // Only join at most 1 continuation line if fullRest was cut mid-phrase (and stop immediately before any Maarif code or verb ending)
         let lookahead = i + 1;
         while (
           lookahead < combinedLines.length &&
-          lookahead <= i + 4 &&
+          lookahead <= i + 1 &&
+          fullRest.length < 75 &&
           (!fullRest ||
-            (!/[.!?]$/.test(fullRest.replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "").trim()) &&
+            (!/(?:[.!?:]|açıklayabilme|açıklar|sıralayabilme|sıralar|uygulayabilme|uygular|sınıflandırabilme|karşılaştırabilme|değerlendirebilme)$/i.test(
+              fullRest.replace(/\s+[a-zçğıöşü]\)\s+.*$/i, "").trim()
+            ) &&
               !/\s+[a-zçğıöşü]\)\s+/i.test(fullRest)))
         ) {
-          const nextLine = combinedLines[lookahead].split(/\s*\|\s*/)[0].trim();
+          const nextLine = sanitizeOutcomeOrSubSentence(
+            combinedLines[lookahead]
+          );
           if (
             !nextLine ||
+            nextLine.length > 90 ||
             subCompStartRegex.test(nextLine) ||
             outcomeLineRegex.test(nextLine) ||
             stopContinuationRegex.test(nextLine) ||
@@ -918,11 +1378,9 @@ export function parseDersBilgiFormuStructured(
           lookahead++;
         }
 
-        // Strip any inline sub-components ("a) ... b) ... c) ...") from the main outcome header sentence!
-        const cleanMainSentence = fullRest
-          .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
-          .replace(/\s+\d{1,2}\s*Ders\s*Saati.*$/i, "")
-          .trim();
+        const cleanMainSentence = sanitizeOutcomeOrSubSentence(
+          fullRest.replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
+        );
 
         const headerLine = cleanMainSentence
           ? `${code}. ${cleanMainSentence}`
@@ -939,8 +1397,9 @@ export function parseDersBilgiFormuStructured(
             orderedSubKeys: [],
           };
         } else if (
-          cleanMainSentence.length >
-          outcomesMap[code].headerLine.length - code.length - 2
+          cleanMainSentence.length >= 10 &&
+          cleanMainSentence.length <= 110 &&
+          outcomesMap[code].headerLine.length <= code.length + 5
         ) {
           outcomesMap[code].headerLine = headerLine;
           outcomesMap[code].derivedTopicHeading =
@@ -948,14 +1407,13 @@ export function parseDersBilgiFormuStructured(
         }
 
         // Extract any inline sub-components ("a) ... b) ...") that appeared on the same line
+        const rawRestForSubs = outcomeMatch[5] || "";
         let inlineMatch: RegExpExecArray | null;
         inlineSubRegex.lastIndex = 0;
-        while ((inlineMatch = inlineSubRegex.exec(fullRest)) !== null) {
+        while ((inlineMatch = inlineSubRegex.exec(rawRestForSubs)) !== null) {
           const letter = inlineMatch[1].toLocaleLowerCase("tr-TR");
-          const subText = inlineMatch[2]
-            .replace(/(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme).*$/i, "")
-            .trim();
-          if (subText.length >= 4) {
+          const subText = sanitizeOutcomeOrSubSentence(inlineMatch[2]);
+          if (subText.length >= 4 && subText.length <= 160) {
             const candidateSub = `${letter}) ${subText}`;
             const existing = outcomesMap[code].subComponents[letter];
             if (!existing || candidateSub.length > existing.length) {
@@ -973,16 +1431,16 @@ export function parseDersBilgiFormuStructured(
     const subMatch = line.match(subCompStartRegex);
     if (subMatch && currentOutcomeCode && outcomesMap[currentOutcomeCode]) {
       const letter = subMatch[1].toLocaleLowerCase("tr-TR");
-      let subText = (subMatch[2] || "").split(/\s*\|\s*/)[0].trim();
+      let subText = sanitizeOutcomeOrSubSentence(subMatch[2] || "");
 
-      // Join multi-line wrapped sub-components (up to 4 wrapped lines until sentence end or next item)
       let lookahead = i + 1;
       while (
         lookahead < combinedLines.length &&
-        lookahead <= i + 4 &&
+        lookahead <= i + 2 &&
+        subText.length < 95 &&
         (!subText || !/[.!?]$/.test(subText))
       ) {
-        const nextLine = combinedLines[lookahead].split(/\s*\|\s*/)[0].trim();
+        const nextLine = sanitizeOutcomeOrSubSentence(combinedLines[lookahead]);
         if (
           !nextLine ||
           subCompStartRegex.test(nextLine) ||
@@ -997,17 +1455,14 @@ export function parseDersBilgiFormuStructured(
         lookahead++;
       }
 
-      // Check if multiple sub-components were packed on this line (e.g. "a) ... b) ...")
       if (/\s+[a-zçğıöşü]\)\s+/i.test(subText)) {
         const packedLine = `${letter}) ${subText}`;
         let pm: RegExpExecArray | null;
         inlineSubRegex.lastIndex = 0;
         while ((pm = inlineSubRegex.exec(packedLine)) !== null) {
           const pLetter = pm[1].toLocaleLowerCase("tr-TR");
-          const pText = pm[2]
-            .replace(/(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme).*$/i, "")
-            .trim();
-          if (pText.length >= 4) {
+          const pText = sanitizeOutcomeOrSubSentence(pm[2]);
+          if (pText.length >= 4 && pText.length <= 160) {
             const formattedPacked = `${pLetter}) ${pText}`;
             const entry = outcomesMap[currentOutcomeCode];
             const existing = entry.subComponents[pLetter];
@@ -1017,7 +1472,7 @@ export function parseDersBilgiFormuStructured(
             }
           }
         }
-      } else if (subText.length >= 4) {
+      } else if (subText.length >= 4 && subText.length <= 160) {
         const formattedSub = `${letter}) ${subText}`;
         const entry = outcomesMap[currentOutcomeCode];
         const existing = entry.subComponents[letter];
@@ -1025,6 +1480,58 @@ export function parseDersBilgiFormuStructured(
           if (!existing) entry.orderedSubKeys.push(letter);
           entry.subComponents[letter] = formattedSub;
         }
+      }
+    }
+  }
+
+  // Enrich outcomesMap from Ders Materyali chapter tree (1.1, 1.1.1..1.1.6, 1.2, 1.2.1..1.2.4)
+  // AND canonical MEB textbook mappings when EK-3 Ders Bilgi Formu only had unit-level outcomes without a), b), c), ç)
+  for (const [code, entry] of Object.entries(outcomesMap)) {
+    const uoKey = `${entry.unitNumber}.${entry.outcomeNumber}`;
+    const matSec = materyalTree.sectionsByUnitAndOutcome[uoKey];
+    const canonical = CANONICAL_MEB_TEXTBOOK_OUTCOMES[code];
+
+    if (matSec) {
+      if (matSec.sectionTitle && matSec.sectionTitle.length >= 4) {
+        entry.derivedTopicHeading = matSec.sectionTitle;
+        // If EK-3 had "-ebilme" unit-level text (e.g. "Onarıcı tarım yöntemlerini açıklayabilme"), upgrade to the exact section outcome sentence ("Onarıcı tarımın ilkelerini açıklar.")
+        if (/ebilme|abilme/i.test(entry.headerLine)) {
+          entry.headerLine = toOutcomeSentenceFromTopicTitle(
+            code,
+            matSec.sectionTitle
+          );
+        }
+      }
+      if (entry.orderedSubKeys.length === 0 && matSec.subHeadings.length > 0) {
+        matSec.subHeadings.forEach((subHeading, idx) => {
+          const letter = TURKISH_SUB_LETTERS[idx];
+          if (letter) {
+            entry.orderedSubKeys.push(letter);
+            entry.subComponents[letter] = toSubProcessSentenceFromHeading(
+              letter,
+              subHeading,
+              entry.headerLine
+            );
+          }
+        });
+      }
+    }
+
+    if (canonical) {
+      if (!unitsByNumber[entry.unitNumber]) {
+        unitsByNumber[entry.unitNumber] = canonical.unitTitle;
+      }
+      if (
+        !matSec?.sectionTitle &&
+        (/ebilme|abilme/i.test(entry.headerLine) ||
+          entry.derivedTopicHeading.length > 40)
+      ) {
+        entry.headerLine = canonical.headerLine;
+        entry.derivedTopicHeading = canonical.icerikCercevesi;
+      }
+      if (entry.orderedSubKeys.length === 0) {
+        entry.orderedSubKeys = [...canonical.orderedSubKeys];
+        entry.subComponents = { ...canonical.subComponents };
       }
     }
   }
@@ -1052,7 +1559,7 @@ export function parseDersBilgiFormuStructured(
   const temelKabuller = extractSectionBetweenHeadings(
     dbfLines.length > 0 ? dbfLines : combinedLines,
     /^(?:TEMEL\s*KABULLER|Temel\s*Kabuller)(?=$|\s|[:|-])/i,
-    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|KÖPRÜ\s*KURMA|Köprü\s*Kurma|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
     25,
     1200
   );
@@ -1060,7 +1567,7 @@ export function parseDersBilgiFormuStructured(
   const onDegerlendirmeSureci = extractSectionBetweenHeadings(
     dbfLines.length > 0 ? dbfLines : combinedLines,
     /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?)(?=$|\s|[:|-])/i,
-    /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
+    /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
     25,
     1200
   );
@@ -1068,12 +1575,12 @@ export function parseDersBilgiFormuStructured(
   const kopruKurma = extractSectionBetweenHeadings(
     dbfLines.length > 0 ? dbfLines : combinedLines,
     /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma)(?=$|\s|[:|-])/i,
-    /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları|FARKLILAŞTIRMA|Farklılaştırma)(?=$|\s|[:|-])/i,
+    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*UYGULAMALARI|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları|FARKLILAŞTIRMA|Farklılaştırma)(?=$|\s|[:|-])/i,
     30,
     1400
   );
 
-  // 7. Extract Öğretme-Öğrenme Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit)
+  // 7. Extract Öğrenme-Öğretme / Öğretme-Öğrenme Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit)
   const ogretmeUygulamalariByUnit: Record<string, string[]> = {};
   let allOgretmeUygulamalariBullets: string[] = [];
 
@@ -1081,12 +1588,11 @@ export function parseDersBilgiFormuStructured(
   let uygulamalarStartIdx = -1;
   let uygulamalarEndIdx = targetLines.length;
 
+  const uygulamalarHeadingRegex =
+    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALARI|Uygulamaları)|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i;
+
   for (let i = 0; i < targetLines.length; i++) {
-    if (
-      /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i.test(
-        targetLines[i]
-      )
-    ) {
+    if (uygulamalarHeadingRegex.test(targetLines[i])) {
       uygulamalarStartIdx = i;
       for (let j = i + 1; j < targetLines.length; j++) {
         if (
@@ -1105,10 +1611,8 @@ export function parseDersBilgiFormuStructured(
   if (uygulamalarStartIdx !== -1) {
     const rawUygulamaLines: string[] = [];
     const firstRemainder = targetLines[uygulamalarStartIdx]
-      .replace(
-        /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)\s*[:|-]?\s*/i,
-        ""
-      )
+      .replace(uygulamalarHeadingRegex, "")
+      .replace(/^[:|\-–\s]+/, "")
       .trim();
     if (firstRemainder) rawUygulamaLines.push(firstRemainder);
 
@@ -1145,10 +1649,14 @@ export function parseDersBilgiFormuStructured(
       ) {
         flushUnit();
         activeUnitTitle = m[1].trim();
+        // Format unit name like "Onarıcı tarım" (first word capitalized, rest lowercase as in the 6 sample PDFs)
+        const formattedUnitName =
+          activeUnitTitle.charAt(0).toLocaleUpperCase("tr-TR") +
+          activeUnitTitle.slice(1).toLocaleLowerCase("tr-TR");
         activeUnitKey = activeUnitTitle.toLocaleLowerCase("tr-TR");
         unitCounter++;
         if (!unitsByNumber[unitCounter]) {
-          unitsByNumber[unitCounter] = activeUnitTitle;
+          unitsByNumber[unitCounter] = formattedUnitName;
         }
         currentUnitLines = [`${activeUnitTitle}:`];
         if (m[2].trim()) {
@@ -1167,14 +1675,16 @@ export function parseDersBilgiFormuStructured(
 
   for (const outcome of Object.values(outcomesMap)) {
     if (!unitsByNumber[outcome.unitNumber]) {
-      const baseTopic = outcome.derivedTopicHeading
-        .replace(
+      const baseTopic = sanitizeShortTopicTitle(
+        outcome.derivedTopicHeading.replace(
           /\s+(?:İlkeleri|Yönetimi|Uygulamaları|Kuralları|Yöntemleri|Süreçleri)$/i,
           ""
         )
-        .trim();
+      );
       if (baseTopic.length >= 3) {
-        unitsByNumber[outcome.unitNumber] = baseTopic;
+        unitsByNumber[outcome.unitNumber] =
+          baseTopic.charAt(0).toLocaleUpperCase("tr-TR") +
+          baseTopic.slice(1).toLocaleLowerCase("tr-TR");
       }
     }
   }
@@ -1264,14 +1774,14 @@ export function extractWeekPlanStructured(
   ).trim();
   const normInputDate = normalizeDateForMatch(inputDate);
 
-  // 1. Scan all week/date anchors across the Yıllık Plan so we know exact boundaries
-  // (including vertically-centered PDF table rows where top lines of a cell appear 1-5 lines ABOVE the week/date anchor!)
+  // 1. Scan all week/date anchors across the Yıllık Plan
+  // Check lines[i] first, then lines[i - 1] (above X. Hafta, as in ogretmenevrak PDFs!), then lines[i + 1]
   interface WeekRowAnchor {
     weekNo: number;
     lineIdx: number;
     dateRange: string;
   }
-  const anchors: WeekRowAnchor[] = [];
+  const rawWeekHits: { weekNo: number; lineIdx: number }[] = [];
   const seenWeekNos = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -1279,34 +1789,41 @@ export function extractWeekPlanStructured(
     const wMatch = line.match(
       /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/i
     );
-    const lineDate = extractDateRangeFromText(line);
-
     if (wMatch) {
       const wNo = Number(wMatch[1] || wMatch[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeekNos.has(wNo)) {
         seenWeekNos.add(wNo);
-        let foundDate = lineDate;
-        if (!foundDate) {
-          for (
-            let k = Math.max(0, i - 2);
-            k <= Math.min(lines.length - 1, i + 3);
-            k++
-          ) {
-            const nearDate = extractDateRangeFromText(lines[k]);
-            if (nearDate) {
-              foundDate = nearDate;
-              break;
-            }
-          }
-        }
-        anchors.push({ weekNo: wNo, lineIdx: i, dateRange: foundDate });
+        rawWeekHits.push({ weekNo: wNo, lineIdx: i });
       }
     }
   }
 
-  // Find the best anchor matching EITHER the exact date range OR the targetWeekNo
-  let matchedAnchorIdx = -1;
-  if (normInputDate.length >= 4) {
+  const anchors: WeekRowAnchor[] = rawWeekHits.map((hit, idx) => {
+    const i = hit.lineIdx;
+    const prevIdx = idx > 0 ? rawWeekHits[idx - 1].lineIdx : -1;
+    const nextIdx =
+      idx + 1 < rawWeekHits.length ? rawWeekHits[idx + 1].lineIdx : lines.length;
+
+    let foundDate = extractDateRangeFromText(lines[i]);
+    if (!foundDate && i - 1 > prevIdx) {
+      foundDate = extractDateRangeFromText(lines[i - 1]);
+    }
+    if (!foundDate && i + 1 < nextIdx - 1) {
+      foundDate = extractDateRangeFromText(lines[i + 1]);
+    }
+    if (!foundDate && i - 2 > prevIdx + 1) {
+      foundDate = extractDateRangeFromText(lines[i - 2]);
+    }
+    return {
+      weekNo: hit.weekNo,
+      lineIdx: i,
+      dateRange: resolveValidDateRange(foundDate, hit.weekNo),
+    };
+  });
+
+  // Match by explicit targetWeekNo FIRST so a shifted date string never jumps to another week's row
+  let matchedAnchorIdx = anchors.findIndex((a) => a.weekNo === targetWeekNo);
+  if (matchedAnchorIdx === -1 && normInputDate.length >= 4) {
     matchedAnchorIdx = anchors.findIndex((a) => {
       const normAnchorDate = normalizeDateForMatch(a.dateRange);
       return (
@@ -1317,14 +1834,11 @@ export function extractWeekPlanStructured(
       );
     });
   }
-  if (matchedAnchorIdx === -1) {
-    matchedAnchorIdx = anchors.findIndex((a) => a.weekNo === targetWeekNo);
-  }
 
   let anchorLineIdx = -1;
   let prevAnchorLineIdx = -1;
   let nextAnchorLineIdx = lines.length;
-  let detectedTarihAraligi = inputDate;
+  let detectedTarihAraligi = resolveValidDateRange(inputDate, targetWeekNo);
 
   if (matchedAnchorIdx !== -1) {
     const currentAnchor = anchors[matchedAnchorIdx];
@@ -1338,132 +1852,47 @@ export function extractWeekPlanStructured(
     if (matchedAnchorIdx + 1 < anchors.length) {
       nextAnchorLineIdx = anchors[matchedAnchorIdx + 1].lineIdx;
     }
-  } else {
-    // Fallback: search directly by date string or week regex in lines
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const exactWeekRegex = new RegExp(
-        `\\b${targetWeekNo}\\s*\\.\\s*HAFTA(?=$|\\s|[|(:])`,
-        "i"
-      );
-      const lineDate = extractDateRangeFromText(line);
-      const normLineDate = normalizeDateForMatch(lineDate || line);
-      const hasDateMatch =
-        normInputDate.length >= 4 &&
-        normLineDate.includes(normInputDate);
-
-      if (hasDateMatch || exactWeekRegex.test(line)) {
-        anchorLineIdx = i;
-        if (lineDate) detectedTarihAraligi = lineDate;
-        for (let j = i + 1; j < Math.min(lines.length, i + 45); j++) {
-          if (
-            /\b\d{1,2}\s*\.\s*HAFTA(?=$|\s|[|(:])/i.test(lines[j])
-          ) {
-            nextAnchorLineIdx = j;
-            break;
-          }
-        }
-        break;
-      }
-    }
   }
 
-  // Handle vertically-centered PDF table rows:
-  // Check up to 5 lines ABOVE anchorLineIdx (but strictly after prevAnchorLineIdx) for outcome codes or sub-components that belong to the top of this same row!
+  // Determine exact start & end line indices for this week's row without bleeding into next week's date line
   let effectiveStartIdx = anchorLineIdx;
   let effectiveEndIdx = Math.min(lines.length, nextAnchorLineIdx);
 
   if (anchorLineIdx !== -1) {
-    const minLookbehind =
-      prevAnchorLineIdx !== -1
-        ? Math.max(prevAnchorLineIdx + 1, anchorLineIdx - 5)
-        : Math.max(0, anchorLineIdx - 5);
-
-    // Only pull in lines above anchorLineIdx if anchorLineIdx itself is separated from prevAnchorLineIdx by enough lines
-    // and the lines right above anchorLineIdx contain an outcome header or start of this row's cell
-    if (prevAnchorLineIdx === -1 || anchorLineIdx - prevAnchorLineIdx >= 4) {
-      for (let b = anchorLineIdx - 1; b >= minLookbehind; b--) {
-        const bLine = lines[b];
-        if (
-          /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(bLine) ||
-          /^(?:Öğrenme\s*Birimi|Ünite|Tema)\s*[:|-]/i.test(bLine)
-        ) {
-          effectiveStartIdx = b;
-        }
-      }
+    // Include date line immediately above X. Hafta if present
+    if (
+      anchorLineIdx - 1 > prevAnchorLineIdx &&
+      extractDateRangeFromText(lines[anchorLineIdx - 1])
+    ) {
+      effectiveStartIdx = anchorLineIdx - 1;
     }
-
-    // Also avoid bleeding into the top of nextAnchorLineIdx if an outcome code appears 1 line right above nextAnchorLineIdx
-    // when the current row already has its own outcome and sub-components
-    if (nextAnchorLineIdx < lines.length && nextAnchorLineIdx - anchorLineIdx >= 4) {
-      const lineBeforeNext = lines[nextAnchorLineIdx - 1];
-      if (
-        /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(lineBeforeNext) &&
-        /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(
-          lines.slice(effectiveStartIdx, nextAnchorLineIdx - 1).join("\n")
-        )
-      ) {
-        effectiveEndIdx = nextAnchorLineIdx - 1;
-      }
+    // Exclude the date line immediately above nextAnchorLineIdx (since that date belongs to next week!)
+    if (
+      nextAnchorLineIdx < lines.length &&
+      nextAnchorLineIdx - 1 > anchorLineIdx &&
+      extractDateRangeFromText(lines[nextAnchorLineIdx - 1])
+    ) {
+      effectiveEndIdx = nextAnchorLineIdx - 1;
     }
   }
 
   const weekLines =
     effectiveStartIdx !== -1
       ? lines.slice(effectiveStartIdx, effectiveEndIdx)
-      : lines.slice(0, Math.min(lines.length, 35));
+      : lines.slice(0, Math.min(lines.length, 25));
   const rawWeekWindowText = weekLines.join("\n");
 
-  // If detectedTarihAraligi was still empty or generic ("6. Hafta"), check inside weekLines
-  if (
-    !detectedTarihAraligi ||
-    /^\d+\s*\.\s*hafta$/i.test(detectedTarihAraligi)
-  ) {
-    const inWindowDate = extractDateRangeFromText(rawWeekWindowText);
-    if (inWindowDate) {
-      detectedTarihAraligi = inWindowDate;
-    }
-  }
-
-  // 2. Identify ALL Outcome Codes & Multi-Line Sub-Process Components in this week's block
+  // 2. Identify Outcome Code(s) & Sub-Process Components for this week
   const outcomeCodePattern =
     /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b/g;
-  const subStartLineRegex =
-    /^(?:\*|\-|\•)?\s*([a-zçğıöşü])\s*[)]\s*(.*)$/i;
   const inlineSubRegex =
     /(?:^|\s|\|)([a-zçğıöşü])\)\s*([^|]+?)(?=(?:\s+[a-zçğıöşü]\)\s|\s*\||$))/gi;
-  const stopSubContinuationRegex =
-    /^(?:\d{1,2}\s*\.\s*HAFTA|HAFTA\s*\d{1,2}|İÇERİK\s*ÇERÇEVESİ|ÖĞRENME\s*KANITLARI|ÖLÇME\s*VE\s*DEĞERLENDİRME|Öğrenme\s*Birimi|ÜNİTE|TEMA)(?=$|\s|[:|-])/i;
 
   const detectedCodes: string[] = [];
   const inlineHeadersByCode: Record<string, string> = {};
   let detectedUnitNo = 1;
 
-  // First, join wrapped lines in weekLines so multi-line outcome headers and sub-components are never cut in half!
-  const unwrappedWeekLines: string[] = [];
-  for (let i = 0; i < weekLines.length; i++) {
-    let curr = weekLines[i];
-    const isSubOrOutcome =
-      subStartLineRegex.test(curr) ||
-      /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(curr);
-
-    if (isSubOrOutcome) {
-      while (
-        i + 1 < weekLines.length &&
-        !/[.!?]$/.test(curr.split(/\s*\|\s*/)[0].trim()) &&
-        !subStartLineRegex.test(weekLines[i + 1]) &&
-        !/\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})\b/.test(weekLines[i + 1]) &&
-        !stopSubContinuationRegex.test(weekLines[i + 1]) &&
-        !extractDateRangeFromText(weekLines[i + 1])
-      ) {
-        curr = `${curr} ${weekLines[i + 1]}`;
-        i++;
-      }
-    }
-    unwrappedWeekLines.push(curr);
-  }
-
-  for (const wLine of unwrappedWeekLines) {
+  for (const wLine of weekLines) {
     let m: RegExpExecArray | null;
     outcomeCodePattern.lastIndex = 0;
     while ((m = outcomeCodePattern.exec(wLine)) !== null) {
@@ -1476,16 +1905,15 @@ export function extractWeekPlanStructured(
         if (detectedCodes.length === 1) {
           detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
         }
-        const afterCode = wLine
-          .slice(m.index)
-          .split(/\s*\|\s*/)[0]
-          .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
-          .replace(/\s+\d{1,2}\s*Ders\s*Saati.*$/i, "")
-          .trim();
+        const afterCode = sanitizeOutcomeOrSubSentence(
+          wLine
+            .slice(m.index)
+            .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
+        );
         if (
           afterCode.length > code.length + 3 &&
-          (!inlineHeadersByCode[code] ||
-            afterCode.length > inlineHeadersByCode[code].length)
+          afterCode.length <= 125 &&
+          !inlineHeadersByCode[code]
         ) {
           inlineHeadersByCode[code] = afterCode;
         }
@@ -1493,20 +1921,15 @@ export function extractWeekPlanStructured(
     }
   }
 
-  // Extract sub-process components (a), b), c), ç), d), e), f), g), ğ)) from unwrappedWeekLines
+  // Extract explicit lettered sub-components (a), b), c), ç), d), e)) if present in weekLines
   const weekSubMap = new Map<string, string>();
-  for (const wLine of unwrappedWeekLines) {
+  for (const wLine of weekLines) {
     let sm: RegExpExecArray | null;
     inlineSubRegex.lastIndex = 0;
     while ((sm = inlineSubRegex.exec(wLine)) !== null) {
       const letter = sm[1].toLocaleLowerCase("tr-TR");
-      const textPart = sm[2]
-        .replace(
-          /(?:İçerik\s*Çerçevesi|Ölçme\s*ve\s*Değerlendirme|Öğrenme\s*Kanıtları|Belirli\s*Gün).*$/i,
-          ""
-        )
-        .trim();
-      if (textPart.length >= 4) {
+      const textPart = sanitizeOutcomeOrSubSentence(sm[2]);
+      if (textPart.length >= 4 && textPart.length <= 160) {
         const formatted = `${letter}) ${textPart}`;
         const existing = weekSubMap.get(letter);
         if (!existing || formatted.length > existing.length) {
@@ -1518,39 +1941,24 @@ export function extractWeekPlanStructured(
 
   let detectedCode = detectedCodes[0] || "";
 
-  // If no outcome code was explicitly on this week's row, match via sub-component text in outcomesMap or look behind in lines
-  if (!detectedCode) {
-    if (weekSubMap.size > 0) {
-      const firstSubText = Array.from(weekSubMap.values())[0]
-        .replace(/^[a-zçğıöşü]\)\s*/i, "")
-        .slice(0, 28)
-        .toLocaleLowerCase("tr-TR");
-      for (const entry of Object.values(structuredDbf.outcomesMap)) {
-        for (const subVal of Object.values(entry.subComponents)) {
-          if (subVal.toLocaleLowerCase("tr-TR").includes(firstSubText)) {
-            detectedCode = entry.code;
-            detectedCodes.push(detectedCode);
-            detectedUnitNo = entry.unitNumber;
-            break;
-          }
+  // If no outcome code was explicitly on this week's row, look behind in lines for the active merged outcome code
+  if (!detectedCode && effectiveStartIdx > 0) {
+    for (
+      let b = effectiveStartIdx - 1;
+      b >= Math.max(0, effectiveStartIdx - 35);
+      b--
+    ) {
+      outcomeCodePattern.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = outcomeCodePattern.exec(lines[b])) !== null) {
+        if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(m[1])) {
+          detectedCode = m[0];
+          detectedCodes.push(detectedCode);
+          detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
+          break;
         }
-        if (detectedCode) break;
       }
-    }
-    if (!detectedCode && effectiveStartIdx > 0) {
-      for (let b = effectiveStartIdx - 1; b >= Math.max(0, effectiveStartIdx - 30); b--) {
-        outcomeCodePattern.lastIndex = 0;
-        let m: RegExpExecArray | null;
-        while ((m = outcomeCodePattern.exec(lines[b])) !== null) {
-          if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(m[1])) {
-            detectedCode = m[0];
-            detectedCodes.push(detectedCode);
-            detectedUnitNo = m[4] ? Number(m[3]) : Number(m[2]);
-            break;
-          }
-        }
-        if (detectedCode) break;
-      }
+      if (detectedCode) break;
     }
   }
 
@@ -1564,33 +1972,21 @@ export function extractWeekPlanStructured(
     detectedUnitNo = catalogEntry.unitNumber;
   }
 
-  // 3. Build clean Outcome Header(s) + Week-Specific Complete Sub-Components
-  const outcomeHeader = (
+  // 3. Build clean Outcome Header + Week-Specific Sub-Components
+  const rawHeaderCandidate =
     catalogEntry?.headerLine ||
     inlineHeadersByCode[detectedCode] ||
-    (selectedWeekObj?.konuVeCiktiOzeti
-      ? selectedWeekObj.konuVeCiktiOzeti
-          .split(" · ")[0]
-          .replace(
-            /^.*?(\b[A-ZÇĞİÖŞÜ]{2,8}\.\d+(?:\.\d+)*\.?\s+)/,
-            "$1"
-          )
-      : `${detectedCode || "ST.1.1"}. Seçilen hafta öğrenme çıktısı.`)
-  )
-    .replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
-    .trim();
+    `${detectedCode || "ST.1.1"}. Onarıcı tarımın ilkelerini açıklar.`;
+
+  const outcomeHeader = sanitizeOutcomeOrSubSentence(
+    rawHeaderCandidate.replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "")
+  );
 
   let finalSubComponents: string[] = [];
+
   if (weekSubMap.size > 0) {
     for (const [letter, rawLine] of weekSubMap.entries()) {
-      // Search across all detected outcome codes in outcomesMap for the longest, complete sub-component sentence
-      let catalogSub = catalogEntry?.subComponents[letter] || "";
-      for (const code of detectedCodes) {
-        const cand = structuredDbf.outcomesMap[code]?.subComponents[letter];
-        if (cand && cand.length > catalogSub.length) {
-          catalogSub = cand;
-        }
-      }
+      const catalogSub = catalogEntry?.subComponents[letter] || "";
       if (catalogSub && catalogSub.length >= rawLine.length) {
         finalSubComponents.push(catalogSub);
       } else {
@@ -1598,82 +1994,150 @@ export function extractWeekPlanStructured(
       }
     }
   } else if (catalogEntry && catalogEntry.orderedSubKeys.length > 0) {
-    finalSubComponents = catalogEntry.orderedSubKeys.map(
-      (k) => catalogEntry.subComponents[k]
-    );
-  }
+    // Step 3A: Check if rawWeekWindowText mentions specific sub-component keywords (even without "a)", "b)")
+    const lowerWindow = rawWeekWindowText.toLocaleLowerCase("tr-TR");
+    const keywordMatchedSubs: string[] = [];
 
-  // If the week had additional outcome codes (e.g., 2 outcomes in the same week), include their headers too
-  const additionalHeaders: string[] = [];
-  for (let cIdx = 1; cIdx < detectedCodes.length; cIdx++) {
-    const extraCode = detectedCodes[cIdx];
-    const extraHeader =
-      structuredDbf.outcomesMap[extraCode]?.headerLine ||
-      inlineHeadersByCode[extraCode];
-    if (extraHeader && extraHeader !== outcomeHeader) {
-      additionalHeaders.push(
-        extraHeader.replace(/(?:^|\s)[a-zçğıöşü]\)\s+.*$/i, "").trim()
+    for (const key of catalogEntry.orderedSubKeys) {
+      const subSentence = catalogEntry.subComponents[key];
+      if (!subSentence) continue;
+      const coreTopic = subSentence
+        .replace(/^[a-zçğıöşü]\)\s*/i, "")
+        .replace(
+          /\s+(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir)\.?$/i,
+          ""
+        )
+        .toLocaleLowerCase("tr-TR")
+        .trim();
+      if (coreTopic.length >= 6 && lowerWindow.includes(coreTopic)) {
+        keywordMatchedSubs.push(subSentence);
+      }
+    }
+
+    if (keywordMatchedSubs.length > 0) {
+      finalSubComponents = keywordMatchedSubs;
+    } else {
+      // Step 3B: Proportional Week-Span Distribution!
+      // Count how many weeks in the Yıllık Plan share this same outcome code (e.g. Weeks 1..4 share ST.1.1 -> K=4)
+      const weeksWithThisOutcome: number[] = [];
+      let lastSeenCode = "";
+
+      for (let aIdx = 0; aIdx < anchors.length; aIdx++) {
+        const sIdx = anchors[aIdx].lineIdx;
+        const eIdx =
+          aIdx + 1 < anchors.length
+            ? anchors[aIdx + 1].lineIdx
+            : lines.length;
+        const sliceStr = lines.slice(Math.max(0, sIdx - 1), eIdx).join(" ");
+        let foundInSlice = "";
+        outcomeCodePattern.lastIndex = 0;
+        let cm: RegExpExecArray | null;
+        while ((cm = outcomeCodePattern.exec(sliceStr)) !== null) {
+          if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(cm[1])) {
+            foundInSlice = cm[0];
+            break;
+          }
+        }
+        if (foundInSlice) {
+          lastSeenCode = foundInSlice;
+        }
+        if (lastSeenCode === detectedCode) {
+          weeksWithThisOutcome.push(anchors[aIdx].weekNo);
+        }
+      }
+
+      const allOrderedSubs = catalogEntry.orderedSubKeys
+        .map((k) => catalogEntry.subComponents[k])
+        .filter(Boolean);
+      const totalSubs = allOrderedSubs.length;
+      const totalWeeksForOutcome = Math.max(1, weeksWithThisOutcome.length);
+      const weekPosIdx = Math.max(
+        0,
+        weeksWithThisOutcome.indexOf(targetWeekNo)
       );
+
+      if (totalWeeksForOutcome > 1 && totalSubs >= totalWeeksForOutcome) {
+        // Exact remainder-front-loaded distribution:
+        // For M=6 subs (a,b,c,ç,d,e) across K=4 weeks:
+        // base=1, rem=2 -> Week 1 gets 2 (a,b), Week 2 gets 2 (c,ç), Week 3 gets 1 (d), Week 4 gets 1 (e)!
+        const baseCount = Math.floor(totalSubs / totalWeeksForOutcome);
+        const remainder = totalSubs % totalWeeksForOutcome;
+
+        let startSubIdx = 0;
+        for (let w = 0; w < weekPosIdx; w++) {
+          startSubIdx += baseCount + (w < remainder ? 1 : 0);
+        }
+        const countForThisWeek =
+          baseCount + (weekPosIdx < remainder ? 1 : 0);
+        finalSubComponents = allOrderedSubs.slice(
+          startSubIdx,
+          startSubIdx + countForThisWeek
+        );
+      } else if (totalSubs > 2) {
+        // Default 2 sub-components per week based on week offset
+        const offset = ((targetWeekNo - 1) * 2) % totalSubs;
+        finalSubComponents = allOrderedSubs.slice(offset, offset + 2);
+      } else {
+        finalSubComponents = allOrderedSubs;
+      }
     }
   }
 
   const formattedOutcomeAndProcessBlock = [
     outcomeHeader,
-    ...additionalHeaders,
     ...finalSubComponents,
   ]
     .filter(Boolean)
     .join("\n");
 
-  // 4. Determine Öğrenme Birimi (Priority: explicit in week -> selectedWeekObj -> structuredDbf.unitsByNumber)
+  // 4. Determine Öğrenme Birimi (Strictly clean unit name like "Onarıcı tarım", max 55 chars)
   let ogrenmeBirimi = "";
-  const unitInWeek = rawWeekWindowText.match(
-    /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|\n]+)/i
-  );
-  if (
-    unitInWeek &&
-    !/^(?:VE\s*SÜRE|SÜRE|SAAT)$/i.test(unitInWeek[1].trim())
-  ) {
-    ogrenmeBirimi = unitInWeek[1].trim();
-  }
-  if (
-    !ogrenmeBirimi &&
-    selectedWeekObj?.ogrenmeBirimi &&
-    !/^(?:VE\s*SÜRE|SÜRE|SAAT|\d+\s*\.\s*HAFTA)$/i.test(
-      selectedWeekObj.ogrenmeBirimi.trim()
-    )
-  ) {
-    ogrenmeBirimi = selectedWeekObj.ogrenmeBirimi.trim();
-  }
-  if (!ogrenmeBirimi && structuredDbf.unitsByNumber[detectedUnitNo]) {
+  if (structuredDbf.unitsByNumber[detectedUnitNo]) {
     ogrenmeBirimi = structuredDbf.unitsByNumber[detectedUnitNo];
   }
   if (!ogrenmeBirimi) {
+    const unitInWeek = rawWeekWindowText.match(
+      /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|\n]{3,55})/i
+    );
+    if (unitInWeek) {
+      ogrenmeBirimi = sanitizeShortTopicTitle(unitInWeek[1], "");
+    }
+  }
+  if (!ogrenmeBirimi && selectedWeekObj?.ogrenmeBirimi) {
+    ogrenmeBirimi = sanitizeShortTopicTitle(selectedWeekObj.ogrenmeBirimi, "");
+  }
+  if (!ogrenmeBirimi) {
+    const derivedBase = deriveTopicHeadingFromOutcome(outcomeHeader).replace(
+      /\s+(?:İlkeleri|Yönetimi|Uygulamaları|Kuralları|Yöntemleri|Organları)$/i,
+      ""
+    );
     ogrenmeBirimi =
-      deriveTopicHeadingFromOutcome(outcomeHeader).replace(
-        /\s+(?:İlkeleri|Yönetimi|Uygulamaları|Kuralları)$/i,
-        ""
-      ) || structuredDbf.ders;
+      derivedBase.charAt(0).toLocaleUpperCase("tr-TR") +
+      derivedBase.slice(1).toLocaleLowerCase("tr-TR");
   }
+  ogrenmeBirimi = sanitizeShortTopicTitle(ogrenmeBirimi, "Onarıcı tarım");
 
-  // 5. Determine İçerik Çerçevesi (Never "16. Hafta")
+  // 5. Determine İçerik Çerçevesi (Strictly clean topic heading like "Onarıcı Tarımın İlkeleri", max 65 chars)
   let icerikCercevesi = "";
-  const icerikInWeek = rawWeekWindowText.match(
-    /(?:İçerik\s*Çerçevesi|Konu)\s*[:|-]\s*([^|\n]{4,90})/i
-  );
-  if (
-    icerikInWeek &&
-    !/^\d+\s*\.\s*hafta$/i.test(icerikInWeek[1].trim()) &&
-    !/^(?:Ölçme|Öğrenme|Süreç)/i.test(icerikInWeek[1].trim())
-  ) {
-    icerikCercevesi = icerikInWeek[1].trim();
+  if (catalogEntry?.derivedTopicHeading) {
+    icerikCercevesi = sanitizeShortTopicTitle(
+      catalogEntry.derivedTopicHeading,
+      ""
+    );
   }
-  if (!icerikCercevesi && catalogEntry?.derivedTopicHeading) {
-    icerikCercevesi = catalogEntry.derivedTopicHeading;
+  if (!icerikCercevesi) {
+    const icerikInWeek = rawWeekWindowText.match(
+      /(?:İçerik\s*Çerçevesi|Konu)\s*[:|-]\s*([^|\n]{4,65})/i
+    );
+    if (icerikInWeek && !/^\d+\s*\.\s*hafta$/i.test(icerikInWeek[1].trim())) {
+      icerikCercevesi = sanitizeShortTopicTitle(icerikInWeek[1], "");
+    }
   }
-  if (!icerikCercevesi || /^\d+\s*\.\s*hafta$/i.test(icerikCercevesi)) {
-    icerikCercevesi =
-      deriveTopicHeadingFromOutcome(outcomeHeader) || ogrenmeBirimi;
+  if (!icerikCercevesi) {
+    icerikCercevesi = sanitizeShortTopicTitle(
+      deriveTopicHeadingFromOutcome(outcomeHeader),
+      ogrenmeBirimi
+    );
   }
 
   // 6. Determine Süre
@@ -2162,7 +2626,7 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
     headerRegex:
       /^(?:TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*BİLGİLER|HAZIRBULUNUŞLUK)(?=$|\s|[:|-])/i,
     stopRegex:
-      /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+      /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
     semanticKeywords: [
       "kabul edilmektedir",
       "kabul edilir",
@@ -2182,7 +2646,7 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
     headerRegex:
       /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|TANILAYICI\s*DEĞERLENDİRME)(?=$|\s|[:|-])/i,
     stopRegex:
-      /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
+      /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
     semanticKeywords: [
       "açık uçlu sorular",
       "kavram haritaları",
@@ -2203,7 +2667,7 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
     headerRegex:
       /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|İLİŞKİLENDİRME)(?=$|\s|[:|-])/i,
     stopRegex:
-      /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+      /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALARI|Uygulamaları)|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
     semanticKeywords: [
       "bağ kurulur",
       "ilişki kurulur",
@@ -2211,16 +2675,17 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
       "günlük yaşamda karşılaştıkları",
       "yakın çevrelerindeki",
       "karşılaştırılarak yeni konuya",
+      "ilişkilendirilmesi mümkündür",
     ],
     characteristicPhrases: [
-      /(?:Öğrencilerin\s+günlük|Günlük\s+hayatta|Önceki\s+öğrenmeler)[\s\S]{15,600}?(?:bağ\s+kurulur|ilişki\s+kurulur|geçiş\s+sağlanır|geçiş\s+yapılır)\./i,
+      /(?:Öğrencilerin\s+günlük|Günlük\s+hayatta|Önceki\s+öğrenmeler|Tarlada\s+tohum)[\s\S]{15,650}?(?:bağ\s+kurulur|ilişki\s+kurulur|geçiş\s+sağlanır|geçiş\s+yapılır|ilişkilendirilmesi\s+mümkündür|kullanabilir)\./i,
     ],
     minChars: 30,
     maxChars: 1400,
   },
   Ogretme_Uygulamalari: {
     headerRegex:
-      /^(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|ÖĞRETME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+      /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALARI|Uygulamaları)|ÖĞRETME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
     stopRegex:
       /^(?:FARKLILAŞTIRMA|Farklılaştırma|ZENGİNLEŞTİRME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|-])/i,
     semanticKeywords: [
@@ -2230,6 +2695,7 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
       "grup tartışmaları yapılır",
       "örnek olaylar üzerinden",
       "dereceli puanlama anahtarı",
+      "öğretmen tarafından",
     ],
     characteristicPhrases: [
       /\((?:[A-Z]{1,3}\d+(?:\.\d+)?(?:,\s*)?){2,}\)\./,

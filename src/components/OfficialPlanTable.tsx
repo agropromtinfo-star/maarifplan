@@ -338,7 +338,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         {/* Unified Maarif Modeli Table */}
         <div className="overflow-x-auto">
           <table
-            className={`w-full border-collapse border border-[#3b8296] text-black ${
+            className={`w-full border-collapse border border-[#4bacc6] text-black ${
               isCompactView
                 ? "text-[11.5px] leading-tight"
                 : "text-xs md:text-[13px] leading-relaxed"
@@ -349,7 +349,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase tracking-normal"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase tracking-normal"
                 >
                   DERS BİLGİSİ
                 </td>
@@ -445,7 +445,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
                 >
                   PROGRAMLAR ARASI BİLEŞENLER
                 </td>
@@ -568,7 +568,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
                 >
                   ÖĞRENME-ÖĞRETME YAŞANTILARI
                 </td>
@@ -657,7 +657,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               <tr>
                 <td
                   colSpan={4}
-                  className="bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
+                  className="section-banner-cell bg-[#c2d69b] border border-[#4bacc6] px-3 py-2 font-bold text-black uppercase"
                 >
                   FARKLILAŞTIRMA
                 </td>
@@ -683,7 +683,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         </div>
 
         {/* Official Signature Footer (Matches Sample Screenshot 4) */}
-        <div className="grid grid-cols-2 gap-8 pt-6 text-xs md:text-sm text-black">
+        <div className="print-sig-block grid grid-cols-2 gap-8 pt-6 text-xs md:text-sm text-black">
           <div className="text-center flex flex-col justify-end space-y-1.5 pt-8">
             <div>{displayOgretmenAd}</div>
             <div className="font-bold">{displayOgretmenBrans}</div>
@@ -807,11 +807,7 @@ const EditableAsteriskArrayRow: React.FC<EditableAsteriskArrayRowProps> = ({
           <div className="space-y-1">
             {items.map((item, idx) => {
               const cleaned = (item || "").trim().replace(/^\*\s*/, "");
-              return (
-                <div key={idx}>
-                  * {renderTextWithBoldCodes(cleaned)}
-                </div>
-              );
+              return <div key={idx}>* {cleaned}</div>;
             })}
           </div>
         )}
