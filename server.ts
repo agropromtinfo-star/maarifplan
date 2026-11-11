@@ -922,10 +922,11 @@ ${outcomesCatalogText}
                 aiCandidatePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri =
                   verifiedOutcomes;
               }
-              // If weekData had fewer lines or shorter text than the AI-verified block, update weekData too
+              // Only fallback to verifiedOutcomes for weekData if weekData had no specific sub-components
               if (
+                weekData.weekSubComponents.length === 0 &&
                 verifiedOutcomes.length >=
-                weekData.formattedOutcomeAndProcessBlock.length
+                  weekData.formattedOutcomeAndProcessBlock.length
               ) {
                 weekData.formattedOutcomeAndProcessBlock = verifiedOutcomes;
               }

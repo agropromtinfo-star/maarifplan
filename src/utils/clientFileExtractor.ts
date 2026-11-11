@@ -1,7 +1,11 @@
 import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import { extractText } from "unpdf";
-import { MaarifLessonPlan, YillikPlanWeekItem } from "../types/lessonPlan";
+import {
+  MaarifLessonPlan,
+  YillikPlanWeekItem,
+  DocumentHeaderFooterMeta,
+} from "../types/lessonPlan";
 import {
   stripFrontMatter,
   extractCleanDocumentMetadata,
@@ -11,9 +15,6 @@ import {
   enforceAndMergeLessonPlan,
   extractDateRangeFromText,
   resolveValidDateRange,
-  sanitizeOutcomeOrSubSentence,
-  sanitizeShortTopicTitle,
-  deriveUnitNameFromOutcome,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -123,10 +124,6 @@ export function parseQuickWeeksClient(
   const weeks: YillikPlanWeekItem[] = [];
   let activeUnitCarryover = "";
   let activeOutcomeCarryover = "";
-  let activeUnitNoCarryover = 0;
-
-  const outcomeRegex =
-    /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?\s+([^|]{6,140})/;
 
   for (let idx = 0; idx < rawHits.length; idx++) {
     const { wNo, lineIdx: i } = rawHits[idx];
@@ -146,101 +143,41 @@ export function parseQuickWeeksClient(
       datePart = extractDateRangeFromText(lines[i - 2]);
     }
 
-    // 2. Collect lines belonging to this week's row (excluding nextIdx - 1 if it holds next week's date)
-    let endRowIdx = Math.min(lines.length, nextIdx, i + 20);
-    if (
-      nextIdx < lines.length &&
-      nextIdx - 1 > i &&
-      extractDateRangeFromText(lines[nextIdx - 1])
-    ) {
-      endRowIdx = Math.min(endRowIdx, nextIdx - 1);
-    }
-
-    const blockLines = lines.slice(i, endRowIdx);
-    const blockText = blockLines.join(" | ");
-
-    const sureMatch = blockText.match(
-      /\b(\d{1,2})\s*(?:Ders\s*)?Saat[i]?\b/i
-    );
-    const sure = sureMatch
-      ? `${sureMatch[1]} Ders Saati`
-      : structuredDbf.sure || "2 Ders Saati";
-
-    // 3. Match clean outcome code + sentence for THIS week
-    let currentWeekOutcome = "";
-    let currentUnitNo = 0;
-
-    for (const bLine of blockLines) {
-      const m = bLine.match(outcomeRegex);
-      if (m && !/^(?:SDB|KB|OB|AB|E|D)$/i.test(m[1])) {
-        const n1 = Number(m[2]);
-        const n2 = Number(m[3]);
-        const n3 = m[4] ? Number(m[4]) : null;
-        currentUnitNo = n3 !== null ? n2 : n1;
-        const fullOutcomeCandidate = sanitizeOutcomeOrSubSentence(m[0]);
-        if (fullOutcomeCandidate.length >= 8) {
-          currentWeekOutcome = fullOutcomeCandidate;
-          activeOutcomeCarryover = fullOutcomeCandidate;
-          activeUnitNoCarryover = currentUnitNo;
-          break;
-        }
-      }
-    }
-
-    const displayOutcome = currentWeekOutcome || activeOutcomeCarryover;
-    const effectiveUnitNo = currentUnitNo || activeUnitNoCarryover;
-
-    // 4. Resolve Öğrenme Birimi dynamically for THIS week and THIS course (never hardcoded)
-    let ogrenmeBirimi = "";
-    const unitMatch = blockText.match(
-      /(?:Öğrenme\s*Birimi|Ünite|Tema)\s*(?!VE\s*SÜRE)[:|-]\s*([^|]{3,55})/i
-    );
-    if (unitMatch && !/^VE\s*SÜRE$/i.test(unitMatch[1].trim())) {
-      ogrenmeBirimi = sanitizeShortTopicTitle(unitMatch[1], "");
-    }
-
-    if (!ogrenmeBirimi && displayOutcome) {
-      ogrenmeBirimi = deriveUnitNameFromOutcome(displayOutcome);
-    }
-
-    if (
-      !ogrenmeBirimi &&
-      effectiveUnitNo > 0 &&
-      structuredDbf.unitsByNumber[effectiveUnitNo]
-    ) {
-      ogrenmeBirimi = structuredDbf.unitsByNumber[effectiveUnitNo];
-    }
-
-    if (ogrenmeBirimi) {
-      activeUnitCarryover = ogrenmeBirimi;
-    } else if (activeUnitCarryover) {
-      ogrenmeBirimi = activeUnitCarryover;
-    }
-
-    // 5. Capture sub-process components (a), b), c), ç), d), e)) for week preview
-    const rawSubMatches =
-      blockText.match(/\b[a-zçğıöşü]\)\s*[^|]{6,110}/gi) || [];
-    const subMatches = rawSubMatches
-      .map((s) => sanitizeOutcomeOrSubSentence(s))
-      .filter((s) => s.length >= 6);
-
-    const meaningfulSummary = displayOutcome
-      ? [displayOutcome, ...subMatches.slice(0, 3)].join(" · ")
-      : subMatches.length > 0
-      ? subMatches.slice(0, 3).join(" · ")
-      : blockLines
-          .map((l) => sanitizeOutcomeOrSubSentence(l))
-          .filter(
-            (l) =>
-              l.length >= 4 &&
-              !/^\d{1,2}\s*\.\s*HAFTA$/i.test(l) &&
-              !/^\d{1,2}\s*(?:Ders\s*)?Saat[i]?$/i.test(l)
-          )
-          .slice(0, 2)
-          .join(" · ")
-          .trim();
-
     const validDateRange = resolveValidDateRange(datePart, wNo);
+
+    // 2. Extract exact week-specific outcome, sub-components, unit, and topic using the structured engine
+    const weekSpecific = extractWeekPlanStructured(
+      cleanYillik,
+      `${wNo}. HAFTA`,
+      validDateRange,
+      structuredDbf
+    );
+
+    const displayOutcome =
+      weekSpecific.outcomeHeader || activeOutcomeCarryover;
+    if (weekSpecific.outcomeHeader) {
+      activeOutcomeCarryover = weekSpecific.outcomeHeader;
+    }
+
+    let ogrenmeBirimi = weekSpecific.ogrenmeBirimi || activeUnitCarryover;
+    if (weekSpecific.ogrenmeBirimi) {
+      activeUnitCarryover = weekSpecific.ogrenmeBirimi;
+    }
+
+    // Build week-specific summary showing the outcome and THIS week's specific sub-components (a, b vs c, ç vs d, e)
+    const weekSubs = weekSpecific.weekSubComponents.filter(
+      (s) => s.length >= 4
+    );
+    const meaningfulSummary = displayOutcome
+      ? weekSubs.length > 0
+        ? [displayOutcome, ...weekSubs.slice(0, 3)].join(" · ")
+        : weekSpecific.icerikCercevesi
+        ? `${displayOutcome} · ${weekSpecific.icerikCercevesi}`
+        : displayOutcome
+      : weekSubs.length > 0
+      ? weekSubs.slice(0, 3).join(" · ")
+      : weekSpecific.icerikCercevesi || "";
+
     weeks.push({
       id: `week-${wNo}`,
       haftaNo: wNo,
@@ -248,8 +185,8 @@ export function parseQuickWeeksClient(
       tarihAraligi: validDateRange,
       onayTarihi: inferApprovalDateClient(validDateRange),
       ogrenmeBirimi: ogrenmeBirimi || "",
-      konuVeCiktiOzeti: meaningfulSummary.slice(0, 220),
-      sure,
+      konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
+      sure: weekSpecific.sure || structuredDbf.sure || "2 Ders Saati",
     });
   }
 
@@ -628,3 +565,79 @@ export function synthesizePlanClientSide(
     }
   );
 }
+
+export function synthesizeAllWeeksClientSide(params: {
+  weeks: YillikPlanWeekItem[];
+  yillik_plan: string;
+  ders_materyali: string;
+  ders_bilgi_formu?: string;
+  baseMeta: DocumentHeaderFooterMeta;
+}): Array<{ plan: MaarifLessonPlan; meta: DocumentHeaderFooterMeta }> {
+  const { weeks, yillik_plan, ders_materyali, ders_bilgi_formu, baseMeta } =
+    params;
+
+  const detectedDocMeta = extractDocumentMetadataClient(
+    `${ders_bilgi_formu || ""}\n${yillik_plan || ""}\n${ders_materyali || ""}`
+  );
+  const effectiveDersIsmi =
+    baseMeta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
+  const effectiveSinifDuzeyi =
+    baseMeta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
+  const effectiveOkulAdi =
+    baseMeta.okulAdi.trim() || detectedDocMeta.okulAdi;
+
+  const structuredDbf = parseDersBilgiFormuStructured(
+    ders_bilgi_formu || "",
+    yillik_plan,
+    ders_materyali
+  );
+
+  return weeks.map((weekItem) => {
+    const validDate = resolveValidDateRange(
+      weekItem.tarihAraligi,
+      weekItem.haftaNo
+    );
+    const weekData = extractWeekPlanStructured(
+      yillik_plan,
+      weekItem.haftaEtiketi,
+      validDate,
+      structuredDbf,
+      {
+        ...weekItem,
+        tarihAraligi: validDate,
+      }
+    );
+    const materyalSlice = extractWeekMateryalSlice(
+      ders_materyali,
+      weekData,
+      6500
+    );
+
+    const plan = enforceAndMergeLessonPlan(
+      null,
+      structuredDbf,
+      weekData,
+      materyalSlice,
+      {
+        dersIsmi: effectiveDersIsmi,
+        sinifDuzeyi: effectiveSinifDuzeyi,
+      }
+    );
+
+    const weekMeta: DocumentHeaderFooterMeta = {
+      ...baseMeta,
+      okulAdi: effectiveOkulAdi || baseMeta.okulAdi,
+      dersIsmi: effectiveDersIsmi || plan.Ders_Bilgisi.Ders,
+      sinifDuzeyi: effectiveSinifDuzeyi || plan.Ders_Bilgisi.Sinif,
+      haftaEtiketi: weekItem.haftaEtiketi,
+      tarihAraligi: validDate,
+      onayTarihi:
+        weekItem.onayTarihi ||
+        inferApprovalDateClient(validDate) ||
+        baseMeta.onayTarihi,
+    };
+
+    return { plan, meta: weekMeta };
+  });
+}
+

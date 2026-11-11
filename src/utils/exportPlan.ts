@@ -54,16 +54,11 @@ function formatAsteriskLinesHtml(items: string[]): string {
     .join("");
 }
 
-export function downloadWordDoc(
+function buildSinglePlanSectionHtml(
   plan: MaarifLessonPlan,
-  meta?: DocumentHeaderFooterMeta,
-  exportOptions?: Partial<PlanExportOptions>
-) {
-  const options: PlanExportOptions = {
-    ...DEFAULT_EXPORT_OPTIONS,
-    ...(exportOptions || {}),
-  };
-
+  meta: DocumentHeaderFooterMeta | undefined,
+  options: PlanExportOptions
+): { sectionHtml: string; secondTitleLine: string; haftaSatiri: string; dersIsmi: string } {
   const {
     Ders_Bilgisi: db,
     Programlar_Arasi_Bilesenler: pab,
@@ -103,17 +98,6 @@ export function downloadWordDoc(
     dersIsmi.endsWith("DERSİ") ? "" : " DERSİ"
   } GÜNLÜK DERS PLANI`;
 
-  // Paper-saving & printer-friendly calculations
-  const marginVal = `${options.marginCm}cm`;
-  const fontSizeVal = `${options.fontSizePt}pt`;
-  const lineHeightVal = options.compactPaperSaver ? "1.16" : "1.34";
-  const cellPaddingVal = options.compactPaperSaver ? "2.5px 5px" : "5px 7px";
-  const headerFontSizeVal = options.compactPaperSaver ? "10pt" : "11pt";
-  const headerMarginVal = options.compactPaperSaver ? "6px" : "12px";
-  const borderColorVal = "#4bacc6";
-  const bannerBgVal = "#c2d69b";
-
-  // Filter helper for 'Boş satırları koru' setting
   const shouldRenderRow = (textValue?: string, arrayValue?: string[]) => {
     if (options.preserveEmptyRows) return true;
     if (textValue && textValue.trim().length > 0) return true;
@@ -123,88 +107,7 @@ export function downloadWordDoc(
     return false;
   };
 
-  const htmlContent = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office"
-      xmlns:w="urn:schemas-microsoft-com:office:word"
-      xmlns="http://www.w3.org/TR/REC-html40" lang="tr">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(secondTitleLine)}</title>
-  <style>
-    @page {
-      size: A4 portrait;
-      margin: ${marginVal} ${marginVal} ${marginVal} ${marginVal};
-      mso-header-margin: 0.5cm;
-      mso-footer-margin: 0.5cm;
-    }
-    body {
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: ${fontSizeVal};
-      color: #000000;
-      line-height: ${lineHeightVal};
-      margin: 0;
-      padding: 0;
-    }
-    .doc-header {
-      text-align: center;
-      font-weight: bold;
-      font-size: ${headerFontSizeVal};
-      margin-bottom: ${headerMarginVal};
-      line-height: 1.3;
-    }
-    table.plan-table {
-      width: ${options.expandTable ? "100%" : "98%"};
-      margin: 0 auto;
-      border-collapse: collapse;
-      border: 1px solid ${borderColorVal};
-      mso-table-lspace: 0pt;
-      mso-table-rspace: 0pt;
-    }
-    table.plan-table td {
-      border: 1px solid ${borderColorVal};
-      padding: ${cellPaddingVal};
-      vertical-align: top;
-      text-align: left;
-    }
-    .section-banner {
-      background-color: ${bannerBgVal};
-      font-weight: bold;
-      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
-      color: #000000;
-      text-transform: uppercase;
-      padding: ${options.compactPaperSaver ? "3px 5px" : "5px 7px"};
-      mso-background-source: auto;
-    }
-    .label-cell {
-      font-weight: bold;
-      width: 22%;
-    }
-    .value-cell-half {
-      width: 28%;
-    }
-    .label-cell-mid {
-      font-weight: bold;
-      width: 16%;
-    }
-    .value-cell-right {
-      width: 34%;
-    }
-    .sig-table {
-      width: 100%;
-      border: none;
-      margin-top: ${options.compactPaperSaver ? "8px" : "16px"};
-      page-break-inside: avoid;
-    }
-    .sig-table td {
-      border: none;
-      text-align: center;
-      vertical-align: bottom;
-      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
-      line-height: 1.35;
-    }
-  </style>
-</head>
-<body>
+  const sectionHtml = `
   <div class="doc-header">
     <div>${escapeHtml(okulAdi)}</div>
     <div>${escapeHtml(secondTitleLine)}</div>
@@ -398,7 +301,128 @@ export function downloadWordDoc(
     </tr>
   </table>`
       : ""
-  }
+  }`;
+
+  return { sectionHtml, secondTitleLine, haftaSatiri, dersIsmi };
+}
+
+function buildDocumentStyleBlock(options: PlanExportOptions): string {
+  const marginVal = `${options.marginCm}cm`;
+  const fontSizeVal = `${options.fontSizePt}pt`;
+  const lineHeightVal = options.compactPaperSaver ? "1.16" : "1.34";
+  const cellPaddingVal = options.compactPaperSaver ? "2.5px 5px" : "5px 7px";
+  const headerFontSizeVal = options.compactPaperSaver ? "10pt" : "11pt";
+  const headerMarginVal = options.compactPaperSaver ? "6px" : "12px";
+  const borderColorVal = "#4bacc6";
+  const bannerBgVal = "#c2d69b";
+
+  return `
+    @page {
+      size: A4 portrait;
+      margin: ${marginVal} ${marginVal} ${marginVal} ${marginVal};
+      mso-header-margin: 0.5cm;
+      mso-footer-margin: 0.5cm;
+    }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: ${fontSizeVal};
+      color: #000000;
+      line-height: ${lineHeightVal};
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .doc-header {
+      text-align: center;
+      font-weight: bold;
+      font-size: ${headerFontSizeVal};
+      margin-bottom: ${headerMarginVal};
+      line-height: 1.3;
+    }
+    table.plan-table {
+      width: ${options.expandTable ? "100%" : "98%"};
+      margin: 0 auto;
+      border-collapse: collapse;
+      border: 1px solid ${borderColorVal};
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
+    table.plan-table td {
+      border: 1px solid ${borderColorVal};
+      padding: ${cellPaddingVal};
+      vertical-align: top;
+      text-align: left;
+    }
+    .section-banner {
+      background-color: ${bannerBgVal};
+      font-weight: bold;
+      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
+      color: #000000;
+      text-transform: uppercase;
+      padding: ${options.compactPaperSaver ? "3px 5px" : "5px 7px"};
+      mso-background-source: auto;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .label-cell {
+      font-weight: bold;
+      width: 22%;
+    }
+    .value-cell-half {
+      width: 28%;
+    }
+    .label-cell-mid {
+      font-weight: bold;
+      width: 16%;
+    }
+    .value-cell-right {
+      width: 34%;
+    }
+    .sig-table {
+      width: 100%;
+      border: none;
+      margin-top: ${options.compactPaperSaver ? "8px" : "16px"};
+      page-break-inside: avoid;
+    }
+    .sig-table td {
+      border: none;
+      text-align: center;
+      vertical-align: bottom;
+      font-size: ${options.compactPaperSaver ? "8.5pt" : "9.5pt"};
+      line-height: 1.35;
+    }
+    .week-page-break {
+      page-break-after: always;
+      break-after: page;
+    }
+  `;
+}
+
+export function downloadWordDoc(
+  plan: MaarifLessonPlan,
+  meta?: DocumentHeaderFooterMeta,
+  exportOptions?: Partial<PlanExportOptions>
+) {
+  const options: PlanExportOptions = {
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...(exportOptions || {}),
+  };
+
+  const { sectionHtml, secondTitleLine, haftaSatiri, dersIsmi } =
+    buildSinglePlanSectionHtml(plan, meta, options);
+
+  const htmlContent = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40" lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(secondTitleLine)}</title>
+  <style>${buildDocumentStyleBlock(options)}</style>
+</head>
+<body>
+${sectionHtml}
 </body>
 </html>`;
 
@@ -418,3 +442,144 @@ export function downloadWordDoc(
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export interface BulkWeekExportItem {
+  plan: MaarifLessonPlan;
+  meta: DocumentHeaderFooterMeta;
+}
+
+export function downloadAllWeeksWordDoc(
+  items: BulkWeekExportItem[],
+  exportOptions?: Partial<PlanExportOptions>
+) {
+  if (!items || items.length === 0) return;
+
+  const options: PlanExportOptions = {
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...(exportOptions || {}),
+  };
+
+  let firstTitle = "TÜM HAFTALAR GÜNLÜK DERS PLANI";
+  let firstDers = "DERS";
+
+  const bodySections = items
+    .map((item, idx) => {
+      const { sectionHtml, secondTitleLine, dersIsmi } =
+        buildSinglePlanSectionHtml(item.plan, item.meta, options);
+      if (idx === 0) {
+        firstTitle = `${secondTitleLine} (TÜM HAFTALAR)`;
+        firstDers = dersIsmi;
+      }
+      const pageBreakHtml =
+        idx < items.length - 1
+          ? `<br clear="all" style="page-break-before:always; mso-break-type:section-break" />`
+          : "";
+      return `<div class="week-section">${sectionHtml}</div>${pageBreakHtml}`;
+    })
+    .join("\n");
+
+  const htmlContent = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40" lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(firstTitle)}</title>
+  <style>${buildDocumentStyleBlock(options)}</style>
+</head>
+<body>
+${bodySections}
+</body>
+</html>`;
+
+  const blob = new Blob(["\ufeff", htmlContent], {
+    type: "application/msword;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeCourse = `${firstDers}-tum-haftalar-gunluk-ders-planlari`
+    .toLowerCase()
+    .replace(/[^a-z0-9ğüşıöç]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  a.href = url;
+  a.download = `${safeCourse || "tum-haftalar-gunluk-ders-plani"}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export function exportAllWeeksPdfPrint(
+  items: BulkWeekExportItem[],
+  exportOptions?: Partial<PlanExportOptions>
+) {
+  if (!items || items.length === 0) return;
+
+  const options: PlanExportOptions = {
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...(exportOptions || {}),
+  };
+
+  let firstTitle = "TÜM HAFTALAR GÜNLÜK DERS PLANI";
+
+  const bodySections = items
+    .map((item, idx) => {
+      const { sectionHtml, secondTitleLine } = buildSinglePlanSectionHtml(
+        item.plan,
+        item.meta,
+        options
+      );
+      if (idx === 0) {
+        firstTitle = `${secondTitleLine} (1-${items.length}. HAFTALAR)`;
+      }
+      const isLast = idx === items.length - 1;
+      return `<div class="${isLast ? "" : "week-page-break"}">${sectionHtml}</div>`;
+    })
+    .join("\n");
+
+  const htmlContent = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(firstTitle)}</title>
+  <style>${buildDocumentStyleBlock(options)}</style>
+</head>
+<body>
+${bodySections}
+</body>
+</html>`;
+
+  const existingFrame = document.getElementById("bulk-weeks-print-iframe");
+  if (existingFrame && existingFrame.parentNode) {
+    existingFrame.parentNode.removeChild(existingFrame);
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.id = "bulk-weeks-print-iframe";
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.visibility = "hidden";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+
+    window.setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (err) {
+        console.warn("Iframe print fallback:", err);
+        window.print();
+      }
+    }, 250);
+  }
+}
+

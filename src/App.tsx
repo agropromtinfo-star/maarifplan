@@ -13,7 +13,11 @@ import {
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
-import { downloadWordDoc } from "./utils/exportPlan";
+import {
+  downloadWordDoc,
+  downloadAllWeeksWordDoc,
+  exportAllWeeksPdfPrint,
+} from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
   extractDocumentMetadataClient,
@@ -21,6 +25,8 @@ import {
   buildXmlContextPayloadWithAnalysis,
   inferApprovalDateClient,
   parseQuickWeeksClient,
+  synthesizePlanClientSide,
+  synthesizeAllWeeksClientSide,
 } from "./utils/clientFileExtractor";
 import {
   enforceAndMergeLessonPlan,
@@ -40,6 +46,8 @@ import {
   Search,
   Calendar,
   RefreshCw,
+  Printer,
+  ChevronDown,
 } from "lucide-react";
 
 type ActiveTab = "workspace" | "official-table" | "saved-plans";
@@ -162,6 +170,8 @@ export default function App() {
 
   // Generation state
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isAllWeeksMenuOpen, setIsAllWeeksMenuOpen] = useState<boolean>(false);
+  const [isExportingAllWeeks, setIsExportingAllWeeks] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -279,10 +289,37 @@ export default function App() {
           inferApprovalDateClient(validDate) ||
           prev.onayTarihi,
       }));
+
+      // Immediately keep the Lesson Plan Output (Öğrenme Çıktıları ve Süreç Bileşenleri, İçerik Çerçevesi, Öğrenme Birimi, Yaşantılar) updated for the selected week
+      if (yillikPlan.trim()) {
+        const detectedDocMeta = extractDocumentMetadataClient(
+          `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
+        );
+        const effectiveDersIsmi =
+          meta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
+        const effectiveSinifDuzeyi =
+          meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
+
+        const weekSyncedPlan = synthesizePlanClientSide({
+          yillik_plan: yillikPlan,
+          ders_materyali: dersMateryali,
+          ders_bilgi_formu: dersBilgiFormu,
+          hafta_etiketi: found.haftaEtiketi,
+          tarih_araligi: validDate,
+          ders_ismi: effectiveDersIsmi,
+          sinif_duzeyi: effectiveSinifDuzeyi,
+          secilen_hafta_verisi: {
+            ...found,
+            tarihAraligi: validDate,
+          },
+        });
+
+        setCurrentPlan((prevPlan) => (prevPlan ? weekSyncedPlan : prevPlan));
+      }
     }
   };
 
-  // Synchronize extractedWeeks and selectedWeekId whenever the active course documents change
+  // Synchronize extractedWeeks, selectedWeekId, and currentPlan whenever the active course documents change
   useEffect(() => {
     if (!yillikPlan.trim()) {
       setExtractedWeeks([]);
@@ -291,9 +328,45 @@ export default function App() {
     }
     if (localParsedWeeks.length > 0) {
       setExtractedWeeks(localParsedWeeks);
-      setSelectedWeekId((prevId) => {
-        const exists = localParsedWeeks.some((w) => w.id === prevId);
-        return exists ? prevId : localParsedWeeks[0].id;
+      const activeWeek =
+        localParsedWeeks.find((w) => w.id === selectedWeekId) ||
+        localParsedWeeks[0];
+      if (activeWeek.id !== selectedWeekId) {
+        setSelectedWeekId(activeWeek.id);
+      }
+
+      const validDate = resolveValidDateRange(
+        activeWeek.tarihAraligi,
+        activeWeek.haftaNo
+      );
+      setMeta((prev) => ({
+        ...prev,
+        haftaEtiketi: activeWeek.haftaEtiketi,
+        tarihAraligi: validDate,
+        onayTarihi:
+          activeWeek.onayTarihi ||
+          inferApprovalDateClient(validDate) ||
+          prev.onayTarihi,
+      }));
+
+      setCurrentPlan((prevPlan) => {
+        if (!prevPlan) return prevPlan;
+        const detectedDocMeta = extractDocumentMetadataClient(
+          `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
+        );
+        return synthesizePlanClientSide({
+          yillik_plan: yillikPlan,
+          ders_materyali: dersMateryali,
+          ders_bilgi_formu: dersBilgiFormu,
+          hafta_etiketi: activeWeek.haftaEtiketi,
+          tarih_araligi: validDate,
+          ders_ismi: meta.dersIsmi.trim() || detectedDocMeta.dersIsmi,
+          sinif_duzeyi: meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi,
+          secilen_hafta_verisi: {
+            ...activeWeek,
+            tarihAraligi: validDate,
+          },
+        });
       });
     }
   }, [yillikPlan, dersBilgiFormu, dersMateryali, localParsedWeeks]);
@@ -757,6 +830,45 @@ export default function App() {
     }
   };
 
+  const handleDownloadAllWeeks = (format: "word" | "pdf") => {
+    if (!yillikPlan.trim()) {
+      setErrorMessage(
+        "Tüm haftaların günlük ders planlarını tek tuşla indirmek için lütfen önce 'Ünitelendirilmiş Yıllık Plan' dosyasını yükleyin."
+      );
+      return;
+    }
+
+    setIsExportingAllWeeks(true);
+    setErrorMessage(null);
+
+    window.setTimeout(() => {
+      try {
+        const allItems = synthesizeAllWeeksClientSide({
+          weeks: activeWeekList,
+          yillik_plan: yillikPlan,
+          ders_materyali: dersMateryali,
+          ders_bilgi_formu: dersBilgiFormu,
+          baseMeta: meta,
+        });
+
+        if (format === "word") {
+          downloadAllWeeksWordDoc(allItems);
+        } else {
+          exportAllWeeksPdfPrint(allItems);
+        }
+        setIsAllWeeksMenuOpen(false);
+      } catch (err: unknown) {
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : "Tüm haftaların planları dışa aktarılırken bir hata oluştu."
+        );
+      } finally {
+        setIsExportingAllWeeks(false);
+      }
+    }, 30);
+  };
+
   const handleSaveCurrentPlan = () => {
     if (!currentPlan) return;
     const newRecord: SavedLessonPlanRecord = {
@@ -934,24 +1046,6 @@ export default function App() {
           <div className="space-y-6">
             {/* School, Course, Week/Date & Teacher/Principal Metadata Card */}
             <div className="no-print bg-white border border-slate-200/90 rounded-xl overflow-hidden shadow-xs">
-              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-sky-900 px-6 py-5 text-white flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-sky-200">
-                    <span>T.C. Millî Eğitim Bakanlığı</span>
-                    <span aria-hidden="true">·</span>
-                    <span>Türkiye Yüzyılı Maarif Modeli</span>
-                    <span aria-hidden="true">·</span>
-                    <span>Resmî Günlük Ders Planı Otomasyonu</span>
-                  </div>
-                  <h1
-                    className="text-lg md:text-2xl font-bold text-white mt-1"
-                    style={{ textWrap: "balance" }}
-                  >
-                    Okul, Ders, Hafta/Tarih ve İmza Bilgileri
-                  </h1>
-                </div>
-              </div>
-
               <div className="p-6 space-y-6">
                 {/* Row 1: Okul Adı, Eğitim ve Öğretim Yılı, Ders İsmi, Sınıf Düzeyi */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1064,8 +1158,8 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-                    {/* Dropdown Selector */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                    {/* Dropdown Selector + Tüm Haftaları İndir */}
                     <div className="md:col-span-5">
                       <label
                         htmlFor="week-selector"
@@ -1087,6 +1181,63 @@ export default function App() {
                           </option>
                         ))}
                       </select>
+
+                      {/* Tüm Haftaları İndir Button & Word/PDF Selector */}
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          disabled={isExportingAllWeeks}
+                          onClick={() =>
+                            setIsAllWeeksMenuOpen((prev) => !prev)
+                          }
+                          className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-white text-xs font-semibold transition-colors shadow-2xs disabled:opacity-60"
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            {isExportingAllWeeks ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                            ) : (
+                              <FileDown className="w-3.5 h-3.5 text-amber-300" />
+                            )}
+                            <span>
+                              Tüm Haftaları İndir ({activeWeekList.length} Hafta)
+                            </span>
+                          </span>
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 text-slate-300 transition-transform ${
+                              isAllWeeksMenuOpen ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+
+                        {isAllWeeksMenuOpen && (
+                          <div className="mt-1.5 p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/80 space-y-2">
+                            <p className="text-[11px] font-medium text-indigo-950">
+                              Tüm {activeWeekList.length} haftanın günlük ders
+                              planını tek tuşla indirmek için format seçin:
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                disabled={isExportingAllWeeks}
+                                onClick={() => handleDownloadAllWeeks("word")}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors shadow-2xs"
+                              >
+                                <FileDown className="w-3.5 h-3.5 shrink-0" />
+                                <span>Word (.doc) İndir</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isExportingAllWeeks}
+                                onClick={() => handleDownloadAllWeeks("pdf")}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-semibold transition-colors shadow-2xs"
+                              >
+                                <Printer className="w-3.5 h-3.5 shrink-0" />
+                                <span>PDF Olarak İndir</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* Editable Hafta Etiketi */}
