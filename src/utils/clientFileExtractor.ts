@@ -547,20 +547,24 @@ export interface ClientSynthesisInput {
 export function synthesizePlanClientSide(
   inputs: ClientSynthesisInput
 ): MaarifLessonPlan {
+  const cleanDbf = stripFrontMatter(inputs.ders_bilgi_formu || "");
+  const cleanYillik = stripFrontMatter(inputs.yillik_plan || "");
+  const cleanMateryal = stripFrontMatter(inputs.ders_materyali || "");
+
   const structuredDbf = parseDersBilgiFormuStructured(
-    inputs.ders_bilgi_formu || "",
-    inputs.yillik_plan,
-    inputs.ders_materyali
+    cleanDbf,
+    cleanYillik,
+    cleanMateryal
   );
   const weekData = extractWeekPlanStructured(
-    inputs.yillik_plan,
+    cleanYillik,
     inputs.hafta_etiketi || "1. HAFTA",
     inputs.tarih_araligi || "",
     structuredDbf,
     inputs.secilen_hafta_verisi
   );
   const materyalSlice = extractWeekMateryalSlice(
-    inputs.ders_materyali,
+    cleanMateryal,
     weekData,
     9500
   );
@@ -587,8 +591,12 @@ export function synthesizeAllWeeksClientSide(params: {
   const { weeks, yillik_plan, ders_materyali, ders_bilgi_formu, baseMeta } =
     params;
 
+  const cleanDbf = stripFrontMatter(ders_bilgi_formu || "");
+  const cleanYillik = stripFrontMatter(yillik_plan || "");
+  const cleanMateryal = stripFrontMatter(ders_materyali || "");
+
   const detectedDocMeta = extractDocumentMetadataClient(
-    `${ders_bilgi_formu || ""}\n${yillik_plan || ""}\n${ders_materyali || ""}`
+    `${cleanDbf}\n${cleanYillik}\n${cleanMateryal}`
   );
   const effectiveDersIsmi =
     baseMeta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
@@ -598,9 +606,9 @@ export function synthesizeAllWeeksClientSide(params: {
     baseMeta.okulAdi.trim() || detectedDocMeta.okulAdi;
 
   const structuredDbf = parseDersBilgiFormuStructured(
-    ders_bilgi_formu || "",
-    yillik_plan,
-    ders_materyali
+    cleanDbf,
+    cleanYillik,
+    cleanMateryal
   );
 
   return weeks.map((weekItem) => {
@@ -609,7 +617,7 @@ export function synthesizeAllWeeksClientSide(params: {
       weekItem.haftaNo
     );
     const weekData = extractWeekPlanStructured(
-      yillik_plan,
+      cleanYillik,
       weekItem.haftaEtiketi,
       validDate,
       structuredDbf,
@@ -619,7 +627,7 @@ export function synthesizeAllWeeksClientSide(params: {
       }
     );
     const materyalSlice = extractWeekMateryalSlice(
-      ders_materyali,
+      cleanMateryal,
       weekData,
       6500
     );

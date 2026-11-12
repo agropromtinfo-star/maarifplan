@@ -37,6 +37,7 @@ import {
   formatFullWeekAndDateRange,
   parseDersBilgiFormuStructured,
   resolveValidDateRange,
+  cleanOgrenmeKanitlariPrefix,
 } from "./shared/maarifPlanEngine";
 import {
   Upload,
@@ -1319,7 +1320,10 @@ export default function App() {
           : record.meta.okulMuduruAdSoyad,
       }));
     }
-    setCurrentPlan(record.plan);
+    setCurrentPlan({
+      ...record.plan,
+      Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(record.plan.Ogrenme_Kanitlari),
+    });
     setActiveTab("official-table");
   };
 
