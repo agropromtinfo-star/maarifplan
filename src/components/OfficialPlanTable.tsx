@@ -13,7 +13,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { downloadWordDoc, triggerPrintWithFileName } from "../utils/exportPlan";
-import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
+import { formatFullWeekAndDateRange, cleanOgrenmeKanitlariPrefix } from "../shared/maarifPlanEngine";
 import { ExportConfigModal } from "./ExportConfigModal";
 import { PlanExportOptions } from "../types/exportOptions";
 
@@ -605,13 +605,13 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
               {/* Öğrenme Kanıtları */}
               <EditableSingleRow
                 label="Öğrenme Kanıtları"
-                value={plan.Ogrenme_Kanitlari}
+                value={cleanOgrenmeKanitlariPrefix(plan.Ogrenme_Kanitlari)}
                 isEditing={isEditing}
                 multiline
                 onChange={(v) =>
                   onUpdatePlan({
                     ...plan,
-                    Ogrenme_Kanitlari: v,
+                    Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(v),
                   })
                 }
               />

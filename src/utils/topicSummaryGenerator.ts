@@ -1,3 +1,5 @@
+import { stripFrontMatter } from "../shared/maarifPlanEngine";
+
 /**
  * High School Student-Friendly Topic Summary & Study Note Generator
  * Formats textbook/course material into a clear, engaging, structured study note.
@@ -45,6 +47,8 @@ export function generateTopicSummaryClientSide(
     materyalText = "",
   } = params;
 
+  const cleanMateryalText = stripFrontMatter(materyalText || "");
+
   const cleanDers = dersIsmi.trim() || "Meslek Dersi";
   const cleanSinif = sinifDuzeyi.trim() || "Lise Düzeyi";
   const cleanBirim = ogrenmeBirimi.trim() || "Öğrenme Birimi";
@@ -58,7 +62,7 @@ export function generateTopicSummaryClientSide(
     .slice(0, 6);
 
   // Extract substantive paragraphs from materyalText
-  const rawParagraphs = (materyalText || "")
+  const rawParagraphs = cleanMateryalText
     .split(/\r?\n+/)
     .map((p) => p.trim())
     .filter(

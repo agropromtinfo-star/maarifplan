@@ -1095,8 +1095,9 @@ ${outcomesCatalogText}
         ],
       };
 
+      const cleanMateryal = stripFrontMatter(ders_materyali);
       const materyalSlice = extractWeekMateryalSlice(
-        ders_materyali,
+        cleanMateryal,
         fakeWeekData,
         14000
       );
