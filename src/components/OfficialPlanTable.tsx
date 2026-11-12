@@ -10,8 +10,9 @@ import {
   ShieldCheck,
   Settings2,
   Sparkles,
+  BookOpen,
 } from "lucide-react";
-import { downloadWordDoc } from "../utils/exportPlan";
+import { downloadWordDoc, triggerPrintWithFileName } from "../utils/exportPlan";
 import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
 import { ExportConfigModal } from "./ExportConfigModal";
 import { PlanExportOptions } from "../types/exportOptions";
@@ -20,6 +21,7 @@ interface OfficialPlanTableProps {
   plan: MaarifLessonPlan;
   meta: DocumentHeaderFooterMeta;
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
+  onOpenTopicSummary?: () => void;
 }
 
 // Helper to render codes like "E2.2. ", "SDB2.2. ", "D12. ", "OB1. ", "KB2.2. " in bold when followed by space
@@ -75,6 +77,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
   plan,
   meta,
   onUpdatePlan,
+  onOpenTopicSummary,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
@@ -286,6 +289,18 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
             )}
           </button>
 
+          {onOpenTopicSummary && (
+            <button
+              type="button"
+              onClick={onOpenTopicSummary}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-200 bg-emerald-950/70 border border-emerald-600/50 rounded-lg hover:bg-emerald-900/80 transition-colors whitespace-nowrap shrink-0"
+              title="Bu haftanın konusunu lise öğrencisi düzeyinde özetle ve ders notu çıkar"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+              Konu Özeti
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setIsConfigModalOpen(true)}
@@ -298,7 +313,7 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={() => triggerPrintWithFileName(meta, plan)}
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-900 bg-amber-400 rounded-lg hover:bg-amber-300 transition-colors whitespace-nowrap shrink-0"
           >
             <Printer className="w-3.5 h-3.5" />

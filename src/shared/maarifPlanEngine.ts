@@ -124,16 +124,76 @@ const KNOWN_DISCIPLINES = [
 ];
 
 /**
+ * Normalizes Turkish Unicode text (handling NFD decomposed characters like I + \u0307 from PDFs)
+ */
+export function normalizeTurkishUnicode(rawText: string): string {
+  if (!rawText) return "";
+  return rawText
+    .normalize("NFC")
+    .replace(/I\u0307/g, "İ")
+    .replace(/i\u0307/g, "i");
+}
+
+/**
+ * Converts text to Turkish uppercase after NFC normalization while preserving character indices
+ */
+function toTrUpper(text: string): string {
+  return normalizeTurkishUnicode(text).toLocaleUpperCase("tr-TR");
+}
+
+/**
  * Pre-normalizes raw PDF/DOCX text before line-by-line parsing:
- * 1. Strips textbook/PDF front-matter boilerplate (copyright, imprint, ISBN, TOC dotted lines).
- * 2. Strips standalone "EK-3" headers, standalone "2 / 7" page numbers, and repeating annual plan page footers.
- * 3. Inserts clean line breaks (\n) before inline PDF section headings and Maarif component columns
- *    that `unpdf` glued onto the end of preceding sentences.
+ * 1. Normalizes decomposed Turkish Unicode characters (I\u0307 -> İ).
+ * 2. Strips textbook/PDF front-matter boilerplate (copyright, imprint, ISBN, TOC dotted lines).
+ * 3. Strips standalone "EK-3" headers, standalone "2 / 7" page numbers, and repeating annual plan page footers.
+ * 4. Inserts clean line breaks (\n) before inline PDF section headings and Maarif component columns
+ *    that `unpdf` glued onto the end of preceding sentences (even when preceding lines have no trailing punctuation).
  */
 export function stripFrontMatter(rawText: string): string {
   if (!rawText) return "";
 
-  let normalized = rawText
+  const normalized = normalizeTurkishUnicode(rawText)
+    // Pre-join 2-line wrapped section headings in PDFs so words like "Öğrenme" never stay dangling at the end of the previous section
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRETME|Öğretme|öğretme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları|uygulamaları)/g,
+      "\nÖĞRENME-ÖĞRETME UYGULAMALARI\n"
+    )
+    .replace(
+      /(?:ÖĞRETME|Öğretme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRENME|Öğrenme|öğrenme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları|uygulamaları)/g,
+      "\nÖĞRETME-ÖĞRENME UYGULAMALARI\n"
+    )
+    .replace(
+      /(?:(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*(?:ÖĞRETME|Öğretme|öğretme)|(?:ÖĞRETME|Öğretme)\s*[-–]?\s*(?:ÖĞRENME|Öğrenme|öğrenme))\s*\r?\n\s*(?:UYGULAMALAR[Iİ]|Uygulamaları|uygulamaları)/g,
+      "\nÖĞRENME-ÖĞRETME UYGULAMALARI\n"
+    )
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRETME|Öğretme|öğretme)\s+(?:YAŞANT[Iİ]LAR[Iİ]|Yaşantıları|yaşantıları)/g,
+      "\nÖĞRENME-ÖĞRETME YAŞANTILARI\n"
+    )
+    .replace(
+      /(?:(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*(?:ÖĞRETME|Öğretme|öğretme)|(?:ÖĞRETME|Öğretme)\s*[-–]?\s*(?:ÖĞRENME|Öğrenme|öğrenme))\s*\r?\n\s*(?:YAŞANT[Iİ]LAR[Iİ]|Yaşantıları|yaşantıları)/g,
+      "\nÖĞRENME-ÖĞRETME YAŞANTILARI\n"
+    )
+    .replace(
+      /(?:ÖN|Ön)\s*\r?\n\s*(?:DEĞERLEND[İI]RME|Değerlendirme|değerlendirme)(?:\s*\r?\n?\s*(?:SÜREC[İI]|Süreci|süreci))?/g,
+      "\nÖN DEĞERLENDİRME SÜRECİ\n"
+    )
+    .replace(
+      /(?:ÖN|Ön)\s+(?:DEĞERLEND[İI]RME|Değerlendirme|değerlendirme)\s*\r?\n\s*(?:SÜREC[İI]|Süreci|süreci)/g,
+      "\nÖN DEĞERLENDİRME SÜRECİ\n"
+    )
+    .replace(
+      /(?:TEMEL|Temel)\s*\r?\n\s*(?:KABULLER|Kabuller|kabuller)/g,
+      "\nTEMEL KABULLER\n"
+    )
+    .replace(
+      /(?:KÖPRÜ|Köprü)\s*\r?\n\s*(?:KURMA|Kurma|kurma)/g,
+      "\nKÖPRÜ KURMA\n"
+    )
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*\r?\n\s*(?:KAN[Iİ]TLAR[Iİ]|Kanıtları|kanıtları)(?:\s*\r?\n?\s*\(\s*(?:ÖLÇME|Ölçme)\s+(?:VE|ve)\s*\r?\n?\s*(?:DEĞERLEND[İI]RME|Değerlendirme)\s*\))?/g,
+      "\nÖĞRENME KANITLARI (ÖLÇME VE DEĞERLENDİRME)\n"
+    )
     // Remove repeating annual plan page footer/header blocks that end with page numbers like "2 / 7"
     .replace(
       /20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI[^\n]{5,180}?YILLIK\s*PLANI(?:\s*\(TYMM\))?\s*\d{1,2}\s*\/\s*\d{1,2}/gi,
@@ -143,14 +203,14 @@ export function stripFrontMatter(rawText: string): string {
     .replace(/(?:^|\s)\d{1,2}\s*\/\s*\d{1,2}(?=\s|$)/gm, " ")
     // Remove standalone or inline "EK-3", "EK-1", "EK - 3" form markers
     .replace(/(?:^|\s)EK\s*[-–]\s*\d{1,2}(?=\s|$)/gi, "\n")
-    // Insert newline before major section headings when glued inline after a sentence
+    // Insert newline before major section headings when glued inline after punctuation
     .replace(
-      /([.!?:;])\s+((?:ÖĞRENME\s*KANITLARI|Öğrenme\s*Kanıtları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|Öğrenme\s*[-–]?\s*Öğretme\s*Yaşantıları|TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|KÖPRÜ\s*KURMA|Köprü\s*Kurma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALARI|Öğrenme\s*[-–]?\s*Öğretme\s*Uygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları|FARKLILAŞTIRMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
+      /([.!?:;|])\s*((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]|Öğrenme\s*[Kk]anıtları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
       "$1\n$2"
     )
-    // Also split if "ÖĞRENME-ÖĞRETME YAŞANTILARI" or "Öğrenme Öğretme Uygulamaları" appears mid-line even without punctuation
+    // Also split if major Ders Bilgi Formu headings appear mid-line even WITHOUT preceding punctuation (e.g. after "yapabilme" or "YAŞANTILARI")
     .replace(
-      /\s+((?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALARI|Öğrenme\s*[-–]?\s*Öğretme\s*Uygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALARI|Öğretme\s*[-–]?\s*Öğrenme\s*Uygulamaları)(?=\s|[:(-]|$))/g,
+      /\s+((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\))?|Öğrenme\s*[Kk]anıtları(?:\s*\(Ölçme\s*ve\s*Değerlendirme\))?|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
       "\n$1"
     )
     // Insert newline before Maarif component code definitions (e.g. "E1.4. Kendine İnanma", "SDB2.2. İş Birliği") when NOT inside parentheses
@@ -168,16 +228,17 @@ export function stripFrontMatter(rawText: string): string {
     if (/^\d{1,2}\s*\/\s*\d{1,2}$/.test(t)) return false;
     if (/^EK\s*[-–]?\s*\d{1,2}$/i.test(t)) return false;
     if (/\.{4,}\s*:?\s*\d+/.test(t)) return false;
+    const upperT = toTrUpper(t);
     if (
-      /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|YARDIMCI\s*VE\s*KAYNAK\s*KİTAPLAR|Her\s*hakkı\s*saklıdır|hiçbir\s*surette\s*alınıp\s*yayımlanamaz|ISBN\s*[:\d-]|Baskı\s*Yılı|Matbaası|İSTİKL[ÂA]L\s*MARŞI|GENÇLİĞE\s*HİTABE|EDİTÖR|GÖRSEL\s*TASARIM\s*UZMANI|PROGRAM\s*GELİŞTİRME\s*UZMANI|ÖLÇME\s*VE\s*DEĞERLENDİRME\s*UZMANI|REHBERLİK\s*UZMANI/i.test(
-        t
+      /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|YARDIMCI\s*VE\s*KAYNAK\s*KİTAPLAR|HER\s*HAKKI\s*SAKLIDIR|HİÇBİR\s*SURETTE\s*ALINIP\s*YAYIMLANAMAZ|ISBN\s*[:\d-]|BASKI\s*YILI|MATBAASI|İSTİKL[ÂA]L\s*MARŞI|GENÇLİĞE\s*HİTABE|EDİTÖR|GÖRSEL\s*TASARIM\s*UZMANI|PROGRAM\s*GELİŞTİRME\s*UZMANI|ÖLÇME\s*VE\s*DEĞERLENDİRME\s*UZMANI|REHBERLİK\s*UZMANI/.test(
+        upperT
       )
     ) {
       return false;
     }
     if (
-      /20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI.*YILLIK\s*PLANI/i.test(
-        t
+      /20\d{2}\s*[-–]\s*20\d{2}\s*EĞİTİM\s*[-–]?\s*ÖĞRETİM\s*YILI.*YILLIK\s*PLANI/.test(
+        upperT
       )
     ) {
       seenAnnualPlanTitleCount++;
@@ -537,6 +598,14 @@ export interface ParsedOutcomeEntry {
   orderedSubKeys: string[];
 }
 
+export interface DbfUygulamaSegment {
+  index: number;
+  unitHint: string;
+  unitNumberHint: number;
+  rawText: string;
+  bullets: string[];
+}
+
 export interface StructuredDersBilgiFormu {
   sinif: string;
   ders: string;
@@ -555,6 +624,7 @@ export interface StructuredDersBilgiFormu {
   onDegerlendirmeSureci: string;
   kopruKurma: string;
   ogretmeUygulamalariByUnit: Record<string, string[]>;
+  ogretmeUygulamalariSegments?: DbfUygulamaSegment[];
   allOgretmeUygulamalariBullets: string[];
   farklilastirma: string;
   rawActivityCodes: string[];
@@ -1063,68 +1133,256 @@ export function parseMateryalChapterTree(
 }
 
 /**
+ * Checks if a line inside a Ders Bilgi Formu section is a PDF page-break artifact
+ * (standalone page number, repeated "DERS BİLGİ FORMU" header, or standalone "(ÖLÇME VE DEĞERLENDİRME)" continuation)
+ */
+function isDbfSectionPageArtifactOrSubHeader(line: string): boolean {
+  const trimmed = line.replace(/\|/g, " ").trim();
+  if (!trimmed) return true;
+  // Standalone page numbers like "1", "2", "- 2 -", "Sayfa 2", "Sayfa 2/5"
+  if (/^(?:[-–]\s*)?\d{1,3}(?:\s*[-–])?$/.test(trimmed)) return true;
+  const upper = toTrUpper(trimmed);
+  if (/^SAYFA\s*\d{1,3}(?:\s*\/\s*\d{1,3})?$/.test(upper)) return true;
+  // Continuation header line right below ÖĞRENME KANITLARI
+  if (
+    /^\(?\s*ÖLÇME\s*VE\s*DEĞERLENDİRME\s*\)?\s*[:|-]?$/.test(upper) ||
+    /^\(?\s*ÖĞRENME\s*KANITLARI\s*\)?\s*[:|-]?$/.test(upper)
+  ) {
+    return true;
+  }
+  // Repeated PDF page header like "TARIM ALANI BİTKİSEL ÜRETİM YÖNTEMLERİ 9 DERS BİLGİ FORMU" or "DERS BİLGİ FORMU"
+  if (
+    /^(?:[A-ZÇĞİÖŞÜ\s()-]+)?DERS\s*BİLGİ\s*FORMU$/.test(upper) &&
+    upper.length <= 95
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Strips leading "(ÖLÇME VE DEĞERLENDİRME)" or "(Ölçme ve Değerlendirme)" prefix from a line
+ * using Turkish-aware uppercase matching.
+ */
+function stripLeadingOlcmeHeaderPrefix(line: string): string {
+  const trimmed = line.trim();
+  const upper = toTrUpper(trimmed);
+  const m = upper.match(
+    /^\s*(?:\(\s*ÖLÇME\s+VE\s+DEĞERLENDİRME\s*\)|ÖLÇME\s+VE\s+DEĞERLENDİRME\s*\)|\(\s*ÖĞRENME\s+KANITLARI\s*\))\s*[:|\-–]?\s*/
+  );
+  if (m) {
+    return trimmed.slice(m[0].length).trim();
+  }
+  return trimmed;
+}
+
+/**
  * Extracts a multi-line block between a section start heading and a section stop heading.
- * Supports both line-start and inline stop headings so trailing section titles never bleed into the extracted paragraph.
+ * Uses Turkish-aware uppercase matching (`toTrUpper`) so Turkish `İ/i` and `I/ı` case differences
+ * and NFD characters never fail regex matching. Evaluates all candidate occurrences and returns
+ * the fullest substantive section so brief table-header mentions never shadow the real section.
+ */
+/**
+ * Strips any trailing section start headings (e.g. "ÖĞRENMEÖĞRETME YAŞANTILARI", "TEMEL KABULLER", etc.)
+ * that may have leaked into the end of an extracted section due to PDF line merging or boundary proximity.
+ */
+export function cleanTrailingSectionHeadings(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(
+      /\s*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME)\s*[:|\-–]?\s*$/i,
+      ""
+    )
+    .replace(
+      /\s+(?:ÖĞRENME|Öğrenme|ÖĞRETME|Öğretme|TEMEL|Temel|ÖN|Ön|KÖPRÜ|Köprü|FARKLILAŞTIRMA|Farklılaştırma)\s*[-–]?\s*$/i,
+      ""
+    )
+    .trim();
+}
+
+/**
+ * Extracts a multi-line block between a section start heading and a section stop heading.
+ * Uses Turkish-aware uppercase matching (`toTrUpper`) so Turkish `İ/i` and `I/ı` case differences
+ * and NFD characters never fail regex matching. Evaluates all candidate occurrences and returns
+ * the fullest substantive section so brief table-header mentions never shadow the real section.
  */
 function extractSectionBetweenHeadings(
   lines: string[],
   startLineRegex: RegExp,
   stopLineRegex: RegExp,
-  maxLines = 80,
-  maxChars = 3800
+  maxLines = 140,
+  maxChars = 6000
 ): string {
   // Build an inline version of stopLineRegex (without leading ^) so mid-line stop headings are also caught
-  const inlineStopSource = stopLineRegex.source.replace(/^\^/, "(?:^|\\s)");
+  const inlineStopSource = stopLineRegex.source.replace(/^\^/, "(?:^|\\s|\\|)");
   const inlineStopRegex = new RegExp(inlineStopSource, stopLineRegex.flags);
 
+  // Also allow startLineRegex after leading numbers (e.g. "4.", "IV."), bullets, markdown symbols, or table pipes
+  const flexibleStartSource = startLineRegex.source.replace(
+    /^\^/,
+    "^(?:[\\s|*•\\-–#]+|\\d{1,2}(?:\\.\\d{1,2})*[.)\\-–\\s]+|[IVXLCDM]+[.)\\-–\\s]+|(?:BÖLÜM|MADDE)\\s*\\d{1,2}[:.)\\s-]*)*"
+  );
+  const flexibleStartRegex = new RegExp(
+    flexibleStartSource,
+    startLineRegex.flags
+  );
+
+  let bestCandidate = "";
+
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const startMatch = line.match(startLineRegex);
+    const rawLine = normalizeTurkishUnicode(lines[i]);
+    const upperLine = toTrUpper(rawLine);
+    const startMatch = upperLine.match(flexibleStartRegex);
     if (startMatch) {
       const collected: string[] = [];
-      let remainder = line
-        .slice((startMatch.index || 0) + startMatch[0].length)
-        .replace(/^\s*\(?Ölçme\s+ve\s+Değerlendirme\)?\s*/i, "")
+      const matchEndIdx = (startMatch.index || 0) + startMatch[0].length;
+      let remainder = stripLeadingOlcmeHeaderPrefix(
+        rawLine.slice(matchEndIdx)
+      )
         .replace(/^[:|\-–\s]+/, "")
         .trim();
 
-      if (remainder) {
-        const inlineStopInRem = remainder.match(inlineStopRegex);
+      if (remainder && !isDbfSectionPageArtifactOrSubHeader(remainder)) {
+        const upperRem = toTrUpper(remainder);
+        const inlineStopInRem = upperRem.match(inlineStopRegex);
         if (inlineStopInRem && inlineStopInRem.index !== undefined) {
           const beforeStop = remainder.slice(0, inlineStopInRem.index).trim();
-          if (beforeStop) collected.push(beforeStop);
-          const paragraph = joinWrappedPdfLinesToParagraphs(collected);
-          if (paragraph.length >= 20) return paragraph.slice(0, maxChars);
+          if (beforeStop && !isDbfSectionPageArtifactOrSubHeader(beforeStop)) {
+            collected.push(beforeStop);
+          }
+          const paragraph = cleanTrailingSectionHeadings(
+            joinWrappedPdfLinesToParagraphs(collected)
+          );
+          if (paragraph.length > bestCandidate.length && paragraph.length >= 20) {
+            bestCandidate = paragraph.slice(0, maxChars);
+          }
           continue;
         }
         collected.push(remainder);
       }
 
       for (let j = i + 1; j < Math.min(lines.length, i + maxLines); j++) {
-        const nextLine = lines[j].trim();
+        const nextLine = normalizeTurkishUnicode(lines[j]).trim();
         if (!nextLine) continue;
-        if (stopLineRegex.test(nextLine)) {
+        if (isDbfSectionPageArtifactOrSubHeader(nextLine)) {
+          continue;
+        }
+
+        const cleanedNext = stripLeadingOlcmeHeaderPrefix(nextLine);
+        if (!cleanedNext) continue;
+        const upperNext = toTrUpper(cleanedNext);
+
+        if (stopLineRegex.test(upperNext)) {
           break;
         }
-        const inlineStopMatch = nextLine.match(inlineStopRegex);
+        const inlineStopMatch = upperNext.match(inlineStopRegex);
         if (inlineStopMatch && inlineStopMatch.index !== undefined) {
-          const beforeStop = nextLine.slice(0, inlineStopMatch.index).trim();
-          if (beforeStop) collected.push(beforeStop);
+          const beforeStop = cleanedNext
+            .slice(0, inlineStopMatch.index)
+            .trim();
+          if (beforeStop && !isDbfSectionPageArtifactOrSubHeader(beforeStop)) {
+            collected.push(beforeStop);
+          }
           break;
         }
-        collected.push(nextLine);
+        collected.push(cleanedNext);
         if (collected.join(" ").length >= maxChars) {
           break;
         }
       }
 
-      const paragraph = joinWrappedPdfLinesToParagraphs(collected);
-      if (paragraph.length >= 25) {
-        return paragraph.slice(0, maxChars);
+      const paragraph = cleanTrailingSectionHeadings(
+        joinWrappedPdfLinesToParagraphs(collected)
+      );
+      if (paragraph.length >= 20 && paragraph.length > bestCandidate.length) {
+        bestCandidate = paragraph.slice(0, maxChars);
       }
     }
   }
-  return "";
+  return cleanTrailingSectionHeadings(bestCandidate);
+}
+
+/**
+ * Dedicated, high-precision extractor for "ÖĞRENME KANITLARI (ÖLÇME VE DEĞERLENDİRME)" from Ders Bilgi Formu.
+ * Handles all MEB heading formats (single-line, numbered like "4. ÖLÇME VE DEĞERLENDİRME", two-line split heading,
+ * inline heading, parenthesized or reversed heading), filters out PDF page numbers / repeated headers across page breaks,
+ * stops strictly before "ÖĞRENMEÖĞRETME YAŞANTILARI" or other sections, and preserves full multi-paragraph content.
+ */
+function extractOgrenmeKanitlariFromDbf(
+  dbfLines: string[],
+  fallbackCombinedLines: string[]
+): string {
+  const startRegex =
+    /^(?:[\\s|*•\\-–#]+|\\d{1,2}(?:\\.\\d{1,2})*[.)\\-–\\s]+|[IVXLCDM]+[.)\\-–\\s]+|(?:BÖLÜM|MADDE)\\s*\\d{1,2}[:.)\\s-]*)*(?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(?\s*ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?\s*\)?)?|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*\(?\s*ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*\)?)?|ÖLÇME\s*[-–]\s*DEĞERLEND[İI]RME|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*[/&,]\s*ÖLÇME\s*VE\s*DEĞERLEND[İI]RME|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*VE\s*ÖLÇME\s*DEĞERLEND[İI]RME|DEĞERLEND[İI]RME\s*SÜREC[İI]|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\s*UYGULAMALAR[Iİ])(?=$|\s|[:|()\-–])/i;
+
+  const stopRegex =
+    /^(?:[\\s|*•\\-–#]+|\\d{1,2}(?:\\.\\d{1,2})*[.)\\-–\\s]+|[IVXLCDM]+[.)\\-–\\s]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|()\-–])/i;
+
+  // 1. Strictly search Ders Bilgi Formu lines first when available
+  if (dbfLines.length > 0) {
+    const fromDbf = extractSectionBetweenHeadings(
+      dbfLines,
+      startRegex,
+      stopRegex,
+      220,
+      8000
+    );
+    if (fromDbf.length >= 25) {
+      return cleanTrailingSectionHeadings(fromDbf);
+    }
+
+    // Secondary scan with broader start heading inside dbfLines
+    const fromDbfAltHeading = extractSectionBetweenHeadings(
+      dbfLines,
+      /^(?:[\\s|*•\\-–#]+|\\d{1,2}(?:\\.\\d{1,2})*[.)\\-–\\s]+|[IVXLCDM]+[.)\\-–\\s]+)*(?:ÖLÇME\s*VE\s*DEĞERLEND[İI]RME|ÖĞRENME\s*KAN[Iİ]TI|DEĞERLEND[İI]RME)(?=$|\s|[:|(-])/i,
+      stopRegex,
+      220,
+      8000
+    );
+    if (fromDbfAltHeading.length >= 25) {
+      return cleanTrailingSectionHeadings(fromDbfAltHeading);
+    }
+
+    // Raw block regex scan on joined dbfLines in case heading was embedded mid-line or across table boundaries
+    const rawDbfJoined = normalizeTurkishUnicode(dbfLines.join("\n"));
+    const upperJoined = toTrUpper(rawDbfJoined);
+    const blockMatch = upperJoined.match(
+      /(?:^|\n)\s*(?:[#|*•\-–]+\s*|\d{1,2}(?:\.\d{1,2})*[.)\s-]*|[IVXLCDM]+[.)\s-]*)?(?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(?\s*ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?\s*\)?)?|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*\(?\s*ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*\)?)?|ÖLÇME\s*[-–]\s*DEĞERLEND[İI]RME|DEĞERLEND[İI]RME\s*SÜREC[İI])\s*[:|\-–]?\s*([\s\S]{20,8000}?)(?=(?:\n\s*(?:[#|*•\-–]+\s*|\d{1,2}(?:\.\d{1,2})*[.)\s-]*|[IVXLCDM]+[.)\s-]*)?(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|ZENG[İI]NLEŞT[İI]RME|UYGUNDUR))|$)/i
+    );
+    if (blockMatch && blockMatch.index !== undefined) {
+      const fullMatchStart = blockMatch.index;
+      const fullMatchText = rawDbfJoined.slice(
+        fullMatchStart,
+        fullMatchStart + blockMatch[0].length
+      );
+      const bodyOnly = fullMatchText
+        .replace(
+          /^[\s\S]*?(?:ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\s*\)|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME|DEĞERLEND[İI]RME\s*SÜREC[İI])\s*[:|\-–]?\s*/i,
+          ""
+        )
+        .trim();
+      const rawBodyLines = bodyOnly
+        .split(/\r?\n/)
+        .map((l) => stripLeadingOlcmeHeaderPrefix(l.trim()))
+        .filter((l) => l && !isDbfSectionPageArtifactOrSubHeader(l));
+      const formatted = cleanTrailingSectionHeadings(
+        joinWrappedPdfLinesToParagraphs(rawBodyLines)
+      );
+      if (formatted.length >= 25) {
+        return formatted;
+      }
+    }
+  }
+
+  // 2. Only if dbfLines was empty, check fallbackCombinedLines
+  const fallbackResult = extractSectionBetweenHeadings(
+    fallbackCombinedLines,
+    startRegex,
+    stopRegex,
+    220,
+    8000
+  );
+  return cleanTrailingSectionHeadings(fallbackResult);
 }
 
 function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
@@ -1133,22 +1391,33 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
   let current = "";
 
   for (const rawLine of lines) {
-    const line = rawLine
-      .replace(/\|/g, " ")
-      .replace(/^\s*\(?Ölçme\s+ve\s+Değerlendirme\)?\s*[:|-]?\s*/i, "")
+    if (isDbfSectionPageArtifactOrSubHeader(rawLine)) continue;
+    const line = stripLeadingOlcmeHeaderPrefix(
+      normalizeTurkishUnicode(rawLine).replace(/\|/g, " ")
+    )
+      .replace(/^Süreci\s*[:|-]?\s*/i, "")
       .replace(/\s+/g, " ")
       .trim();
-    if (!line) continue;
+    if (!line || isDbfSectionPageArtifactOrSubHeader(line)) continue;
 
     if (!current) {
       current = line;
       continue;
     }
 
-    if (
+    const upperLine = toTrUpper(line);
+    const isBulletLine = /^(?:[*•\-–▪➢]|\d{1,2}[.)])\s+/.test(line);
+    const isParagraphStarterAfterDot =
       /[.!?]$/.test(current) &&
-      /^(?:Ayrıca|Örneğin)(?=$|\s|[,:])/i.test(line)
-    ) {
+      (/^(?:AYRICA|ÖRNEĞİN|BUNUN\s+YANINDA|BUNUNLA\s+BİRLİKTE|DİĞER\s+TARAFTAN|BU\s+SÜREÇTE|BU\s+KAPSAMDA|BU\s+BAĞLAMDA|ÖĞRETİM\s+SÜRECİNDE|DEĞERLENDİRME\s+SÜRECİNDE|PERFORMANS\s+GÖREV|ÖĞRENCİ\s+PERFORMANSINI|ÖĞRENCİLERİN\s+PERFORMANS)(?=$|\s|[,:])/.test(
+        upperLine
+      ) ||
+        (current.length >= 110 &&
+          line.length >= 85 &&
+          /[.!?]$/.test(line) &&
+          /^[A-ZÇĞİÖŞÜ]/.test(line)));
+
+    if (isBulletLine || isParagraphStarterAfterDot) {
       paragraphs.push(current);
       current = line;
     } else {
@@ -1160,24 +1429,54 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
     paragraphs.push(current);
   }
 
-  return paragraphs.join("\n");
+  return cleanTrailingSectionHeadings(paragraphs.join("\n"));
+}
+
+/**
+ * Normalizes Maarif code lists at the end of Öğretme-Öğrenme Uygulamaları blocks:
+ * 1. Restores missing opening parenthesis `(` when a PDF has `istenir KB2.11, E2.2, ... OB1).`
+ * 2. Ensures parenthesized code lists `(E1.4, E2.2, ..., D18.3)` have a trailing period `).`
+ * 3. Attaches standalone `. (E1.4, E2.2, ...).` to the preceding sentence so codes are never separated or lost.
+ */
+export function normalizeMaarifCodeListsInText(rawText: string): string {
+  if (!rawText) return "";
+  return normalizeTurkishUnicode(rawText)
+    // 1. Restore missing opening parenthesis before a list of >=2 Maarif codes ending with ")"
+    .replace(
+      /([^\s(])\s+((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*[,;]\s*)+(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*\))/g,
+      "$1 ($2"
+    )
+    // 2. Ensure a closing period after a parenthesized Maarif code list at the end of a sentence
+    .replace(
+      /(\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\))(?!\.)(?=\s+[A-ZÇĞİÖŞÜ*•]|\s*$)/g,
+      "$1."
+    )
+    // 3. If there is a period right before the parenthesized Maarif code list, attach the code list to the sentence before the period
+    .replace(
+      /\.\s*(\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.)/g,
+      " $1"
+    );
 }
 
 /**
  * Splits a block of "Öğretme-Öğrenme Uygulamaları" from Ders Bilgi Formu into the exact
- * asterisk bullet items shown in the 6 official PDFs.
+ * asterisk bullet items shown in the official MEB plans while preserving all trailing
+ * parenthesized Maarif component codes (e.g., `(E1.4, E2.2, E2.3, SDB2.2, SDB3.3, KB3.2, D3.2, D12.3, D16.3, D18.3).`).
  */
 export function splitOgretmeUygulamalariIntoBullets(
   rawBlock: string,
   unitTitle?: string
 ): string[] {
-  const joined = rawBlock
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^\*\s*/, "").trim())
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const joined = normalizeMaarifCodeListsInText(
+    rawBlock
+      .split(/\r?\n/)
+      .filter((l) => !isDbfSectionPageArtifactOrSubHeader(l))
+      .map((l) => l.replace(/^\*\s*/, "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 
   if (!joined) return [];
 
@@ -1196,13 +1495,26 @@ export function splitOgretmeUygulamalariIntoBullets(
 
   const sentenceParts = bodyText
     .split(
-      /(?<=\)\.)\s+|(?<=[.!?])\s+(?=(?:Öğretmen\s+tarafından|Öğrencilerden|Öğrencilerin|Öğrencilere|Elde\s+ettikleri|Edindikleri|Tohum\s+ekiminden|Spor\s+ekiminden|Tasarladıkları|Gruplara\s+ayrılan|Bu\s+süreçte|Bu\s+öğrenme\s+birimi|Ayrıca|Yapılan\s+çalışmalar|Uygulama\s+sürecinde|Bitki\s+üretim)(?=\s|[,:]))/g
+      /(?<=\)\.)\s+|(?<!\b(?:vb|örn|bkz|Dr|Prof|No|[A-ZÇĞİÖŞÜ]{1,4}\.\d+)\.)(?<=[.!?])\s+(?=[A-ZÇĞİÖŞÜ])/g
     )
     .map((s) => s.trim())
-    .filter((s) => s.length >= 10);
+    .filter((s) => s.length >= 8);
 
   for (const part of sentenceParts) {
-    bullets.push(part);
+    // If a part is ONLY a parenthesized code list, merge it onto the end of the previous bullet so codes are never isolated or dropped
+    if (
+      /^\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.?$/.test(
+        part
+      ) &&
+      bullets.length > 0
+    ) {
+      const prev = bullets[bullets.length - 1].replace(/\.$/, "");
+      bullets[bullets.length - 1] = `${prev} ${
+        part.endsWith(".") ? part : `${part}.`
+      }`;
+    } else {
+      bullets.push(part);
+    }
   }
 
   return bullets;
@@ -1216,33 +1528,8 @@ export function parseDersBilgiFormuStructured(
   yillikPlanText = "",
   dersMateryaliText = ""
 ): StructuredDersBilgiFormu {
-  let cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
+  const cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
   const cleanYillik = stripFrontMatter(yillikPlanText || "");
-
-  // Guard against cross-course contamination: if Yıllık Plan has outcome codes (e.g. BÜY.1.1)
-  // and Ders Bilgi Formu has outcome codes from a DIFFERENT course prefix (e.g. ST.1.1), ignore stale cleanDbf!
-  const extractCoursePrefixes = (txt: string): string[] => {
-    const matches =
-      txt.match(/\b([A-ZÇĞİÖŞÜ]{2,8})\.\d{1,2}\.\d{1,2}\b/g) || [];
-    const prefixes = new Set<string>();
-    for (const m of matches) {
-      const p = m.split(".")[0].toLocaleUpperCase("tr-TR");
-      if (!/^(?:SDB|KB|OB|AB|E|D)$/.test(p)) {
-        prefixes.add(p);
-      }
-    }
-    return Array.from(prefixes);
-  };
-
-  const yillikPrefixes = extractCoursePrefixes(cleanYillik);
-  const dbfPrefixes = extractCoursePrefixes(cleanDbf);
-  if (
-    yillikPrefixes.length > 0 &&
-    dbfPrefixes.length > 0 &&
-    !dbfPrefixes.some((p) => yillikPrefixes.includes(p))
-  ) {
-    cleanDbf = "";
-  }
 
   const combined = `${cleanDbf}\n\n${cleanYillik}`;
   const dbfLines = cleanDbf
@@ -1672,80 +1959,141 @@ export function parseDersBilgiFormuStructured(
     })
     .join("\n\n");
 
-  // 5. Extract Öğrenme Kanıtları (Full verbatim multi-paragraph block from Ders Bilgi Formu)
-  const ogrenmeKanitlari = extractSectionBetweenHeadings(
-    dbfLines.length > 0 ? dbfLines : combinedLines,
-    /^(?:ÖĞRENME\s*KANITLARI(?:\s*\(ÖLÇME\s*VE\s*DEĞERLENDİRME\))?|Öğrenme\s*Kanıtları(?:\s*\(Ölçme\s*ve\s*Değerlendirme\))?)(?=$|\s|[:|-])/i,
-    /^(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|Öğrenme\s*[-–]?\s*Öğretme\s*Yaşantıları|Temel\s*Kabuller|TEMEL\s*KABULLER)(?=$|\s|[:|-])/i,
-    70,
-    3600
+  // 5. Extract Öğrenme Kanıtları (Full verbatim multi-paragraph block strictly from Ders Bilgi Formu)
+  const ogrenmeKanitlari = extractOgrenmeKanitlariFromDbf(
+    dbfLines,
+    combinedLines
   );
 
-  // 6. Extract Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma (Full verbatim paragraphs)
-  const temelKabuller = extractSectionBetweenHeadings(
-    dbfLines.length > 0 ? dbfLines : combinedLines,
-    /^(?:TEMEL\s*KABULLER|Temel\s*Kabuller)(?=$|\s|[:|-])/i,
-    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?|KÖPRÜ\s*KURMA|Köprü\s*Kurma|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
-    25,
-    1200
-  );
+  // 6. Extract Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma (Full verbatim paragraphs strictly from Ders Bilgi Formu)
+  const sourceLinesForDbfSections =
+    dbfLines.length > 0 ? dbfLines : combinedLines;
 
-  const onDegerlendirmeSureci = extractSectionBetweenHeadings(
-    dbfLines.length > 0 ? dbfLines : combinedLines,
-    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|Ön\s*Değerlendirme(?:\s*Süreci)?)(?=$|\s|[:|-])/i,
-    /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i,
-    25,
-    1200
+  let temelKabuller = extractSectionBetweenHeadings(
+    sourceLinesForDbfSections,
+    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*YAŞANTILARI\s*[:|\-–]?\s*)?(?:TEMEL\s*KABULLER)(?=$|\s|[:|-])/i,
+    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:UYGULAMALARI|YAŞANTILARI)|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+    80,
+    3000
   );
+  if (!temelKabuller && dbfLines.length > 0) {
+    const joinedDbf = normalizeTurkishUnicode(dbfLines.join("\n"));
+    const upperDbf = toTrUpper(joinedDbf);
+    const tkMatch = upperDbf.match(
+      /TEMEL\s*KABULLER\s*[:|\-–]?\s*([\s\S]{20,2500}?)(?=ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|FARKLILAŞTIRMA|$)/
+    );
+    if (tkMatch && tkMatch.index !== undefined) {
+      const slice = joinedDbf
+        .slice(tkMatch.index, tkMatch.index + tkMatch[0].length)
+        .replace(/^[\s\S]*?TEMEL\s*KABULLER\s*[:|\-–]?\s*/i, "");
+      temelKabuller = joinWrappedPdfLinesToParagraphs(slice.split(/\r?\n/));
+    }
+  }
 
-  const kopruKurma = extractSectionBetweenHeadings(
-    dbfLines.length > 0 ? dbfLines : combinedLines,
-    /^(?:KÖPRÜ\s*KURMA|Köprü\s*Kurma)(?=$|\s|[:|-])/i,
-    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*UYGULAMALARI|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları|FARKLILAŞTIRMA|Farklılaştırma)(?=$|\s|[:|-])/i,
-    30,
-    1400
+  let onDegerlendirmeSureci = extractSectionBetweenHeadings(
+    sourceLinesForDbfSections,
+    /^(?:ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?)(?=$|\s|[:|-])/i,
+    /^(?:KÖPRÜ\s*KURMA|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:UYGULAMALARI|YAŞANTILARI)|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+    80,
+    3000
   );
+  if (!onDegerlendirmeSureci && dbfLines.length > 0) {
+    const joinedDbf = normalizeTurkishUnicode(dbfLines.join("\n"));
+    const upperDbf = toTrUpper(joinedDbf);
+    const odMatch = upperDbf.match(
+      /ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?\s*[:|\-–]?\s*([\s\S]{20,2500}?)(?=KÖPRÜ\s*KURMA|(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|FARKLILAŞTIRMA|$)/
+    );
+    if (odMatch && odMatch.index !== undefined) {
+      const slice = joinedDbf
+        .slice(odMatch.index, odMatch.index + odMatch[0].length)
+        .replace(
+          /^[\s\S]*?ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?\s*[:|\-–]?\s*/i,
+          ""
+        );
+      onDegerlendirmeSureci = joinWrappedPdfLinesToParagraphs(
+        slice.split(/\r?\n/)
+      );
+    }
+  }
 
-  // 7. Extract Öğrenme-Öğretme / Öğretme-Öğrenme Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit)
+  let kopruKurma = extractSectionBetweenHeadings(
+    sourceLinesForDbfSections,
+    /^(?:KÖPRÜ\s*KURMA)(?=$|\s|[:|-])/i,
+    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:UYGULAMALARI|YAŞANTILARI)|ÖĞRETME\s*UYGULAMALARI|ÖĞRENME\s*UYGULAMALARI|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+    80,
+    3000
+  );
+  if (!kopruKurma && dbfLines.length > 0) {
+    const joinedDbf = normalizeTurkishUnicode(dbfLines.join("\n"));
+    const upperDbf = toTrUpper(joinedDbf);
+    const kkMatch = upperDbf.match(
+      /KÖPRÜ\s*KURMA\s*[:|\-–]?\s*([\s\S]{20,2500}?)(?=(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*UYGULAMALARI|ÖĞRETME\s*UYGULAMALARI|FARKLILAŞTIRMA|$)/
+    );
+    if (kkMatch && kkMatch.index !== undefined) {
+      const slice = joinedDbf
+        .slice(kkMatch.index, kkMatch.index + kkMatch[0].length)
+        .replace(/^[\s\S]*?KÖPRÜ\s*KURMA\s*[:|\-–]?\s*/i, "");
+      kopruKurma = joinWrappedPdfLinesToParagraphs(slice.split(/\r?\n/));
+    }
+  }
+
+  // 7. Extract Öğrenme-Öğretme / Öğretme-Öğrenme Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit AND Topic/Code-Block)
   const ogretmeUygulamalariByUnit: Record<string, string[]> = {};
+  const ogretmeUygulamalariSegments: DbfUygulamaSegment[] = [];
   let allOgretmeUygulamalariBullets: string[] = [];
 
   const targetLines = dbfLines.length > 0 ? dbfLines : combinedLines;
   let uygulamalarStartIdx = -1;
   let uygulamalarEndIdx = targetLines.length;
 
-  const uygulamalarHeadingRegex =
-    /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALARI|Uygulamaları)|ÖĞRETME\s*UYGULAMALARI|Öğretme\s*Uygulamaları)(?=$|\s|[:|-])/i;
+  const uygulamalarHeadingUpperRegex =
+    /^(?:[\s|*•\-–]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:UYGULAMALARI|SÜRECİ\s*UYGULAMALARI)|ÖĞRETME\s*UYGULAMALARI|ÖĞRENME\s*UYGULAMALARI)(?=$|\s|[:|-])/i;
+
+  const uygulamalarStopUpperRegex =
+    /^(?:[\s|*•\-–]+)*(?:FARKLILAŞTIRMA|ZENGİNLEŞTİRME|DESTEKLEME|ÖĞRETMEN\s*VE\s*ÖĞRENCİ|UYGUNDUR|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
 
   for (let i = 0; i < targetLines.length; i++) {
-    if (uygulamalarHeadingRegex.test(targetLines[i])) {
+    const upperLine = toTrUpper(targetLines[i]);
+    if (uygulamalarHeadingUpperRegex.test(upperLine)) {
       uygulamalarStartIdx = i;
       for (let j = i + 1; j < targetLines.length; j++) {
-        if (
-          /^(?:FARKLILAŞTIRMA|Farklılaştırma|Zenginleştirme|ZENGİNLEŞTİRME|ÖĞRETMEN\s*VE\s*ÖĞRENCİ|UYGUNDUR)(?=$|\s|[:|-])/i.test(
-            targetLines[j]
-          )
-        ) {
+        if (uygulamalarStopUpperRegex.test(toTrUpper(targetLines[j]))) {
           uygulamalarEndIdx = j;
           break;
         }
       }
-      break;
+      if (uygulamalarEndIdx - uygulamalarStartIdx >= 2) {
+        break;
+      }
     }
   }
 
   if (uygulamalarStartIdx !== -1) {
     const rawUygulamaLines: string[] = [];
-    const firstRemainder = targetLines[uygulamalarStartIdx]
-      .replace(uygulamalarHeadingRegex, "")
-      .replace(/^[:|\-–\s]+/, "")
-      .trim();
-    if (firstRemainder) rawUygulamaLines.push(firstRemainder);
-
-    for (let k = uygulamalarStartIdx + 1; k < uygulamalarEndIdx; k++) {
-      rawUygulamaLines.push(targetLines[k]);
+    const startLineNorm = normalizeTurkishUnicode(
+      targetLines[uygulamalarStartIdx]
+    );
+    const startMatch = toTrUpper(startLineNorm).match(
+      uygulamalarHeadingUpperRegex
+    );
+    const firstRemainder = startMatch
+      ? startLineNorm
+          .slice((startMatch.index || 0) + startMatch[0].length)
+          .replace(/^[:|\-–\s]+/, "")
+          .trim()
+      : "";
+    if (firstRemainder && !isDbfSectionPageArtifactOrSubHeader(firstRemainder)) {
+      rawUygulamaLines.push(firstRemainder);
     }
 
+    for (let k = uygulamalarStartIdx + 1; k < uygulamalarEndIdx; k++) {
+      const candidateLine = normalizeTurkishUnicode(targetLines[k]).trim();
+      if (candidateLine && !isDbfSectionPageArtifactOrSubHeader(candidateLine)) {
+        rawUygulamaLines.push(candidateLine);
+      }
+    }
+
+    // 7A. Check for explicit UnitTitle: subheadings (e.g. "* Onarıcı tarım:", "Geleneksel tarım:")
     const unitSubheadingRegex =
       /^\*?\s*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,42}):\s*(.*)$/;
     let activeUnitKey = "";
@@ -1753,15 +2101,65 @@ export function parseDersBilgiFormuStructured(
     let currentUnitLines: string[] = [];
     let unitCounter = 0;
 
+    const splitIntoCodeTerminatedBlocks = (textToSplit: string): string[] => {
+      const rawBlocks = textToSplit
+        .split(
+          /(?<=\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.)\s+(?=[A-ZÇĞİÖŞÜ*•])/g
+        )
+        .map((b) => b.trim())
+        .filter((b) => b.length >= 25);
+
+      const mergedBlocks: string[] = [];
+      for (const block of rawBlocks) {
+        const hasCodeList =
+          /\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.?\s*$/.test(
+            block
+          );
+        if (
+          !hasCodeList &&
+          mergedBlocks.length > 0 &&
+          /^(?:Ayrıca|Bu\s+süreçte|Öğrencilerin\s+öz\s+değerlendirme)/i.test(
+            block
+          )
+        ) {
+          mergedBlocks[mergedBlocks.length - 1] = `${
+            mergedBlocks[mergedBlocks.length - 1]
+          } ${block}`;
+        } else {
+          mergedBlocks.push(block);
+        }
+      }
+      return mergedBlocks.length > 0 ? mergedBlocks : [textToSplit];
+    };
+
     const flushUnit = () => {
       if (activeUnitKey && currentUnitLines.length > 0) {
-        const bullets = splitOgretmeUygulamalariIntoBullets(
-          currentUnitLines.join("\n"),
-          activeUnitTitle
-        );
-        if (bullets.length > 0) {
-          ogretmeUygulamalariByUnit[activeUnitKey] = bullets;
-        }
+        const bodyWithoutHeader = currentUnitLines
+          .filter((l, idx) => !(idx === 0 && l.trim() === `${activeUnitTitle}:`))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const normalizedBody = normalizeMaarifCodeListsInText(bodyWithoutHeader);
+        const subBlocks = splitIntoCodeTerminatedBlocks(normalizedBody);
+
+        subBlocks.forEach((subBlock, subIdx) => {
+          const bullets = splitOgretmeUygulamalariIntoBullets(
+            subBlock,
+            activeUnitTitle
+          );
+          if (bullets.length > 0) {
+            if (subIdx === 0 || !ogretmeUygulamalariByUnit[activeUnitKey]) {
+              ogretmeUygulamalariByUnit[activeUnitKey] = bullets;
+            }
+            ogretmeUygulamalariSegments.push({
+              index: ogretmeUygulamalariSegments.length,
+              unitHint: activeUnitTitle,
+              unitNumberHint: unitCounter,
+              rawText: subBlock,
+              bullets,
+            });
+          }
+        });
       }
     };
 
@@ -1769,13 +2167,12 @@ export function parseDersBilgiFormuStructured(
       const m = uLine.match(unitSubheadingRegex);
       if (
         m &&
-        !/^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte)/i.test(
+        !/^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte|Bu\s+öğrenme)/i.test(
           m[1].trim()
         )
       ) {
         flushUnit();
         activeUnitTitle = m[1].trim();
-        // Format unit name like "Onarıcı tarım" (first word capitalized, rest lowercase as in the 6 sample PDFs)
         const formattedUnitName =
           activeUnitTitle.charAt(0).toLocaleUpperCase("tr-TR") +
           activeUnitTitle.slice(1).toLocaleLowerCase("tr-TR");
@@ -1794,9 +2191,58 @@ export function parseDersBilgiFormuStructured(
     }
     flushUnit();
 
-    allOgretmeUygulamalariBullets = splitOgretmeUygulamalariIntoBullets(
-      rawUygulamaLines.join("\n")
+    // 7B. If the Ders Bilgi Formu did NOT use "UnitName:" colons,
+    // split the section into individual Unit / Topic blocks terminated by parenthesized Maarif codes `(E1.4, E2.2, ..., D18.3).`!
+    const normalizedFullUygulamalar = normalizeMaarifCodeListsInText(
+      rawUygulamaLines.join(" ").replace(/\s+/g, " ").trim()
     );
+
+    if (ogretmeUygulamalariSegments.length === 0 && normalizedFullUygulamalar) {
+      const mergedCodeBlocks = splitIntoCodeTerminatedBlocks(
+        normalizedFullUygulamalar
+      );
+
+      let inferredUnitNo = 0;
+      mergedCodeBlocks.forEach((blockText, idx) => {
+        if (
+          /^(?:\*?\s*)?(?:Bu\s+öğrenme\s+birimi\s+işlenirken|Bu\s+öğrenme\s+biriminde|Bu\s+ünitede|Bu\s+temada)/i.test(
+            blockText
+          ) ||
+          idx === 0
+        ) {
+          inferredUnitNo++;
+        }
+        const unitNum =
+          mergedCodeBlocks.length === Object.keys(unitsByNumber).length
+            ? idx + 1
+            : Math.max(1, inferredUnitNo);
+        const unitTitleHint = unitsByNumber[unitNum] || "";
+        const segBullets = splitOgretmeUygulamalariIntoBullets(
+          blockText,
+          unitTitleHint || undefined
+        );
+        if (segBullets.length > 0) {
+          ogretmeUygulamalariSegments.push({
+            index: idx,
+            unitHint: unitTitleHint,
+            unitNumberHint: unitNum,
+            rawText: blockText,
+            bullets: segBullets,
+          });
+          const uKey = (unitTitleHint || `unit-${unitNum}`).toLocaleLowerCase(
+            "tr-TR"
+          );
+          if (!ogretmeUygulamalariByUnit[uKey]) {
+            ogretmeUygulamalariByUnit[uKey] = segBullets;
+          }
+        }
+      });
+    }
+
+    allOgretmeUygulamalariBullets =
+      ogretmeUygulamalariSegments.length > 0
+        ? ogretmeUygulamalariSegments[0].bullets
+        : splitOgretmeUygulamalariIntoBullets(normalizedFullUygulamalar);
   }
 
   for (const outcome of Object.values(outcomesMap)) {
@@ -1878,10 +2324,10 @@ export function parseDersBilgiFormuStructured(
   // 8. Extract Farklılaştırma
   const rawFarklilastirma = extractSectionBetweenHeadings(
     dbfLines.length > 0 ? dbfLines : combinedLines,
-    /^(?:FARKLILAŞTIRMA|Farklılaştırma)(?=$|\s|[:|-])/i,
+    /^(?:FARKLILAŞTIRMA|ZENGİNLEŞTİRME\s*VE\s*DESTEKLEME)(?=$|\s|[:|-])/i,
     /^(?:UYGUNDUR|ÖĞRETMEN|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i,
-    25,
-    1000
+    50,
+    2000
   );
   const farklilastirma =
     rawFarklilastirma &&
@@ -1912,6 +2358,7 @@ export function parseDersBilgiFormuStructured(
     onDegerlendirmeSureci,
     kopruKurma,
     ogretmeUygulamalariByUnit,
+    ogretmeUygulamalariSegments,
     allOgretmeUygulamalariBullets,
     farklilastirma,
     rawActivityCodes,
@@ -1932,6 +2379,7 @@ export interface WeekSpecificExtraction {
   outcomeHeader: string;
   weekSubComponents: string[];
   formattedOutcomeAndProcessBlock: string;
+  unitOgrenmeKanitlari: string;
   unitOgretmeUygulamalari: string[];
   rawWeekWindowText: string;
   searchKeywords: string[];
@@ -2433,18 +2881,172 @@ export function extractWeekPlanStructured(
     ? sureInWeek
     : `${sureInWeek} Ders Saati`;
 
-  // 7. Match Öğretme Uygulamaları for this Learning Unit from Ders Bilgi Formu
+  // 7. Dynamically filter BOTH 'Öğretme Uygulamaları' and 'Öğrenme Kanıtları' from Ders Bilgi Formu
+  // strictly for THIS week's Learning Unit (ogrenmeBirimi) and Topic (icerikCercevesi / sub-components)
   const lowerUnit = ogrenmeBirimi.toLocaleLowerCase("tr-TR");
   let unitOgretmeUygulamalari: string[] = [];
 
-  for (const [unitKey, bullets] of Object.entries(
-    structuredDbf.ogretmeUygulamalariByUnit
-  )) {
-    if (unitKey.includes(lowerUnit) || lowerUnit.includes(unitKey)) {
-      unitOgretmeUygulamalari = bullets;
-      break;
+  const segments = structuredDbf.ogretmeUygulamalariSegments || [];
+  const genericPedagogicalWords = new Set([
+    "öğrenci",
+    "öğrenciler",
+    "öğrencilerin",
+    "öğrencilere",
+    "öğrencilerden",
+    "öğretmen",
+    "öğrenme",
+    "öğretme",
+    "birimi",
+    "biriminde",
+    "işlenirken",
+    "araştırma",
+    "görevi",
+    "verilir",
+    "istenir",
+    "sağlanır",
+    "değerlendirilebilir",
+    "değerlendirme",
+    "ölçülebilir",
+    "ölçme",
+    "formu",
+    "formları",
+    "kullanılarak",
+    "süreçte",
+    "süreçlerinde",
+    "kapsamında",
+    "hakkında",
+    "ilgili",
+    "uygun",
+    "farklı",
+    "kaynaklardan",
+    "bilgiler",
+    "ışığında",
+    "yapabilme",
+    "açıklayabilme",
+    "açıklar",
+    "açıklanır",
+    "sıralar",
+    "sıralanır",
+    "uygular",
+    "uygulanır",
+  ]);
+
+  const extractDistinctiveStems = (txt: string): string[] => {
+    const words = normalizeTurkishUnicode(txt || "")
+      .toLocaleLowerCase("tr-TR")
+      .replace(/^[a-zçğıöşü]\)\s*/gm, "")
+      .replace(/\b[a-zçğıöşü]{2,8}\.\d+(?:\.\d+)*\b/g, " ")
+      .replace(/[^\p{L}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !genericPedagogicalWords.has(w));
+    return Array.from(new Set(words.map((w) => w.slice(0, 5))));
+  };
+
+  const unitStems = new Set(extractDistinctiveStems(ogrenmeBirimi));
+  const specificTopicContext = [
+    icerikCercevesi,
+    ...finalSubComponents,
+    selectedWeekObj?.konuVeCiktiOzeti || "",
+    outcomeHeader,
+  ].join(" ");
+  const topicOnlyStems = extractDistinctiveStems(specificTopicContext).filter(
+    (s) => !unitStems.has(s)
+  );
+  const allWeekStems = extractDistinctiveStems(
+    `${specificTopicContext} ${ogrenmeBirimi}`
+  );
+
+  if (segments.length > 0) {
+    // 7A. Identify segments belonging to this week's unit
+    const unitMatchedSegments = segments.filter((seg) => {
+      if (seg.unitHint && lowerUnit) {
+        const segUnitLower = seg.unitHint.toLocaleLowerCase("tr-TR");
+        if (
+          segUnitLower.includes(lowerUnit) ||
+          lowerUnit.includes(segUnitLower)
+        ) {
+          return true;
+        }
+      }
+      return seg.unitNumberHint === detectedUnitNo;
+    });
+
+    const candidatePool =
+      unitMatchedSegments.length > 0 ? unitMatchedSegments : segments;
+
+    if (candidatePool.length === 1) {
+      unitOgretmeUygulamalari = candidatePool[0].bullets;
+    } else {
+      let bestSegment: DbfUygulamaSegment | null = null;
+      let bestTopicScore = -1;
+      let tiedTopCount = 0;
+
+      for (const seg of candidatePool) {
+        const segLower = seg.rawText.toLocaleLowerCase("tr-TR");
+        let score = 0;
+
+        // Score distinctive topic/sub-component stems higher than shared unit stems
+        for (const stem of topicOnlyStems) {
+          if (segLower.includes(stem)) {
+            score += 4;
+          }
+        }
+        for (const stem of allWeekStems) {
+          if (segLower.includes(stem)) {
+            score += 1;
+          }
+        }
+
+        if (score > bestTopicScore) {
+          bestTopicScore = score;
+          bestSegment = seg;
+          tiedTopCount = 1;
+        } else if (score === bestTopicScore) {
+          tiedTopCount++;
+        }
+      }
+
+      // If multiple segments in the same unit tied (because the Yıllık Plan row only had the unit-level outcome),
+      // pick the segment corresponding to this week's position within the outcome/unit span
+      if (
+        unitMatchedSegments.length > 1 &&
+        (tiedTopCount > 1 || bestTopicScore <= 2) &&
+        weeksWithThisOutcome.length > 1
+      ) {
+        const weekPosIdx = Math.max(
+          0,
+          weeksWithThisOutcome.indexOf(targetWeekNo)
+        );
+        const segIdx = Math.min(
+          unitMatchedSegments.length - 1,
+          Math.floor(
+            (weekPosIdx / Math.max(1, weeksWithThisOutcome.length)) *
+              unitMatchedSegments.length
+          )
+        );
+        unitOgretmeUygulamalari = unitMatchedSegments[segIdx].bullets;
+      } else if (bestSegment) {
+        unitOgretmeUygulamalari = bestSegment.bullets;
+      }
     }
   }
+
+  // 7B. Fallback to ogretmeUygulamalariByUnit or allOgretmeUygulamalariBullets if segments was empty
+  if (unitOgretmeUygulamalari.length === 0) {
+    for (const [unitKey, bullets] of Object.entries(
+      structuredDbf.ogretmeUygulamalariByUnit
+    )) {
+      if (
+        !unitKey.startsWith("unit-") &&
+        lowerUnit &&
+        (unitKey.includes(lowerUnit) || lowerUnit.includes(unitKey))
+      ) {
+        unitOgretmeUygulamalari = bullets;
+        break;
+      }
+    }
+  }
+
   if (
     unitOgretmeUygulamalari.length === 0 &&
     Object.values(structuredDbf.ogretmeUygulamalariByUnit)[detectedUnitNo - 1]
@@ -2453,11 +3055,85 @@ export function extractWeekPlanStructured(
       structuredDbf.ogretmeUygulamalariByUnit
     )[detectedUnitNo - 1];
   }
+
   if (
     unitOgretmeUygulamalari.length === 0 &&
     structuredDbf.allOgretmeUygulamalariBullets.length > 0
   ) {
     unitOgretmeUygulamalari = structuredDbf.allOgretmeUygulamalariBullets;
+  }
+
+  // Ensure the unit heading bullet at index 0 matches this week's ogrenmeBirimi if a unit header bullet is present
+  if (
+    unitOgretmeUygulamalari.length > 0 &&
+    ogrenmeBirimi &&
+    unitOgretmeUygulamalari[0].endsWith(":")
+  ) {
+    unitOgretmeUygulamalari = [
+      `${ogrenmeBirimi}:`,
+      ...unitOgretmeUygulamalari.slice(1),
+    ];
+  }
+
+  // 7C. Dynamically filter 'Öğrenme Kanıtları' from Ders Bilgi Formu for THIS week's unit & topic
+  let unitOgrenmeKanitlari = (structuredDbf.ogrenmeKanitlari || "").trim();
+  const otherUnitStems = new Set<string>();
+  for (const [uNoStr, uName] of Object.entries(structuredDbf.unitsByNumber)) {
+    if (Number(uNoStr) !== detectedUnitNo && uName) {
+      for (const s of extractDistinctiveStems(uName)) {
+        if (!unitStems.has(s)) {
+          otherUnitStems.add(s);
+        }
+      }
+    }
+  }
+
+  if (unitOgrenmeKanitlari) {
+    const kanitParagraphs = unitOgrenmeKanitlari
+      .split(/\r?\n+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    if (kanitParagraphs.length > 1 && otherUnitStems.size > 0) {
+      const filteredParagraphs = kanitParagraphs.filter((para) => {
+        const lowerPara = para.toLocaleLowerCase("tr-TR");
+        const matchesCurrentUnitOrTopic = allWeekStems.some((stem) =>
+          lowerPara.includes(stem)
+        );
+        if (matchesCurrentUnitOrTopic) return true;
+
+        const matchesOtherUnit = Array.from(otherUnitStems).some((otherStem) =>
+          lowerPara.includes(otherStem)
+        );
+        // Keep general course-wide assessment paragraphs; exclude paragraphs that belong exclusively to a different unit
+        return !matchesOtherUnit;
+      });
+
+      if (filteredParagraphs.length > 0) {
+        unitOgrenmeKanitlari = filteredParagraphs.join("\n");
+      }
+    }
+  } else if (unitOgretmeUygulamalari.length > 0) {
+    // If the Ders Bilgi Formu had no separate ÖĞRENME KANITLARI heading, extract the assessment/evidence sentences from this week's unit/topic block
+    const evidenceBullets = unitOgretmeUygulamalari
+      .filter(
+        (b) =>
+          !b.endsWith(":") &&
+          /(?:ölçülebilir|değerlendirilebilir|ölçme\s+yöntemi|ölçme\s+araç|değerlendirme\s+formu|kontrol\s+listesi|gözlem\s+formu|çalışma\s+rapor|T\s+şeması|yapılandırılmış\s+grid|tanılayıcı\s+dallanmış|dereceli\s+puanlama|rubrik)/i.test(
+            b
+          )
+      )
+      .map((b) =>
+        b
+          .replace(
+            /\s*\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.?\s*$/,
+            "."
+          )
+          .trim()
+      );
+    if (evidenceBullets.length > 0) {
+      unitOgrenmeKanitlari = evidenceBullets.join("\n");
+    }
   }
 
   // 8. Build rich search keywords for slicing Ders Materyali (textbook) specifically for this week's sub-components
@@ -2494,6 +3170,7 @@ export function extractWeekPlanStructured(
     outcomeHeader,
     weekSubComponents: finalSubComponents,
     formattedOutcomeAndProcessBlock,
+    unitOgrenmeKanitlari,
     unitOgretmeUygulamalari,
     rawWeekWindowText,
     searchKeywords: Array.from(searchKeywords),
@@ -2884,9 +3561,9 @@ interface SectionSearchProfile {
 const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> = {
   Ogrenme_Kanitlari: {
     headerRegex:
-      /^(?:ÖĞRENME\s*KANITLARI|ÖLÇME\s*VE\s*DEĞERLENDİRME|DEĞERLENDİRME\s*SÜRECİ|Ölçme\s*Araçları)(?=$|\s|[:|(-])/i,
+      /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+|(?:BÖLÜM|MADDE)\s*\d{1,2}[:.)\s-]*)*(?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(?\s*ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?\s*\)?)?|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME(?:\s*\(?\s*ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*\)?)?|ÖLÇME\s*[-–]\s*DEĞERLEND[İI]RME|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*[/&,]\s*ÖLÇME\s*VE\s*DEĞERLEND[İI]RME|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]\s*VE\s*ÖLÇME\s*DEĞERLEND[İI]RME|DEĞERLEND[İI]RME\s*SÜREC[İI]|ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\s*UYGULAMALAR[Iİ])(?=$|\s|[:|()\-–])/i,
     stopRegex:
-      /^(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANTILARI|TEMEL\s*KABULLER|Temel\s*Kabuller|ÖN\s*DEĞERLENDİRME|FARKLILAŞTIRMA)(?=$|\s|[:|-])/i,
+      /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|()\-–])/i,
     semanticKeywords: [
       "gözlem formu",
       "akran değerlendirme",
@@ -2899,12 +3576,9 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
       "geri bildirim",
       "öğrenci performansını",
     ],
-    characteristicPhrases: [
-      /(?:gözlem\s+formu|dereceli\s+puanlama\s+anahtarı|rubrik|kontrol\s+listesi|öz\s+değerlendirme)/i,
-      /(?:değerlendirilirken|ölçme\s+araçlarından|geri\s+bildirim)/i,
-    ],
-    minChars: 60,
-    maxChars: 3600,
+    characteristicPhrases: [],
+    minChars: 25,
+    maxChars: 8000,
   },
   Temel_Kabuller: {
     headerRegex:
@@ -3068,6 +3742,33 @@ export function autoSearchDocumentSectionFallback(
   aiHintText?: string
 ): string {
   const profile = SECTION_SEARCH_PROFILES[sectionKey];
+  const dbfLines = (rawDbfText || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // If searching for Ogrenme_Kanitlari, strictly run our dedicated Ders Bilgi Formu extractor first
+  if (sectionKey === "Ogrenme_Kanitlari" && dbfLines.length > 0) {
+    const dedicatedKanitlar = extractOgrenmeKanitlariFromDbf(dbfLines, []);
+    if (dedicatedKanitlar && dedicatedKanitlar.length >= profile.minChars) {
+      return dedicatedKanitlar;
+    }
+  }
+
+  // Stage 1A: Direct Header & Synonym Boundary Scan strictly in Ders Bilgi Formu lines first
+  if (dbfLines.length > 0) {
+    const dbfStage1 = extractSectionBetweenHeadings(
+      dbfLines,
+      profile.headerRegex,
+      profile.stopRegex,
+      200,
+      profile.maxChars
+    );
+    if (dbfStage1 && dbfStage1.length >= profile.minChars) {
+      return dbfStage1;
+    }
+  }
+
   const combinedSource = [rawDbfText || "", rawYillikPlanText || ""]
     .filter(Boolean)
     .join("\n");
@@ -3078,21 +3779,27 @@ export function autoSearchDocumentSectionFallback(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  // Stage 1: Direct Header & Synonym Boundary Scan
-  const stage1Match = extractSectionBetweenHeadings(
-    sourceLines,
-    profile.headerRegex,
-    profile.stopRegex,
-    profile.minChars,
-    profile.maxChars
-  );
-  if (stage1Match && stage1Match.length >= profile.minChars) {
-    return stage1Match;
+  // Stage 1B: Direct Header & Synonym Boundary Scan across combined source (only if not Ogrenme_Kanitlari when dbf exists)
+  if (sectionKey !== "Ogrenme_Kanitlari" || dbfLines.length === 0) {
+    const stage1Match = extractSectionBetweenHeadings(
+      sourceLines,
+      profile.headerRegex,
+      profile.stopRegex,
+      200,
+      profile.maxChars
+    );
+    if (stage1Match && stage1Match.length >= profile.minChars) {
+      return stage1Match;
+    }
   }
 
   // Stage 2: Characteristic Regex Pattern Match across the raw text
+  const stage2Source =
+    dbfLines.length > 0 && sectionKey === "Ogrenme_Kanitlari"
+      ? rawDbfText
+      : combinedSource;
   for (const regex of profile.characteristicPhrases) {
-    const match = combinedSource.match(regex);
+    const match = stage2Source.match(regex);
     if (match) {
       const captured = (match[1] || match[0]).trim();
       if (captured.length >= profile.minChars) {
@@ -3101,53 +3808,54 @@ export function autoSearchDocumentSectionFallback(
     }
   }
 
-  // Stage 3: Sliding Window Semantic Keyword Density + AI Hint Similarity Scan
-  // Splits the raw documents into paragraph blocks and finds the block with highest semantic density
-  const paragraphs = combinedSource
-    .split(/\n{2,}|(?=\b(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|ÖĞRENME\s*KANITLARI|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\b)/i)
-    .map((p) => p.replace(/\s+/g, " ").trim())
-    .filter((p) => p.length >= profile.minChars);
-
-  let bestParagraph = "";
-  let bestScore = 0;
-
-  for (const para of paragraphs) {
-    // Skip obvious copyright/front-matter noise
-    if (
-      /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır/i.test(
-        para
+  // Stage 3: Sliding Window Semantic Keyword Density (skip for Ogrenme_Kanitlari so Öğretme Uygulamaları or Yıllık Plan never masquerade as Öğrenme Kanıtları)
+  if (sectionKey !== "Ogrenme_Kanitlari") {
+    const paragraphs = combinedSource
+      .split(
+        /\n{2,}|(?=\b(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA|ÖĞRENME\s*KANITLARI|(?:ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRENME\s*[-–]?\s*ÖĞRETME))\b)/i
       )
-    ) {
-      continue;
-    }
+      .map((p) => p.replace(/\s+/g, " ").trim())
+      .filter((p) => p.length >= profile.minChars);
 
-    const lowerPara = para.toLocaleLowerCase("tr-TR");
-    let keywordHits = 0;
-    for (const kw of profile.semanticKeywords) {
-      if (lowerPara.includes(kw.toLocaleLowerCase("tr-TR"))) {
-        keywordHits++;
+    let bestParagraph = "";
+    let bestScore = 0;
+
+    for (const para of paragraphs) {
+      if (
+        /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır/i.test(
+          para
+        )
+      ) {
+        continue;
+      }
+
+      const lowerPara = para.toLocaleLowerCase("tr-TR");
+      let keywordHits = 0;
+      for (const kw of profile.semanticKeywords) {
+        if (lowerPara.includes(kw.toLocaleLowerCase("tr-TR"))) {
+          keywordHits++;
+        }
+      }
+
+      let score =
+        profile.semanticKeywords.length > 0
+          ? keywordHits / profile.semanticKeywords.length
+          : 0;
+
+      if (aiHintText && aiHintText.trim().length >= 20) {
+        const sim = computeTextSimilarity(aiHintText, para);
+        score = Math.max(score, sim.tokenContainmentScore * 0.85);
+      }
+
+      if (score > bestScore && score >= 0.28) {
+        bestScore = score;
+        bestParagraph = para;
       }
     }
 
-    let score =
-      profile.semanticKeywords.length > 0
-        ? keywordHits / profile.semanticKeywords.length
-        : 0;
-
-    // If AI provided a partial/paraphrased hint, boost paragraphs that share tokens with it
-    if (aiHintText && aiHintText.trim().length >= 20) {
-      const sim = computeTextSimilarity(aiHintText, para);
-      score = Math.max(score, sim.tokenContainmentScore * 0.85);
+    if (bestParagraph) {
+      return bestParagraph.slice(0, profile.maxChars);
     }
-
-    if (score > bestScore && score >= 0.28) {
-      bestScore = score;
-      bestParagraph = para;
-    }
-  }
-
-  if (bestParagraph) {
-    return bestParagraph.slice(0, profile.maxChars);
   }
 
   // Special handling if searching for Ogrenme_Ciktilari_ve_Surec_Bilesenleri in Yıllık Plan / Materyal
@@ -3282,28 +3990,8 @@ export function resolveDbfSectionWithSimilarityAndFallback(
   const rawYillik = structuredDbf.rawYillikPlanText || "";
   const combinedRawDocs = `${rawDbf}\n${rawYillik}`.trim();
 
-  // Case 1: Pre-extracted verbatim section from Ders Bilgi Formu exists
-  if (cleanPreExtracted.length >= 25) {
-    if (!cleanAi) {
-      return cleanPreExtracted;
-    }
-
-    // Run text similarity analysis between AI output and the original Ders Bilgi Formu section
-    const similarity = computeTextSimilarity(
-      cleanAi,
-      cleanPreExtracted,
-      0.75
-    );
-
-    // If AI output conflicts with the original document (or is shorter/truncated), lock in the original document text
-    if (
-      similarity.hasConflict ||
-      cleanAi.length < cleanPreExtracted.length * 0.9
-    ) {
-      return cleanPreExtracted;
-    }
-
-    // Even when AI is very similar, verify against raw document so zero words are altered
+  // Case 1: Pre-extracted verbatim section from Ders Bilgi Formu exists -> Always lock 1:1 verbatim
+  if (cleanPreExtracted.length >= 15) {
     return cleanPreExtracted;
   }
 
@@ -3516,7 +4204,7 @@ export function enforceAndMergeLessonPlan(
     }
   );
 
-  // 2. Resolve Öğretme Uygulamaları with similarity conflict protection + automatic document search fallback
+  // 2. Resolve Öğretme Uygulamaları strictly from the Ders Bilgi Formu unit/topic block (preserving trailing Maarif codes)
   let finalOgretmeUygulamalari = autoSearchOgretmeUygulamalariBulletsFallback(
     structuredDbf,
     weekData,
@@ -3524,32 +4212,21 @@ export function enforceAndMergeLessonPlan(
   );
   if (finalOgretmeUygulamalari.length === 0) {
     finalOgretmeUygulamalari = fallbackActivities.Ogretme_Uygulamalari;
-  } else if (
-    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari &&
-    aiPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.length > 0
-  ) {
-    // Check if AI's Ogretme_Uygulamalari conflicts with the original Ders Bilgi Formu bullets
-    const aiJoined =
-      aiPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.join(" ");
-    const dbfJoined = finalOgretmeUygulamalari.join(" ");
-    const sim = computeTextSimilarity(aiJoined, dbfJoined, 0.78);
-    if (sim.hasConflict) {
-      // Prevent AI from overwriting or conflicting with the user's Ders Bilgi Formu items
-      finalOgretmeUygulamalari = finalOgretmeUygulamalari.map((s) =>
-        s.replace(/^\*\s*/, "").trim()
-      );
-    }
+  } else {
+    finalOgretmeUygulamalari = finalOgretmeUygulamalari.map((s) =>
+      s.replace(/^\*\s*/, "").trim()
+    );
   }
 
-  // 3. Resolve static Ders Bilgi Formu sections using similarity analysis & automatic document section search fallback
+  // 3. Resolve Ders Bilgi Formu sections (using week/unit/topic-filtered unitOgrenmeKanitlari for Öğrenme Kanıtları)
   const finalOgrenmeKanitlari = resolveDbfSectionWithSimilarityAndFallback(
     "Ogrenme_Kanitlari",
-    structuredDbf.ogrenmeKanitlari,
+    weekData.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari,
     aiPlan?.Ogrenme_Kanitlari,
     structuredDbf,
     weekData,
     materyalSlice,
-    `Öğrenci performansını belirlemeye yönelik çalışmalar değerlendirilirken gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği ve dereceli puanlama anahtarı (rubrik) gibi ölçme araçlarından uygun olanlar seçilerek kullanılabilir.\nAyrıca öz değerlendirme ve akran değerlendirme formları kullanılarak öğrencilerin öğretim sürecine katılımları değerlendirilebilir. Öğrencilerin bilgi düzeyleri, uygulama becerileri, zaman yönetimi ile malzeme kullanımı gibi ölçütler bağlamında değerlendirilerek geri bildirim verilir.`
+    `${cleanDers} dersinde öğrenci performansını belirlemeye yönelik çalışmalar değerlendirilirken gözlem formu, akran değerlendirme, öz değerlendirme, derecelendirme ölçeği ve dereceli puanlama anahtarı (rubrik) gibi ölçme araçlarından uygun olanlar seçilerek kullanılabilir.\n${weekData.ogrenmeBirimi || cleanDers} ünitesi ve ${weekData.icerikCercevesi || "ilgili konu"} uygulamalarında öğrencilerin süreç odaklı performansları ve uygulama adımları gözlem formları ile izlenerek geri bildirim sağlanır.`
   );
 
   const finalTemelKabuller = resolveDbfSectionWithSimilarityAndFallback(

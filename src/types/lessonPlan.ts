@@ -42,8 +42,11 @@ export interface YillikPlanWeekItem {
   tarihAraligi: string; // Örn: "14 - 18 Eylül"
   onayTarihi: string; // Örn: "14/09/2026"
   ogrenmeBirimi?: string;
+  icerikCercevesi?: string;
   konuVeCiktiOzeti?: string;
   sure?: string;
+  ogrenmeKanitlari?: string;
+  ogretmeUygulamalari?: string[];
 }
 
 export interface DocumentHeaderFooterMeta {

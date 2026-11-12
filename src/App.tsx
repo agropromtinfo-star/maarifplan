@@ -13,10 +13,13 @@ import {
 import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
+import { TopicSummaryModal } from "./components/TopicSummaryModal";
 import {
   downloadWordDoc,
   downloadAllWeeksWordDoc,
   exportAllWeeksPdfPrint,
+  applyDocumentTitleForPdf,
+  triggerPrintWithFileName,
 } from "./utils/exportPlan";
 import {
   extractFileContentHybrid,
@@ -30,7 +33,9 @@ import {
 } from "./utils/clientFileExtractor";
 import {
   enforceAndMergeLessonPlan,
+  extractWeekPlanStructured,
   formatFullWeekAndDateRange,
+  parseDersBilgiFormuStructured,
   resolveValidDateRange,
 } from "./shared/maarifPlanEngine";
 import {
@@ -50,6 +55,7 @@ import {
   ChevronDown,
   Lock,
   Unlock,
+  BookOpen,
 } from "lucide-react";
 
 type ActiveTab = "workspace" | "official-table" | "saved-plans";
@@ -324,6 +330,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [isTopicSummaryOpen, setIsTopicSummaryOpen] = useState<boolean>(false);
 
   // Saved plans in localStorage
   const [savedPlans, setSavedPlans] = useState<SavedLessonPlanRecord[]>(() => {
@@ -349,6 +356,18 @@ export default function App() {
     }
   }, [savedPlans]);
 
+  // Keep browser document.title synced to "Ders İsmi_EğitimÖğretimYılı_GünlükPlan" so PDF Save As dialogs always prefill this exact filename
+  useEffect(() => {
+    applyDocumentTitleForPdf(meta, currentPlan);
+    const handleBeforePrint = () => {
+      applyDocumentTitleForPdf(meta, currentPlan);
+    };
+    window.addEventListener("beforeprint", handleBeforePrint);
+    return () => {
+      window.removeEventListener("beforeprint", handleBeforePrint);
+    };
+  }, [meta.dersIsmi, meta.egitimOgretimYili, currentPlan]);
+
   const updateMetaField = (
     key: keyof DocumentHeaderFooterMeta,
     value: string
@@ -362,61 +381,117 @@ export default function App() {
   // Request ID tracker to discard stale async week-parse responses when a new course is uploaded
   const weekParseRequestIdRef = useRef<number>(0);
 
+  // Memoized structured Ders Bilgi Formu for dynamic unit & topic filtering of Öğrenme Kanıtları and Öğretme Uygulamaları
+  const structuredDbfMemo = useMemo(() => {
+    return parseDersBilgiFormuStructured(
+      dersBilgiFormu,
+      yillikPlan,
+      dersMateryali
+    );
+  }, [dersBilgiFormu, yillikPlan, dersMateryali]);
+
   // Memoized deterministic week & unit list derived directly from the active course documents
   const localParsedWeeks = useMemo<YillikPlanWeekItem[]>(() => {
     if (!yillikPlan.trim()) return [];
     return parseQuickWeeksClient(yillikPlan, dersBilgiFormu, dersMateryali);
   }, [yillikPlan, dersBilgiFormu, dersMateryali]);
 
-  // Memoized activeWeekList that always binds to the current document's weeks & units and never carries stale course units
+  // Memoized activeWeekList that always binds to the current document's weeks & units
+  // and dynamically filters 'Öğrenme Kanıtları' and 'Öğretme Uygulamaları' from dersBilgiFormu per week's unit & topic
   const activeWeekList = useMemo<YillikPlanWeekItem[]>(() => {
     if (!yillikPlan.trim()) {
       return DEFAULT_MEB_WEEKS;
     }
 
-    if (extractedWeeks.length > 0) {
-      const distinctAiUnits = new Set(
-        extractedWeeks.map((w) => (w.ogrenmeBirimi || "").trim()).filter(Boolean)
+    const baseWeeks: YillikPlanWeekItem[] =
+      extractedWeeks.length > 0
+        ? (() => {
+            const distinctAiUnits = new Set(
+              extractedWeeks
+                .map((w) => (w.ogrenmeBirimi || "").trim())
+                .filter(Boolean)
+            );
+            const distinctLocalUnits = new Set(
+              localParsedWeeks
+                .map((w) => (w.ogrenmeBirimi || "").trim())
+                .filter(Boolean)
+            );
+
+            return extractedWeeks.map((w) => {
+              const localMatch = localParsedWeeks.find(
+                (lw) => lw.haftaNo === w.haftaNo
+              );
+              const preferLocalUnit =
+                Boolean(localMatch?.ogrenmeBirimi) &&
+                (!w.ogrenmeBirimi ||
+                  (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
+                  (distinctLocalUnits.size > 0 &&
+                    !distinctLocalUnits.has((w.ogrenmeBirimi || "").trim())));
+
+              return {
+                ...w,
+                tarihAraligi: resolveValidDateRange(
+                  w.tarihAraligi || localMatch?.tarihAraligi || "",
+                  w.haftaNo
+                ),
+                ogrenmeBirimi: preferLocalUnit
+                  ? localMatch!.ogrenmeBirimi
+                  : w.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
+                icerikCercevesi:
+                  localMatch?.icerikCercevesi || w.icerikCercevesi || "",
+                konuVeCiktiOzeti:
+                  localMatch?.konuVeCiktiOzeti || w.konuVeCiktiOzeti || "",
+                sure: w.sure || localMatch?.sure || "",
+              };
+            });
+          })()
+        : localParsedWeeks.length > 0
+        ? localParsedWeeks
+        : DEFAULT_MEB_WEEKS;
+
+    // Dynamically filter 'Öğrenme Kanıtları' and 'Öğretme Uygulamaları' from dersBilgiFormu for each week's specific unit and topic
+    return baseWeeks.map((weekItem) => {
+      const validDate = resolveValidDateRange(
+        weekItem.tarihAraligi,
+        weekItem.haftaNo
       );
-      const distinctLocalUnits = new Set(
-        localParsedWeeks
-          .map((w) => (w.ogrenmeBirimi || "").trim())
-          .filter(Boolean)
+      const weekSpecific = extractWeekPlanStructured(
+        yillikPlan,
+        weekItem.haftaEtiketi,
+        validDate,
+        structuredDbfMemo,
+        {
+          ...weekItem,
+          tarihAraligi: validDate,
+        }
       );
 
-      return extractedWeeks.map((w) => {
-        const localMatch = localParsedWeeks.find(
-          (lw) => lw.haftaNo === w.haftaNo
-        );
-        const preferLocalUnit =
-          Boolean(localMatch?.ogrenmeBirimi) &&
-          (!w.ogrenmeBirimi ||
-            (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
-            (distinctLocalUnits.size > 0 &&
-              !distinctLocalUnits.has((w.ogrenmeBirimi || "").trim())));
-
-        return {
-          ...w,
-          tarihAraligi: resolveValidDateRange(
-            w.tarihAraligi || localMatch?.tarihAraligi || "",
-            w.haftaNo
-          ),
-          ogrenmeBirimi: preferLocalUnit
-            ? localMatch!.ogrenmeBirimi
-            : w.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
-          konuVeCiktiOzeti:
-            localMatch?.konuVeCiktiOzeti || w.konuVeCiktiOzeti || "",
-          sure: w.sure || localMatch?.sure || "",
-        };
-      });
-    }
-
-    if (localParsedWeeks.length > 0) {
-      return localParsedWeeks;
-    }
-
-    return DEFAULT_MEB_WEEKS;
-  }, [yillikPlan, extractedWeeks, localParsedWeeks]);
+      return {
+        ...weekItem,
+        tarihAraligi: validDate,
+        ogrenmeBirimi:
+          weekSpecific.ogrenmeBirimi || weekItem.ogrenmeBirimi || "",
+        icerikCercevesi:
+          weekSpecific.icerikCercevesi || weekItem.icerikCercevesi || "",
+        ogrenmeKanitlari:
+          weekSpecific.unitOgrenmeKanitlari ||
+          structuredDbfMemo.ogrenmeKanitlari ||
+          weekItem.ogrenmeKanitlari ||
+          "",
+        ogretmeUygulamalari:
+          weekSpecific.unitOgretmeUygulamalari.length > 0
+            ? weekSpecific.unitOgretmeUygulamalari
+            : weekItem.ogretmeUygulamalari || [],
+      };
+    });
+  }, [
+    yillikPlan,
+    dersBilgiFormu,
+    dersMateryali,
+    extractedWeeks,
+    localParsedWeeks,
+    structuredDbfMemo,
+  ]);
 
   const selectedWeekObj = useMemo<YillikPlanWeekItem>(() => {
     return (
@@ -439,7 +514,7 @@ export default function App() {
           prev.onayTarihi,
       }));
 
-      // Immediately keep the Lesson Plan Output (Öğrenme Çıktıları ve Süreç Bileşenleri, İçerik Çerçevesi, Öğrenme Birimi, Yaşantılar) updated for the selected week
+      // Immediately keep the Lesson Plan Output (including week/unit/topic-filtered Öğrenme Kanıtları and Öğretme Uygulamaları) updated for the selected week
       if (yillikPlan.trim()) {
         const detectedDocMeta = extractDocumentMetadataClient(
           `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
@@ -462,6 +537,14 @@ export default function App() {
             tarihAraligi: validDate,
           },
         });
+
+        if (found.ogrenmeKanitlari) {
+          weekSyncedPlan.Ogrenme_Kanitlari = found.ogrenmeKanitlari;
+        }
+        if (found.ogretmeUygulamalari && found.ogretmeUygulamalari.length > 0) {
+          weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
+            found.ogretmeUygulamalari.map((b) => b.replace(/^\*\s*/, "").trim());
+        }
 
         setCurrentPlan((prevPlan) => (prevPlan ? weekSyncedPlan : prevPlan));
       }
@@ -503,7 +586,7 @@ export default function App() {
         const detectedDocMeta = extractDocumentMetadataClient(
           `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
         );
-        return synthesizePlanClientSide({
+        const synced = synthesizePlanClientSide({
           yillik_plan: yillikPlan,
           ders_materyali: dersMateryali,
           ders_bilgi_formu: dersBilgiFormu,
@@ -516,11 +599,25 @@ export default function App() {
             tarihAraligi: validDate,
           },
         });
+        if (activeWeek.ogrenmeKanitlari) {
+          synced.Ogrenme_Kanitlari = activeWeek.ogrenmeKanitlari;
+        }
+        if (
+          activeWeek.ogretmeUygulamalari &&
+          activeWeek.ogretmeUygulamalari.length > 0
+        ) {
+          synced.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
+            activeWeek.ogretmeUygulamalari.map((b) =>
+              b.replace(/^\*\s*/, "").trim()
+            );
+        }
+        return synced;
       });
     }
   }, [yillikPlan, dersBilgiFormu, dersMateryali, localParsedWeeks]);
 
-  // Clears cached week/unit state from any previous course and binds the new document's weeks & units
+  // Clears cached week/unit state from any previous course and binds the new document's weeks, units,
+  // and unit/topic-filtered 'Öğrenme Kanıtları' & 'Öğretme Uygulamaları' from dersBilgiFormu
   const analyzeWeeksFromYillikPlan = async (
     planText: string,
     overrides?: { dbfText?: string; materyalText?: string }
@@ -543,7 +640,12 @@ export default function App() {
         ? overrides.materyalText
         : dersMateryali;
 
-    // 2. Compute fresh deterministic weeks & units strictly from the new course document
+    // 2. Parse active Ders Bilgi Formu and compute fresh deterministic weeks & unit/topic-filtered DBF data
+    const activeStructuredDbf = parseDersBilgiFormuStructured(
+      activeDbf,
+      cleanText,
+      activeMateryal
+    );
     const localDeterministicWeeks = parseQuickWeeksClient(
       cleanText,
       activeDbf,
@@ -553,8 +655,10 @@ export default function App() {
 
     if (localDeterministicWeeks.length > 0) {
       setExtractedWeeks(localDeterministicWeeks);
-      const firstLocal = localDeterministicWeeks[0];
-      setSelectedWeekId(firstLocal.id);
+      const activeLocal =
+        localDeterministicWeeks.find((w) => w.id === selectedWeekId) ||
+        localDeterministicWeeks[0];
+      setSelectedWeekId(activeLocal.id);
       const locks = lockedFieldsRef.current;
       setMeta((prev) => ({
         ...prev,
@@ -567,11 +671,11 @@ export default function App() {
         sinifDuzeyi: locks.sinifDuzeyi
           ? prev.sinifDuzeyi
           : detectedDocMeta.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
-        haftaEtiketi: firstLocal.haftaEtiketi,
-        tarihAraligi: firstLocal.tarihAraligi,
+        haftaEtiketi: activeLocal.haftaEtiketi,
+        tarihAraligi: activeLocal.tarihAraligi,
         onayTarihi:
-          firstLocal.onayTarihi ||
-          inferApprovalDateClient(firstLocal.tarihAraligi) ||
+          activeLocal.onayTarihi ||
+          inferApprovalDateClient(activeLocal.tarihAraligi) ||
           prev.onayTarihi,
       }));
     }
@@ -623,24 +727,58 @@ export default function App() {
               (distinctLocalUnits.size > 0 &&
                 !distinctLocalUnits.has((aiW.ogrenmeBirimi || "").trim())));
 
-          return {
+          const resolvedDate = resolveValidDateRange(
+            aiW.tarihAraligi || localMatch?.tarihAraligi || "",
+            aiW.haftaNo
+          );
+          const resolvedUnit = preferLocalUnit
+            ? localMatch!.ogrenmeBirimi
+            : aiW.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "";
+          const resolvedSummary =
+            localMatch?.konuVeCiktiOzeti || aiW.konuVeCiktiOzeti || "";
+
+          const candidateWeekItem: YillikPlanWeekItem = {
             ...aiW,
-            tarihAraligi: resolveValidDateRange(
-              aiW.tarihAraligi || localMatch?.tarihAraligi || "",
-              aiW.haftaNo
-            ),
-            ogrenmeBirimi: preferLocalUnit
-              ? localMatch!.ogrenmeBirimi
-              : aiW.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
-            konuVeCiktiOzeti:
-              localMatch?.konuVeCiktiOzeti || aiW.konuVeCiktiOzeti || "",
+            tarihAraligi: resolvedDate,
+            ogrenmeBirimi: resolvedUnit,
+            icerikCercevesi:
+              localMatch?.icerikCercevesi || aiW.icerikCercevesi || "",
+            konuVeCiktiOzeti: resolvedSummary,
             sure: aiW.sure || localMatch?.sure || "",
+          };
+
+          const weekSpecific = extractWeekPlanStructured(
+            cleanText,
+            candidateWeekItem.haftaEtiketi,
+            resolvedDate,
+            activeStructuredDbf,
+            candidateWeekItem
+          );
+
+          return {
+            ...candidateWeekItem,
+            ogrenmeBirimi:
+              weekSpecific.ogrenmeBirimi || candidateWeekItem.ogrenmeBirimi || "",
+            icerikCercevesi:
+              weekSpecific.icerikCercevesi ||
+              candidateWeekItem.icerikCercevesi ||
+              "",
+            ogrenmeKanitlari:
+              weekSpecific.unitOgrenmeKanitlari ||
+              localMatch?.ogrenmeKanitlari ||
+              activeStructuredDbf.ogrenmeKanitlari ||
+              "",
+            ogretmeUygulamalari:
+              weekSpecific.unitOgretmeUygulamalari.length > 0
+                ? weekSpecific.unitOgretmeUygulamalari
+                : localMatch?.ogretmeUygulamalari || [],
           };
         });
 
         setExtractedWeeks(mergedWeeks);
-        const firstWeek = mergedWeeks[0];
-        setSelectedWeekId(firstWeek.id);
+        const targetWeek =
+          mergedWeeks.find((w) => w.id === selectedWeekId) || mergedWeeks[0];
+        setSelectedWeekId(targetWeek.id);
         const locks = lockedFieldsRef.current;
         setMeta((prev) => ({
           ...prev,
@@ -662,11 +800,11 @@ export default function App() {
               detectedDocMeta.sinifDuzeyi?.trim() ||
               prev.sinifDuzeyi.trim() ||
               "",
-          haftaEtiketi: firstWeek.haftaEtiketi,
-          tarihAraligi: firstWeek.tarihAraligi,
+          haftaEtiketi: targetWeek.haftaEtiketi,
+          tarihAraligi: targetWeek.tarihAraligi,
           onayTarihi:
-            firstWeek.onayTarihi ||
-            inferApprovalDateClient(firstWeek.tarihAraligi) ||
+            targetWeek.onayTarihi ||
+            inferApprovalDateClient(targetWeek.tarihAraligi) ||
             prev.onayTarihi,
         }));
       }
@@ -755,14 +893,101 @@ export default function App() {
       // Trigger analyzeWeeksFromYillikPlan to purge stale course week cache and re-bind activeWeekList
       if (fieldKey === "yillik_plan") {
         setCurrentPlan(null);
-        await analyzeWeeksFromYillikPlan(extractedText);
-      } else if (yillikPlan.trim()) {
-        await analyzeWeeksFromYillikPlan(yillikPlan, {
-          dbfText:
-            fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu,
-          materyalText:
-            fieldKey === "ders_materyali" ? extractedText : dersMateryali,
+
+        // Detect if the newly uploaded Yıllık Plan belongs to a different course than the existing dersBilgiFormu
+        const newDetectedMeta =
+          result.detectedMeta || extractDocumentMetadataClient(extractedText);
+        const newCourse = (newDetectedMeta?.dersIsmi || "")
+          .trim()
+          .toLocaleLowerCase("tr-TR");
+
+        let shouldPurgeOldDbf = false;
+        if (dersBilgiFormu.trim() && newCourse) {
+          const oldDbfCourse = (
+            extractDocumentMetadataClient(dersBilgiFormu).dersIsmi || ""
+          )
+            .trim()
+            .toLocaleLowerCase("tr-TR");
+          if (
+            oldDbfCourse &&
+            !newCourse.includes(oldDbfCourse.slice(0, 4)) &&
+            !oldDbfCourse.includes(newCourse.slice(0, 4))
+          ) {
+            shouldPurgeOldDbf = true;
+          }
+        }
+
+        let effectiveDbf = dersBilgiFormu;
+        let effectiveMateryal = dersMateryali;
+        if (shouldPurgeOldDbf) {
+          setDersBilgiFormu("");
+          setDersMateryali("");
+          setUploadedFileNames((prev) => ({
+            ...prev,
+            ders_bilgi_formu: null,
+            ders_materyali: null,
+          }));
+          effectiveDbf = "";
+          effectiveMateryal = "";
+        }
+
+        await analyzeWeeksFromYillikPlan(extractedText, {
+          dbfText: effectiveDbf,
+          materyalText: effectiveMateryal,
         });
+      } else {
+        if (fieldKey === "ders_bilgi_formu") {
+          const updatedDbf = parseDersBilgiFormuStructured(
+            extractedText,
+            yillikPlan,
+            dersMateryali
+          );
+          const refreshedWeekData = extractWeekPlanStructured(
+            yillikPlan,
+            meta.haftaEtiketi,
+            meta.tarihAraligi,
+            updatedDbf,
+            selectedWeekObj
+          );
+          setCurrentPlan((prevPlan) => {
+            if (!prevPlan) return prevPlan;
+            return {
+              ...prevPlan,
+              Ogrenme_Kanitlari:
+                updatedDbf.ogrenmeKanitlari ||
+                refreshedWeekData.unitOgrenmeKanitlari ||
+                prevPlan.Ogrenme_Kanitlari,
+              Farklilastirma:
+                updatedDbf.farklilastirma || prevPlan.Farklilastirma,
+              Ogrenme_Ogretme_Yasantilari: {
+                ...prevPlan.Ogrenme_Ogretme_Yasantilari,
+                Temel_Kabuller:
+                  updatedDbf.temelKabuller ||
+                  prevPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller,
+                On_Degerlendirme_Sureci:
+                  updatedDbf.onDegerlendirmeSureci ||
+                  prevPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci,
+                Kopru_Kurma:
+                  updatedDbf.kopruKurma ||
+                  prevPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma,
+                Ogretme_Uygulamalari:
+                  refreshedWeekData.unitOgretmeUygulamalari.length > 0
+                    ? refreshedWeekData.unitOgretmeUygulamalari.map((b) =>
+                        b.replace(/^\*\s*/, "").trim()
+                      )
+                    : prevPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+              },
+            };
+          });
+        }
+        if (yillikPlan.trim()) {
+          await analyzeWeeksFromYillikPlan(yillikPlan, {
+            dbfText:
+              fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu,
+            materyalText:
+              fieldKey === "ders_materyali" ? extractedText : dersMateryali,
+          });
+        }
       }
     } catch (err: unknown) {
       const msg =
@@ -927,6 +1152,20 @@ export default function App() {
           sinifDuzeyi: effectiveSinifDuzeyi,
         }
       );
+
+      // Ensure the selected week's dynamically filtered 'Öğrenme Kanıtları' and 'Öğretme Uygulamaları' from activeWeekList are bound
+      if (targetWeekObj?.ogrenmeKanitlari) {
+        generated.Ogrenme_Kanitlari = targetWeekObj.ogrenmeKanitlari;
+      }
+      if (
+        targetWeekObj?.ogretmeUygulamalari &&
+        targetWeekObj.ogretmeUygulamalari.length > 0
+      ) {
+        generated.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
+          targetWeekObj.ogretmeUygulamalari.map((b) =>
+            b.replace(/^\*\s*/, "").trim()
+          );
+      }
 
       const rawCandidateDate =
         (weekData.tarihAraligi &&
@@ -1163,6 +1402,15 @@ export default function App() {
           >
             Kayıtlı Planlar ({savedPlans.length})
           </a>
+          <button
+            type="button"
+            onClick={() => setIsTopicSummaryOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-white border border-emerald-500/40 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+            title="Seçilen haftanın konusunu ders materyalinden özetle ve lise düzeyinde öğrenci notu çıkar"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+            Konu Özeti
+          </button>
         </nav>
       </header>
 
@@ -1200,6 +1448,15 @@ export default function App() {
           }`}
         >
           Kayıtlı Planlar ({savedPlans.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsTopicSummaryOpen(true)}
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md whitespace-nowrap shrink-0 bg-emerald-500/20 text-emerald-300 hover:text-white border border-emerald-500/40 cursor-pointer"
+          title="Haftalık konuyu özetle ve öğrenci notu çıkar"
+        >
+          <BookOpen className="w-3 h-3 text-emerald-400" />
+          Konu Özeti
         </button>
       </div>
 
@@ -1662,30 +1919,6 @@ export default function App() {
                       />
                     </div>
                   </div>
-
-                  {/* Preview of Yıllık Plan Data for the Selected Week */}
-                  {selectedWeekObj &&
-                    (selectedWeekObj.ogrenmeBirimi ||
-                      selectedWeekObj.konuVeCiktiOzeti) && (
-                      <div className="mt-3 bg-emerald-50/70 border border-emerald-200 rounded-lg px-3.5 py-2.5 text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <span className="font-semibold">
-                            Seçilen Haftanın Yıllık Plan Verisi:{" "}
-                          </span>
-                          {selectedWeekObj.ogrenmeBirimi && (
-                            <span className="font-medium">
-                              {selectedWeekObj.ogrenmeBirimi} ·{" "}
-                            </span>
-                          )}
-                          <span>{selectedWeekObj.konuVeCiktiOzeti}</span>
-                        </div>
-                        {selectedWeekObj.sure && (
-                          <span className="font-semibold tabular-nums">
-                            {selectedWeekObj.sure}
-                          </span>
-                        )}
-                      </div>
-                    )}
                 </div>
 
                 {/* Row 3: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}
@@ -2309,6 +2542,15 @@ export default function App() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setIsTopicSummaryOpen(true)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-medium cursor-pointer"
+                          title="Bu haftanın konusunu ders materyalinden lise öğrencisi düzeyinde özetle"
+                        >
+                          <BookOpen className="w-3.5 h-3.5 text-emerald-700" />
+                          Konu Özeti
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setActiveTab("official-table")}
                           className="font-semibold text-indigo-800 hover:text-indigo-950"
                         >
@@ -2331,7 +2573,7 @@ export default function App() {
                             ?.scrollIntoView({ behavior: "smooth" });
                         }}
                         onExportWord={() => setIsExportConfigOpen(true)}
-                        onPrint={() => window.print()}
+                        onPrint={() => triggerPrintWithFileName(meta, currentPlan)}
                         isOpenInitially={true}
                       />
                     </div>
@@ -2368,7 +2610,7 @@ export default function App() {
                       ?.scrollIntoView({ behavior: "smooth" });
                   }}
                   onExportWord={() => setIsExportConfigOpen(true)}
-                  onPrint={() => window.print()}
+                  onPrint={() => triggerPrintWithFileName(meta, currentPlan)}
                   isOpenInitially={false}
                 />
               </div>
@@ -2378,6 +2620,7 @@ export default function App() {
                   plan={currentPlan}
                   meta={meta}
                   onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                  onOpenTopicSummary={() => setIsTopicSummaryOpen(true)}
                 />
               </div>
             </div>
@@ -2541,9 +2784,38 @@ export default function App() {
           onClose={() => setIsExportConfigOpen(false)}
           plan={currentPlan}
           meta={meta}
-          onExecutePrint={() => window.print()}
+          onExecutePrint={() => triggerPrintWithFileName(meta, currentPlan)}
         />
       )}
+
+      {/* Student Topic Summary & Study Note Modal */}
+      <TopicSummaryModal
+        isOpen={isTopicSummaryOpen}
+        onClose={() => setIsTopicSummaryOpen(false)}
+        params={{
+          dersIsmi: meta.dersIsmi || currentPlan?.Ders_Bilgisi.Ders || "",
+          sinifDuzeyi: meta.sinifDuzeyi || currentPlan?.Ders_Bilgisi.Sinif || "",
+          okulAdi: meta.okulAdi,
+          haftaEtiketi:
+            meta.haftaEtiketi || selectedWeekObj?.haftaEtiketi || "1. HAFTA",
+          tarihAraligi:
+            meta.tarihAraligi || selectedWeekObj?.tarihAraligi || "",
+          ogrenmeBirimi:
+            selectedWeekObj?.ogrenmeBirimi ||
+            currentPlan?.Ders_Bilgisi.Ogrenme_Birimi ||
+            "",
+          icerikCercevesi:
+            selectedWeekObj?.icerikCercevesi ||
+            selectedWeekObj?.konuVeCiktiOzeti ||
+            "",
+          ogrenmeCiktilari:
+            currentPlan?.Ogrenme_Ciktilari_ve_Surec_Bilesenleri ||
+            selectedWeekObj?.konuVeCiktiOzeti ||
+            "",
+          materyalText: dersMateryali,
+          egitimYili: meta.egitimOgretimYili,
+        }}
+      />
     </div>
   );
 }

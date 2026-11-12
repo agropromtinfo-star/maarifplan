@@ -18,6 +18,7 @@ import {
   stripFrontMatter,
   sanitizeOutcomeOrSubSentence,
   deriveUnitNameFromOutcome,
+  WeekSpecificExtraction,
 } from "./src/shared/maarifPlanEngine";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -692,10 +693,13 @@ async function startServer() {
       const rawOutcomesCatalogFromXml = isXmlString
         ? extractXmlTag(body, "ogrenme_ciktilari_ve_surec_bilesenleri_katalogu")
         : "";
+      const rawDbfTextFromXml = isXmlString
+        ? extractXmlTag(body, "ders_bilgi_formu_ham_metin") || ders_bilgi_formu
+        : ders_bilgi_formu;
 
       const dbfForParsing = rawOutcomesCatalogFromXml
-        ? `${ders_bilgi_formu}\nÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ:\n${rawOutcomesCatalogFromXml}`
-        : ders_bilgi_formu;
+        ? `${rawDbfTextFromXml}\nÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ:\n${rawOutcomesCatalogFromXml}`
+        : rawDbfTextFromXml;
 
       const structuredDbf = parseDersBilgiFormuStructured(
         dbfForParsing,
@@ -731,6 +735,10 @@ async function startServer() {
         const preKopru = extractXmlTag(body, "kopru_kurma_tam_metin");
         if (preKopru && preKopru.length > structuredDbf.kopruKurma.length) {
           structuredDbf.kopruKurma = preKopru;
+        }
+        const preFark = extractXmlTag(body, "farklilastirma_tam_metin");
+        if (preFark && preFark.length > structuredDbf.farklilastirma.length) {
+          structuredDbf.farklilastirma = preFark;
         }
       }
 
@@ -837,7 +845,7 @@ ${rawYillikTableFromXml.slice(0, 12000)}
   </yillik_plan_genel_tablo_baglami>
 </yillik_plan>
 
-<ders_bilgi_formu baglam="Bu metin MEB Ders Bilgi Formudur. Öğrenme Çıktıları ve Süreç Bileşenlerinin tam cümleleri <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu> içindedir.">
+<ders_bilgi_formu baglam="Bu metin MEB Ders Bilgi Formudur. Öğrenme Çıktıları ve Süreç Bileşenlerinin tam cümleleri <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu> içindedir. Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma ve Öğretme Uygulamaları doğrudan bu etiket içindeki resmi metinlerden birebir alınmalıdır.">
   <alan_becerileri>${structuredDbf.alanBecerileri}</alan_becerileri>
   <egilimler>${structuredDbf.egilimler}</egilimler>
   <sosyal_duygusal_ogrenme_becerileri>${structuredDbf.sosyalDuygusalBeceriler}</sosyal_duygusal_ogrenme_becerileri>
@@ -848,6 +856,22 @@ ${rawYillikTableFromXml.slice(0, 12000)}
   <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
 ${outcomesCatalogText}
   </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
+  <ogrenme_kanitlari_tam_metin>
+${structuredDbf.ogrenmeKanitlari}
+  </ogrenme_kanitlari_tam_metin>
+  <temel_kabuller_tam_metin>
+${structuredDbf.temelKabuller}
+  </temel_kabuller_tam_metin>
+  <on_degerlendirme_sureci_tam_metin>
+${structuredDbf.onDegerlendirmeSureci}
+  </on_degerlendirme_sureci_tam_metin>
+  <kopru_kurma_tam_metin>
+${structuredDbf.kopruKurma}
+  </kopru_kurma_tam_metin>
+  <ogretme_uygulamalari_secilen_birim>
+${weekData.unitOgretmeUygulamalari.join("\n")}
+  </ogretme_uygulamalari_secilen_birim>
+  <farklilastirma_tam_metin>${structuredDbf.farklilastirma}</farklilastirma_tam_metin>
   <aktif_maarif_kodlari>${
     structuredDbf.rawActivityCodes.join(", ") ||
     "OB1, OB2, OB8, KB2.2, KB3.2, E1.4, E2.2, E2.3, E3.2, SDB2.2, SDB3.3, D3.2, D12.3, D16.3, D18.3"
@@ -1014,6 +1038,145 @@ ${outcomesCatalogText}
           : "Bilinmeyen bir sunucu hatası oluştu.";
       res.status(500).json({
         error: `Ders planı oluşturulurken hata oluştu: ${message}`,
+      });
+    }
+  });
+
+  // Endpoint to generate High School Student-Friendly Topic Summary & Study Note
+  app.post("/api/generate-topic-summary", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const isXml = typeof body === "string" && body.includes("<");
+
+      const ders_ismi = isXml
+        ? extractXmlTag(body, "ders_ismi")
+        : String((body as Record<string, unknown>)?.ders_ismi || "");
+      const sinif_duzeyi = isXml
+        ? extractXmlTag(body, "sinif_duzeyi")
+        : String((body as Record<string, unknown>)?.sinif_duzeyi || "");
+      const hafta_etiketi = isXml
+        ? extractXmlTag(body, "hafta_etiketi")
+        : String((body as Record<string, unknown>)?.hafta_etiketi || "1. HAFTA");
+      const tarih_araligi = isXml
+        ? extractXmlTag(body, "tarih_araligi")
+        : String((body as Record<string, unknown>)?.tarih_araligi || "");
+      const ogrenme_birimi = isXml
+        ? extractXmlTag(body, "ogrenme_birimi")
+        : String((body as Record<string, unknown>)?.ogrenme_birimi || "");
+      const icerik_cercevesi = isXml
+        ? extractXmlTag(body, "icerik_cercevesi")
+        : String((body as Record<string, unknown>)?.icerik_cercevesi || "");
+      const ogrenme_ciktilari = isXml
+        ? extractXmlTag(body, "ogrenme_ciktilari")
+        : String((body as Record<string, unknown>)?.ogrenme_ciktilari || "");
+      const ders_materyali = isXml
+        ? extractXmlTag(body, "ders_materyali")
+        : String((body as Record<string, unknown>)?.ders_materyali || "");
+
+      const weekNoMatch = hafta_etiketi.match(/\d+/);
+      const fakeWeekData: WeekSpecificExtraction = {
+        haftaNo: weekNoMatch ? Number(weekNoMatch[0]) : 1,
+        haftaEtiketi: hafta_etiketi,
+        tarihAraligi: tarih_araligi,
+        sure: "",
+        ogrenmeBirimi: ogrenme_birimi,
+        icerikCercevesi: icerik_cercevesi,
+        outcomeCode: "",
+        outcomeHeader: "",
+        weekSubComponents: [],
+        formattedOutcomeAndProcessBlock: ogrenme_ciktilari,
+        unitOgrenmeKanitlari: "",
+        rawWeekWindowText: "",
+        unitOgretmeUygulamalari: [],
+        searchKeywords: [
+          ogrenme_birimi,
+          icerik_cercevesi,
+          ...icerik_cercevesi.split(/\s+/).filter((w) => w.length >= 3),
+        ],
+      };
+
+      const materyalSlice = extractWeekMateryalSlice(
+        ders_materyali,
+        fakeWeekData,
+        14000
+      );
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey) {
+        try {
+          const ai = new GoogleGenAI({
+            apiKey,
+            httpOptions: { timeout: 12000 },
+          });
+          const prompt = `Sen Türkiye Yüzyılı Maarif Modeli kapsamında meslek lisesi öğrencilerine ders anlatan, konuları sade, anlaşılır, ilgi çekici ve somut örneklerle açıklayan uzman bir öğretmensin.
+GÖREV:
+Aşağıda verilen ders, hafta, konu ve ders materyali içeriğine dayanarak, LİSE ÖĞRENCİSİNİN (9-12. sınıf) kolayca okuyup anlayabileceği, sınavlara ve atölye/laboratuvar uygulamalarına hazırlanabileceği yüksek kaliteli bir "ÖĞRENCİ DERS NOTU VE KONU ÖZETİ" hazırla.
+
+DERS BİLGİLERİ:
+- Ders: ${ders_ismi || "Meslek Dersi"}
+- Sınıf: ${sinif_duzeyi || "Lise Düzeyi"}
+- Hafta & Tarih: ${hafta_etiketi} (${tarih_araligi})
+- Öğrenme Birimi (Ünite): ${ogrenme_birimi}
+- İçerik Çerçevesi (Konu): ${icerik_cercevesi}
+- İlgili Kazanımlar / Süreç Bileşenleri:
+${ogrenme_ciktilari}
+
+DERS KİTABI / DERS MATERYALİNDEN İLGİLİ BÖLÜM:
+${materyalSlice || "(Ders materyali metni doğrudan verilmediyse yukarıdaki konu ve ünite başlıklarına göre lise müfredatına tam uyumlu içerik oluştur)"}
+
+DERS NOTUNUN YAPISI VE KURALLARI:
+1. Dil: Ağır akademik veya bürokratik dilden uzak; doğrudan lise öğrencisine hitap eden ("sen" dili, motive edici, net, anlaşılır ve akıcı).
+2. Yapı (Markdown formatında):
+   - 📌 **1. Bu Konuda Neyi, Neden Öğreniyoruz?**: Konunun hayatımızdaki ve meslekteki somut önemi (1-2 sıcak paragraf).
+   - 💡 **2. Temel Kavramlar & Bilmen Gerekenler**: En kritik 4-7 kavram ve kısa, net açıklamaları (madde madde).
+   - ⚙️ **3. Adım Adım Nasıl Yapılır / Nasıl Uygulanır?**: Atölye veya pratik uygulama basamakları (madde madde).
+   - ⚠️ **4. Önemli İpuçları (Sınavda & Atölyede Çıkar!)**: Püf noktaları, sık yapılan hatalar ve iş sağlığı/güvenliği hatırlatmaları.
+   - 🎯 **5. Kendini Dene! (Hızlı Pekiştirme)**: Öğrencinin konuyu kavrayıp kavramadığını ölçen 3 soru ve altında kısa ipuçları.
+3. Çıktı Formatı: Başlıklar, maddeler ve vurgular içeren düzenli Markdown metni olmalıdır.`;
+
+          const response = await Promise.race([
+            ai.models.generateContent({
+              model: "gemini-3.8-flash",
+              contents: prompt,
+              config: {
+                temperature: 0.3,
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error("Gemini topic summary timed out")),
+                11000
+              )
+            ),
+          ]);
+
+          const summaryText = response.text || "";
+          if (summaryText.trim().length >= 80) {
+            res.json({
+              success: true,
+              summaryMarkdown: summaryText.trim(),
+              title: `${ders_ismi} — ${hafta_etiketi} Konu Özeti`,
+              source: "gemini-3.8-flash",
+            });
+            return;
+          }
+        } catch (aiErr) {
+          console.warn(
+            "Gemini topic summary generation failed, falling back to deterministic synthesis:",
+            aiErr
+          );
+        }
+      }
+
+      res.json({
+        success: true,
+        summaryMarkdown: null,
+        useClientFallback: true,
+      });
+    } catch (err: unknown) {
+      console.error("Error in generate-topic-summary:", err);
+      res.status(500).json({
+        error: "Konu özeti oluşturulurken bir hata oluştu.",
       });
     }
   });

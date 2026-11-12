@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { PlanExportOptions, DEFAULT_EXPORT_OPTIONS } from "../types/exportOptions";
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
-import { downloadWordDoc } from "../utils/exportPlan";
+import { downloadWordDoc, triggerPrintWithFileName, applyDocumentTitleForPdf } from "../utils/exportPlan";
 import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
 import {
   FileDown,
@@ -74,10 +74,11 @@ export const ExportConfigModal: React.FC<ExportConfigModalProps> = ({
   };
 
   const handlePrint = () => {
+    applyDocumentTitleForPdf(meta, plan);
     if (onExecutePrint) {
       onExecutePrint(options);
     } else {
-      window.print();
+      triggerPrintWithFileName(meta, plan);
     }
     onClose();
   };

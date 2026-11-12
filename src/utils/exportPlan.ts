@@ -399,6 +399,54 @@ function buildDocumentStyleBlock(options: PlanExportOptions): string {
   `;
 }
 
+export function buildExportFileNameBase(
+  meta?: DocumentHeaderFooterMeta,
+  plan?: MaarifLessonPlan | null
+): string {
+  const rawDers = (
+    meta?.dersIsmi?.trim() ||
+    plan?.Ders_Bilgisi?.Ders?.trim() ||
+    "Ders"
+  )
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const rawYil = (
+    meta?.egitimOgretimYili?.trim() ||
+    "2026-2027 Eğitim ve Öğretim Yılı"
+  )
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `${rawDers}_${rawYil}_GünlükPlan`;
+}
+
+export function applyDocumentTitleForPdf(
+  meta?: DocumentHeaderFooterMeta,
+  plan?: MaarifLessonPlan | null
+): string {
+  const fileNameBase = buildExportFileNameBase(meta, plan);
+  document.title = fileNameBase;
+  try {
+    if (window.parent && window.parent.document) {
+      window.parent.document.title = fileNameBase;
+    }
+  } catch {
+    // ignore cross-origin parent frame access
+  }
+  return fileNameBase;
+}
+
+export function triggerPrintWithFileName(
+  meta?: DocumentHeaderFooterMeta,
+  plan?: MaarifLessonPlan | null
+) {
+  applyDocumentTitleForPdf(meta, plan);
+  window.print();
+}
+
 export function downloadWordDoc(
   plan: MaarifLessonPlan,
   meta?: DocumentHeaderFooterMeta,
@@ -409,8 +457,8 @@ export function downloadWordDoc(
     ...(exportOptions || {}),
   };
 
-  const { sectionHtml, secondTitleLine, haftaSatiri, dersIsmi } =
-    buildSinglePlanSectionHtml(plan, meta, options);
+  const { sectionHtml } = buildSinglePlanSectionHtml(plan, meta, options);
+  const exportFileName = buildExportFileNameBase(meta, plan);
 
   const htmlContent = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -418,7 +466,7 @@ export function downloadWordDoc(
       xmlns="http://www.w3.org/TR/REC-html40" lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(secondTitleLine)}</title>
+  <title>${escapeHtml(exportFileName)}</title>
   <style>${buildDocumentStyleBlock(options)}</style>
 </head>
 <body>
@@ -431,12 +479,8 @@ ${sectionHtml}
   });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const safeCourse = `${haftaSatiri}-${dersIsmi}`
-    .toLowerCase()
-    .replace(/[^a-z0-9ğüşıöç]+/gi, "-")
-    .replace(/^-+|-+$/g, "");
   a.href = url;
-  a.download = `${safeCourse || "gunluk-ders-plani"}.doc`;
+  a.download = `${exportFileName}.doc`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -459,17 +503,18 @@ export function downloadAllWeeksWordDoc(
     ...(exportOptions || {}),
   };
 
-  let firstTitle = "TÜM HAFTALAR GÜNLÜK DERS PLANI";
-  let firstDers = "DERS";
+  const exportFileName = buildExportFileNameBase(
+    items[0].meta,
+    items[0].plan
+  );
 
   const bodySections = items
     .map((item, idx) => {
-      const { sectionHtml, secondTitleLine, dersIsmi } =
-        buildSinglePlanSectionHtml(item.plan, item.meta, options);
-      if (idx === 0) {
-        firstTitle = `${secondTitleLine} (TÜM HAFTALAR)`;
-        firstDers = dersIsmi;
-      }
+      const { sectionHtml } = buildSinglePlanSectionHtml(
+        item.plan,
+        item.meta,
+        options
+      );
       const pageBreakHtml =
         idx < items.length - 1
           ? `<br clear="all" style="page-break-before:always; mso-break-type:section-break" />`
@@ -484,7 +529,7 @@ export function downloadAllWeeksWordDoc(
       xmlns="http://www.w3.org/TR/REC-html40" lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(firstTitle)}</title>
+  <title>${escapeHtml(exportFileName)}</title>
   <style>${buildDocumentStyleBlock(options)}</style>
 </head>
 <body>
@@ -497,12 +542,8 @@ ${bodySections}
   });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const safeCourse = `${firstDers}-tum-haftalar-gunluk-ders-planlari`
-    .toLowerCase()
-    .replace(/[^a-z0-9ğüşıöç]+/gi, "-")
-    .replace(/^-+|-+$/g, "");
   a.href = url;
-  a.download = `${safeCourse || "tum-haftalar-gunluk-ders-plani"}.doc`;
+  a.download = `${exportFileName}.doc`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -520,18 +561,18 @@ export function exportAllWeeksPdfPrint(
     ...(exportOptions || {}),
   };
 
-  let firstTitle = "TÜM HAFTALAR GÜNLÜK DERS PLANI";
+  const exportFileName = applyDocumentTitleForPdf(
+    items[0].meta,
+    items[0].plan
+  );
 
   const bodySections = items
     .map((item, idx) => {
-      const { sectionHtml, secondTitleLine } = buildSinglePlanSectionHtml(
+      const { sectionHtml } = buildSinglePlanSectionHtml(
         item.plan,
         item.meta,
         options
       );
-      if (idx === 0) {
-        firstTitle = `${secondTitleLine} (1-${items.length}. HAFTALAR)`;
-      }
       const isLast = idx === items.length - 1;
       return `<div class="${isLast ? "" : "week-page-break"}">${sectionHtml}</div>`;
     })
@@ -541,7 +582,7 @@ export function exportAllWeeksPdfPrint(
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(firstTitle)}</title>
+  <title>${escapeHtml(exportFileName)}</title>
   <style>${buildDocumentStyleBlock(options)}</style>
 </head>
 <body>
@@ -570,8 +611,10 @@ ${bodySections}
     doc.open();
     doc.write(htmlContent);
     doc.close();
+    doc.title = exportFileName;
 
     window.setTimeout(() => {
+      applyDocumentTitleForPdf(items[0].meta, items[0].plan);
       try {
         iframe.contentWindow?.focus();
         iframe.contentWindow?.print();
@@ -582,4 +625,5 @@ ${bodySections}
     }, 250);
   }
 }
+
 

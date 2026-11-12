@@ -185,8 +185,12 @@ export function parseQuickWeeksClient(
       tarihAraligi: validDateRange,
       onayTarihi: inferApprovalDateClient(validDateRange),
       ogrenmeBirimi: ogrenmeBirimi || "",
+      icerikCercevesi: weekSpecific.icerikCercevesi || "",
       konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
       sure: weekSpecific.sure || structuredDbf.sure || "2 Ders Saati",
+      ogrenmeKanitlari:
+        weekSpecific.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari || "",
+      ogretmeUygulamalari: weekSpecific.unitOgretmeUygulamalari || [],
     });
   }
 
@@ -443,6 +447,10 @@ export function buildXmlContextPayloadWithAnalysis(
     0,
     24000
   );
+  const cleanDbfSlice = stripFrontMatter(input.ders_bilgi_formu || "").slice(
+    0,
+    24000
+  );
 
   const xmlPayload = `<ders_plani_baglam_paketi>
 <hedef_hafta_ve_ust_bilgiler>
@@ -487,7 +495,7 @@ ${cleanYillikTableSlice}
 ${structuredDbf.rawOutcomesCatalogText || ""}
   </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
   <ogrenme_kanitlari_tam_metin>
-${structuredDbf.ogrenmeKanitlari}
+${weekData.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari}
   </ogrenme_kanitlari_tam_metin>
   <temel_kabuller_tam_metin>
 ${structuredDbf.temelKabuller}
@@ -503,6 +511,9 @@ ${weekData.unitOgretmeUygulamalari.join("\n")}
   </ogretme_uygulamalari_secilen_birim>
   <farklilastirma_tam_metin>${structuredDbf.farklilastirma}</farklilastirma_tam_metin>
   <aktif_maarif_kodlari>${structuredDbf.rawActivityCodes.join(", ")}</aktif_maarif_kodlari>
+  <ders_bilgi_formu_ham_metin>
+${cleanDbfSlice}
+  </ders_bilgi_formu_ham_metin>
 </ders_bilgi_formu>
 
 <ders_materyali baglam="Bu metin Ders Materyalinin (Ders Kitabı / Modül) seçilen haftadaki süreç bileşenlerine (${weekData.weekSubComponents.join(" ; ")}) ait konu anlatımı kesitidir. Bu etiketten ve seçilen haftanın süreç bileşenlerinden o haftaya özgü 4 maddelik Güdüleme (-acaksınız/-eceksiniz kipinde), 4 soruluk Dikkat Çekme (? ile biten) ve sonunda parantez içi Maarif kodları bulunan 5-6 maddelik Ek Öğretme Uygulamaları üretilir.">
