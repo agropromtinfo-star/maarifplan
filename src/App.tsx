@@ -1320,9 +1320,48 @@ export default function App() {
           : record.meta.okulMuduruAdSoyad,
       }));
     }
+    let syncedOgretmeUygulamalari =
+      record.plan.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari || [];
+    if (record.inputs.ders_bilgi_formu) {
+      const parsedDbf = parseDersBilgiFormuStructured(
+        record.inputs.ders_bilgi_formu,
+        record.inputs.yillik_plan || "",
+        record.inputs.ders_materyali || ""
+      );
+      const parsedWeek = extractWeekPlanStructured(
+        record.inputs.yillik_plan || "",
+        record.meta?.haftaEtiketi || "1. HAFTA",
+        record.meta?.tarihAraligi || "",
+        parsedDbf,
+        {
+          id: record.id,
+          haftaNo:
+            Number((record.meta?.haftaEtiketi || "").match(/(\d{1,2})/)?.[1]) ||
+            1,
+          haftaEtiketi: record.meta?.haftaEtiketi || "1. HAFTA",
+          tarihAraligi: record.meta?.tarihAraligi || "",
+          onayTarihi: record.meta?.onayTarihi || "",
+          ogrenmeBirimi: record.plan.Ders_Bilgisi?.Ogrenme_Birimi || "",
+          icerikCercevesi: record.plan.Icerik_Cercevesi || "",
+          konuVeCiktiOzeti:
+            record.plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || "",
+        }
+      );
+      if (parsedWeek.unitOgretmeUygulamalari.length > 0) {
+        syncedOgretmeUygulamalari = parsedWeek.unitOgretmeUygulamalari.map((b) =>
+          b.replace(/^\*\s*/, "").trim()
+        );
+      }
+    }
     setCurrentPlan({
       ...record.plan,
-      Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(record.plan.Ogrenme_Kanitlari),
+      Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(
+        record.plan.Ogrenme_Kanitlari
+      ),
+      Ogrenme_Ogretme_Yasantilari: {
+        ...record.plan.Ogrenme_Ogretme_Yasantilari,
+        Ogretme_Uygulamalari: syncedOgretmeUygulamalari,
+      },
     });
     setActiveTab("official-table");
   };
