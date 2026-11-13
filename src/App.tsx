@@ -1900,185 +1900,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Row 2: HAFTA VE TARİH SEÇİMİ (Yıllık Plandan Otomatik Beslenir) */}
-                <div className="pt-4 border-t border-slate-200/80">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-sky-700" />
-                      <h2 className="text-xs font-semibold text-sky-950">
-                        Hafta ve Tarih Seçimi{" "}
-                        {extractedWeeks.length > 0
-                          ? `(Yüklenen Yıllık Plandan ${extractedWeeks.length} Hafta Aktarıldı)`
-                          : "(Yıllık Plan Yüklendiğinde Haftalar ve Tarihler Otomatik Çekilir)"}
-                      </h2>
-                    </div>
-
-                    {yillikPlan.trim().length > 0 && (
-                      <button
-                        type="button"
-                        disabled={isParsingWeeks}
-                        onClick={() => analyzeWeeksFromYillikPlan(yillikPlan)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-50 border border-sky-200 hover:bg-sky-100 text-xs font-medium text-sky-800 transition-colors"
-                      >
-                        <RefreshCw
-                          className={`w-3.5 h-3.5 ${
-                            isParsingWeeks ? "animate-spin" : ""
-                          }`}
-                        />
-                        <span>
-                          {isParsingWeeks
-                            ? "Yıllık Plandan Haftalar Çıkarılıyor..."
-                            : "Yıllık Plandan Haftaları Yenile"}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
-                    {/* Dropdown Selector + Tüm Haftaları İndir */}
-                    <div className="md:col-span-5">
-                      <label
-                        htmlFor="week-selector"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Hafta ve Tarih Listesinden Seçin
-                      </label>
-                      <select
-                        id="week-selector"
-                        value={selectedWeekId}
-                        onChange={(e) => handleSelectWeek(e.target.value)}
-                        className="w-full rounded-lg border border-sky-300 bg-sky-50/40 px-3 py-2 text-xs font-medium text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
-                      >
-                        {activeWeekList.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.haftaEtiketi} ({w.tarihAraligi})
-                            {w.ogrenmeBirimi ? ` — ${w.ogrenmeBirimi}` : ""}
-                            {w.sure ? ` [${w.sure}]` : ""}
-                          </option>
-                        ))}
-                      </select>
-
-                      {/* Tüm Haftaları İndir Button & Word/PDF Selector */}
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          disabled={isExportingAllWeeks}
-                          onClick={() =>
-                            setIsAllWeeksMenuOpen((prev) => !prev)
-                          }
-                          className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-white text-xs font-semibold transition-colors shadow-2xs disabled:opacity-60"
-                        >
-                          <span className="inline-flex items-center gap-1.5">
-                            {isExportingAllWeeks ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
-                            ) : (
-                              <FileDown className="w-3.5 h-3.5 text-amber-300" />
-                            )}
-                            <span>
-                              Tüm Haftaları İndir ({activeWeekList.length} Hafta)
-                            </span>
-                          </span>
-                          <ChevronDown
-                            className={`w-3.5 h-3.5 text-slate-300 transition-transform ${
-                              isAllWeeksMenuOpen ? "rotate-180" : ""
-                            }`}
-                          />
-                        </button>
-
-                        {isAllWeeksMenuOpen && (
-                          <div className="mt-1.5 p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/80 space-y-2">
-                            <p className="text-[11px] font-medium text-indigo-950">
-                              Tüm {activeWeekList.length} haftanın günlük ders
-                              planını tek tuşla indirmek için format seçin:
-                            </p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                disabled={isExportingAllWeeks}
-                                onClick={() => handleDownloadAllWeeks("word")}
-                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors shadow-2xs"
-                              >
-                                <FileDown className="w-3.5 h-3.5 shrink-0" />
-                                <span>Word (.doc) İndir</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isExportingAllWeeks}
-                                onClick={() => handleDownloadAllWeeks("pdf")}
-                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-semibold transition-colors shadow-2xs"
-                              >
-                                <Printer className="w-3.5 h-3.5 shrink-0" />
-                                <span>PDF Olarak İndir</span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Editable Hafta Etiketi */}
-                    <div className="md:col-span-2">
-                      <label
-                        htmlFor="meta-hafta-etiketi"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Hafta Başlığı
-                      </label>
-                      <input
-                        id="meta-hafta-etiketi"
-                        type="text"
-                        value={meta.haftaEtiketi}
-                        onChange={(e) =>
-                          updateMetaField("haftaEtiketi", e.target.value)
-                        }
-                        placeholder="Örn: 1. HAFTA"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
-                      />
-                    </div>
-
-                    {/* Editable Tarih Aralığı */}
-                    <div className="md:col-span-3">
-                      <label
-                        htmlFor="meta-tarih-araligi"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Tarih Aralığı (Başlıkta Görünür)
-                      </label>
-                      <input
-                        id="meta-tarih-araligi"
-                        type="text"
-                        value={meta.tarihAraligi}
-                        onChange={(e) =>
-                          updateMetaField("tarihAraligi", e.target.value)
-                        }
-                        placeholder="Örn: 14 - 18 Eylül"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
-                      />
-                    </div>
-
-                    {/* Editable Onay Tarihi */}
-                    <div className="md:col-span-2">
-                      <label
-                        htmlFor="meta-onay-tarihi"
-                        className="block text-xs font-semibold text-slate-800 mb-1.5"
-                      >
-                        Uygundur Tarihi
-                      </label>
-                      <input
-                        id="meta-onay-tarihi"
-                        type="text"
-                        value={meta.onayTarihi}
-                        onChange={(e) =>
-                          updateMetaField("onayTarihi", e.target.value)
-                        }
-                        placeholder="Örn: 14/09/2026"
-                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 tabular-nums focus:bg-white focus:border-sky-600 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Row 3: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}
+                {/* Row 2: Öğretmen ve Okul Müdürü Bilgileri (Kağıdın En Altında Yer Alır) */}
                 <div className="pt-4 border-t border-slate-200/80">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h2 className="text-xs font-semibold text-teal-900">
@@ -2271,6 +2093,184 @@ export default function App() {
                             ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
                             : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-teal-600"
                         }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 3: HAFTA VE TARİH SEÇİMİ (Yıllık Plandan Otomatik Beslenir) */}
+                <div className="pt-4 border-t border-slate-200/80">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-sky-700" />
+                      <h2 className="text-xs font-semibold text-sky-950">
+                        Hafta ve Tarih Seçimi{" "}
+                        {extractedWeeks.length > 0
+                          ? `(Yüklenen Yıllık Plandan ${extractedWeeks.length} Hafta Aktarıldı)`
+                          : "(Yıllık Plan Yüklendiğinde Haftalar ve Tarihler Otomatik Çekilir)"}
+                      </h2>
+                    </div>
+
+                    {yillikPlan.trim().length > 0 && (
+                      <button
+                        type="button"
+                        disabled={isParsingWeeks}
+                        onClick={() => analyzeWeeksFromYillikPlan(yillikPlan)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-50 border border-sky-200 hover:bg-sky-100 text-xs font-medium text-sky-800 transition-colors"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${
+                            isParsingWeeks ? "animate-spin" : ""
+                          }`}
+                        />
+                        <span>
+                          {isParsingWeeks
+                            ? "Yıllık Plandan Haftalar Çıkarılıyor..."
+                            : "Yıllık Plandan Haftaları Yenile"}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                    {/* Dropdown Selector + Tüm Haftaları İndir */}
+                    <div className="md:col-span-5">
+                      <label
+                        htmlFor="week-selector"
+                        className="block text-xs font-semibold text-slate-800 mb-1.5"
+                      >
+                        Hafta ve Tarih Listesinden Seçin
+                      </label>
+                      <select
+                        id="week-selector"
+                        value={selectedWeekId}
+                        onChange={(e) => handleSelectWeek(e.target.value)}
+                        className="w-full rounded-lg border border-sky-300 bg-sky-50/40 px-3 py-2 text-xs font-medium text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
+                      >
+                        {activeWeekList.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.haftaEtiketi} ({w.tarihAraligi})
+                            {w.ogrenmeBirimi ? ` — ${w.ogrenmeBirimi}` : ""}
+                            {w.sure ? ` [${w.sure}]` : ""}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Tüm Haftaları İndir Button & Word/PDF Selector */}
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          disabled={isExportingAllWeeks}
+                          onClick={() =>
+                            setIsAllWeeksMenuOpen((prev) => !prev)
+                          }
+                          className="w-full inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-white text-xs font-semibold transition-colors shadow-2xs disabled:opacity-60"
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            {isExportingAllWeeks ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                            ) : (
+                              <FileDown className="w-3.5 h-3.5 text-amber-300" />
+                            )}
+                            <span>
+                              Tüm Haftaları İndir ({activeWeekList.length} Hafta)
+                            </span>
+                          </span>
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 text-slate-300 transition-transform ${
+                              isAllWeeksMenuOpen ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+
+                        {isAllWeeksMenuOpen && (
+                          <div className="mt-1.5 p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/80 space-y-2">
+                            <p className="text-[11px] font-medium text-indigo-950">
+                              Tüm {activeWeekList.length} haftanın günlük ders
+                              planını tek tuşla indirmek için format seçin:
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                disabled={isExportingAllWeeks}
+                                onClick={() => handleDownloadAllWeeks("word")}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors shadow-2xs"
+                              >
+                                <FileDown className="w-3.5 h-3.5 shrink-0" />
+                                <span>Word (.doc) İndir</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isExportingAllWeeks}
+                                onClick={() => handleDownloadAllWeeks("pdf")}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-semibold transition-colors shadow-2xs"
+                              >
+                                <Printer className="w-3.5 h-3.5 shrink-0" />
+                                <span>PDF Olarak İndir</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Editable Hafta Etiketi */}
+                    <div className="md:col-span-2">
+                      <label
+                        htmlFor="meta-hafta-etiketi"
+                        className="block text-xs font-semibold text-slate-800 mb-1.5"
+                      >
+                        Hafta Başlığı
+                      </label>
+                      <input
+                        id="meta-hafta-etiketi"
+                        type="text"
+                        value={meta.haftaEtiketi}
+                        onChange={(e) =>
+                          updateMetaField("haftaEtiketi", e.target.value)
+                        }
+                        placeholder="Örn: 1. HAFTA"
+                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Editable Tarih Aralığı */}
+                    <div className="md:col-span-3">
+                      <label
+                        htmlFor="meta-tarih-araligi"
+                        className="block text-xs font-semibold text-slate-800 mb-1.5"
+                      >
+                        Tarih Aralığı (Başlıkta Görünür)
+                      </label>
+                      <input
+                        id="meta-tarih-araligi"
+                        type="text"
+                        value={meta.tarihAraligi}
+                        onChange={(e) =>
+                          updateMetaField("tarihAraligi", e.target.value)
+                        }
+                        placeholder="Örn: 14 - 18 Eylül"
+                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Editable Onay Tarihi */}
+                    <div className="md:col-span-2">
+                      <label
+                        htmlFor="meta-onay-tarihi"
+                        className="block text-xs font-semibold text-slate-800 mb-1.5"
+                      >
+                        Uygundur Tarihi
+                      </label>
+                      <input
+                        id="meta-onay-tarihi"
+                        type="text"
+                        value={meta.onayTarihi}
+                        onChange={(e) =>
+                          updateMetaField("onayTarihi", e.target.value)
+                        }
+                        placeholder="Örn: 14/09/2026"
+                        className="w-full rounded-lg border border-slate-300 bg-slate-50/70 px-3 py-2 text-xs text-slate-900 tabular-nums focus:bg-white focus:border-sky-600 focus:outline-none"
                       />
                     </div>
                   </div>
