@@ -153,13 +153,36 @@ export function stripFrontMatter(rawText: string): string {
   if (!rawText) return "";
 
   const normalized = normalizeTurkishUnicode(rawText)
-    // Pre-join 2-line wrapped section headings in PDFs so words like "Öğrenme" never stay dangling at the end of the previous section
+    // Remove standalone or glued MEB annex markers ("EK-3", "EK-1", "EK - 3") cleanly BEFORE heading splitting
+    // Case-sensitive uppercase "EK" preserves spacing when glued inside PDF words ("nasılEK-3gerçekleştirildiğine") or codes ("D12.3,EK-3D16.3")
+    .replace(/(?<![A-ZÇĞİÖŞÜ])EK\s*[-–]\s*\d{1,2}(?![0-9])/g, " ")
+    // Pre-join 2-line or glued section headings in PDFs so headings never stay glued to previous or next text
     .replace(
-      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRETME|Öğretme|öğretme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları|uygulamaları)/g,
+      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n?\s*(?:ÖĞRETME|Öğretme)\s*\r?\n?\s*(?:ORTAM|Ortam)\s+(?:VE|ve)\s+(?:DONANIM[Iİ]?|Donanım[ıi]?)/g,
+      "\nÖĞRENME ÖĞRETME ORTAM VE DONANIMI\n"
+    )
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*BİRİMİ\s*\/\s*\r?\n?\s*(?:MODÜL|Modül)\s+(?:VE|ve)\s+SÜRE\s*\r?\n?\s*TABLOSU/gi,
+      "\nÖĞRENME BİRİMİ / MODÜL VE SÜRE TABLOSU\n"
+    )
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*BİRİMİ\s*\/\s*\r?\n?\s*(?:MODÜL|Modül)(?=\s*(?:ÖĞRENME\s*ÇIKTISI|ADI))/gi,
+      "\nÖĞRENME BİRİMİ / MODÜL "
+    )
+    .replace(
+      /(?:UYGULAMA|Uygulama)\s+(?:FAALİYETLERİ|Faaliyetleri)\s*\/\s*(?:TEMRİNLER|Temrinler)/g,
+      "\nUYGULAMA FAALİYETLERİ / TEMRİNLER\n"
+    )
+    .replace(
+      /DERSİN\s+UYGULANMASINA\s+İLİŞKİN\s+AÇIKLAMALAR/g,
+      "\nDERSİN UYGULANMASINA İLİŞKİN AÇIKLAMALAR\n"
+    )
+    .replace(
+      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n?\s*(?:ÖĞRETME|Öğretme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları)/g,
       "\nÖĞRENME-ÖĞRETME UYGULAMALARI\n"
     )
     .replace(
-      /(?:ÖĞRETME|Öğretme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRENME|Öğrenme|öğrenme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları|uygulamaları)/g,
+      /(?:ÖĞRETME|Öğretme)\s*[-–]?\s*\r?\n?\s*(?:ÖĞRENME|Öğrenme)\s+(?:UYGULAMALAR[Iİ]|Uygulamaları)/g,
       "\nÖĞRETME-ÖĞRENME UYGULAMALARI\n"
     )
     .replace(
@@ -167,7 +190,7 @@ export function stripFrontMatter(rawText: string): string {
       "\nÖĞRENME-ÖĞRETME UYGULAMALARI\n"
     )
     .replace(
-      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n\s*(?:ÖĞRETME|Öğretme|öğretme)\s+(?:YAŞANT[Iİ]LAR[Iİ]|Yaşantıları|yaşantıları)/g,
+      /(?:ÖĞRENME|Öğrenme)\s*[-–]?\s*\r?\n?\s*(?:ÖĞRETME|Öğretme)\s+(?:YAŞANT[Iİ]LAR[Iİ]|Yaşantıları)/g,
       "\nÖĞRENME-ÖĞRETME YAŞANTILARI\n"
     )
     .replace(
@@ -175,24 +198,27 @@ export function stripFrontMatter(rawText: string): string {
       "\nÖĞRENME-ÖĞRETME YAŞANTILARI\n"
     )
     .replace(
-      /(?:ÖN|Ön)\s*\r?\n\s*(?:DEĞERLEND[İI]RME|Değerlendirme|değerlendirme)(?:\s*\r?\n?\s*(?:SÜREC[İI]|Süreci|süreci))?/g,
+      /(?:ÖN|Ön)\s*\r?\n?\s*(?:DEĞERLEND[İI]RME|Değerlendirme)(?:\s*\r?\n?\s*(?:SÜREC[İI]|Süreci))?/g,
       "\nÖN DEĞERLENDİRME SÜRECİ\n"
     )
     .replace(
-      /(?:ÖN|Ön)\s+(?:DEĞERLEND[İI]RME|Değerlendirme|değerlendirme)\s*\r?\n\s*(?:SÜREC[İI]|Süreci|süreci)/g,
-      "\nÖN DEĞERLENDİRME SÜRECİ\n"
-    )
-    .replace(
-      /(?:TEMEL|Temel)\s*\r?\n\s*(?:KABULLER|Kabuller|kabuller)/g,
+      /(?:TEMEL|Temel)\s*\r?\n?\s*(?:KABULLER|Kabuller)/g,
       "\nTEMEL KABULLER\n"
     )
     .replace(
-      /(?:KÖPRÜ|Köprü)\s*\r?\n\s*(?:KURMA|Kurma|kurma)/g,
+      /(?:KÖPRÜ|Köprü)\s*\r?\n?\s*(?:KURMA|Kurma)/g,
       "\nKÖPRÜ KURMA\n"
     )
     .replace(
-      /(?:ÖĞRENME|Öğrenme)\s*\r?\n\s*(?:KAN[Iİ]TLAR[Iİ]|Kanıtları|kanıtları)(?:\s*\r?\n?\s*\(\s*(?:ÖLÇME|Ölçme)\s+(?:VE|ve)\s*\r?\n?\s*(?:DEĞERLEND[İI]RME|Değerlendirme)\s*\))?/g,
+      /(?:ÖĞRENME|Öğrenme)\s*\r?\n?\s*(?:KAN[Iİ]TLAR[Iİ]|Kanıtları)(?:\s*\r?\n?\s*\(\s*(?:ÖLÇME|Ölçme)\s+(?:VE|ve)\s*\r?\n?\s*(?:DEĞERLEND[İI]RME|Değerlendirme)\s*\))?/g,
       "\nÖĞRENME KANITLARI (ÖLÇME VE DEĞERLENDİRME)\n"
+    )
+    // Separate Ortam: / Donanım: when glued to preceding PDF cells
+    .replace(/([^\n])((?:Ortam|Donanım)\s*:)/g, "$1\n$2")
+    // Separate parenthesized Maarif code list endings "(E1.4, ..., D18.3)." from glued next unit heading or section heading
+    .replace(
+      /(\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.?)\s*(?=[A-ZÇĞİÖŞÜ])/g,
+      "$1\n"
     )
     // Remove repeating annual plan page footer/header blocks that end with page numbers like "2 / 7"
     .replace(
@@ -201,16 +227,14 @@ export function stripFrontMatter(rawText: string): string {
     )
     // Remove inline page numbers like " 2 / 7 " or " 1 / 7 "
     .replace(/(?:^|\s)\d{1,2}\s*\/\s*\d{1,2}(?=\s|$)/gm, " ")
-    // Remove standalone or inline "EK-3", "EK-1", "EK - 3" form markers
-    .replace(/(?:^|\s)EK\s*[-–]\s*\d{1,2}(?=\s|$)/gi, "\n")
     // Insert newline before major section headings when glued inline after punctuation
     .replace(
-      /([.!?:;|])\s*((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]|Öğrenme\s*[Kk]anıtları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
+      /([.!?:;|])\s*((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]|Öğrenme\s*[Kk]anıtları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*ORTAM\s+VE\s+DONANIM[Iİ]?|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
       "$1\n$2"
     )
-    // Also split if major Ders Bilgi Formu headings appear mid-line even WITHOUT preceding punctuation (e.g. after "yapabilme" or "YAŞANTILARI")
+    // Also split if major Ders Bilgi Formu headings appear mid-line even WITHOUT preceding punctuation
     .replace(
-      /\s+((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\))?|Öğrenme\s*[Kk]anıtları(?:\s*\(Ölçme\s*ve\s*Değerlendirme\))?|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
+      /\s+((?:ÖĞRENME\s*KAN[Iİ]TLAR[Iİ](?:\s*\(ÖLÇME\s*VE\s*DEĞERLEND[İI]RME\))?|Öğrenme\s*[Kk]anıtları(?:\s*\(Ölçme\s*ve\s*Değerlendirme\))?|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*YAŞANT[Iİ]LAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Yy]aşantıları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*YAŞANT[Iİ]LAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Yy]aşantıları|TEMEL\s*KABULLER|Temel\s*[Kk]abuller|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|Ön\s*[Dd]eğerlendirme(?:\s*[Ss]üreci)?|KÖPRÜ\s*KURMA|Köprü\s*[Kk]urma|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*UYGULAMALAR[Iİ]|Öğrenme\s*[-–]?\s*[Öö]ğretme\s*[Uu]ygulamaları|ÖĞRETME\s*[-–]?\s*ÖĞRENME\s*UYGULAMALAR[Iİ]|Öğretme\s*[-–]?\s*[Öö]ğrenme\s*[Uu]ygulamaları|ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*ORTAM\s+VE\s+DONANIM[Iİ]?|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma)(?=\s|[:(-]|$))/g,
       "\n$1"
     )
     // Insert newline before Maarif component code definitions (e.g. "E1.4. Kendine İnanma", "SDB2.2. İş Birliği") when NOT inside parentheses
@@ -227,7 +251,7 @@ export function stripFrontMatter(rawText: string): string {
     if (!t) return false;
     if (/^\d{1,2}\s*\/\s*\d{1,2}$/.test(t)) return false;
     if (/^EK\s*[-–]?\s*\d{1,2}$/i.test(t)) return false;
-    if (/\.{4,}/.test(t) || /\b\d{4,6}\b/.test(t) && /\.{2,}/.test(t)) return false;
+    if (/\.{4,}/.test(t) || (/\b\d{4,6}\b/.test(t) && /\.{2,}/.test(t))) return false;
     const upperT = toTrUpper(t);
     if (
       /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|YARDIMCI\s*VE\s*KAYNAK|KİTAPLAR\s*DİZİSİ|DERS\s*MATERYAL[İI]|ALANI\s+BİTKİ\s+ÜRETİM|HER\s*HAKKI\s*SAKLIDIR|HİÇBİR\s*SURETTE\s*ALINIP\s*YAYIMLANAMAZ|ISBN\s*[:\d-]|BASKI\s*YILI|MATBAASI|İSTİKL[ÂA]L\s*MARŞI|GENÇLİĞE\s*HİTABE|EDİTÖR|GÖRSEL\s*TASARIM\s*UZMANI|PROGRAM\s*GELİŞTİRME\s*UZMANI|ÖLÇME\s*VE\s*DEĞERLENDİRME\s*UZMANI|REHBERLİK\s*UZMANI/.test(
@@ -626,6 +650,8 @@ export interface StructuredDersBilgiFormu {
   ogretmeUygulamalariByUnit: Record<string, string[]>;
   ogretmeUygulamalariSegments?: DbfUygulamaSegment[];
   allOgretmeUygulamalariBullets: string[];
+  unitContextKeywords?: Record<string, string>;
+  hasExplicitUnitHeadingsInUygulamalar?: boolean;
   farklilastirma: string;
   rawActivityCodes: string[];
   rawOutcomesCatalogText?: string;
@@ -1463,9 +1489,9 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
 export function normalizeMaarifCodeListsInText(rawText: string): string {
   if (!rawText) return "";
   return normalizeTurkishUnicode(rawText)
-    // 1. Restore missing opening parenthesis before a list of >=2 Maarif codes ending with ")"
+    // 1. Restore missing opening parenthesis ONLY after a Turkish lowercase word (e.g. "istenir KB2.11, ... OB1)") — never inside existing parentheses like "(E1.4, E2.2, ...)"
     .replace(
-      /([^\s(])\s+((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*[,;]\s*)+(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*\))/g,
+      /([a-zçğıöşü]{2,})\s+((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*[,;]\s*)+(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*\))/g,
       "$1 ($2"
     )
     // 2. Ensure a closing period after a parenthesized Maarif code list at the end of a sentence
@@ -1571,11 +1597,11 @@ export function parseDersBilgiFormuStructured(
   // Parse textbook chapter/sub-chapter tree from Ders Materyali (if provided)
   const materyalTree = parseMateryalChapterTree(dersMateryaliText || "");
 
-  // 1. Canonical Maarif Component Codes (E, SDB, D, OB, KB)
+  // 1. Canonical Maarif Component Codes (E, SDB, D, OB, KB) — course-agnostic defaults only
   const egilimler = extractCanonicalMaarifCodes(
     combined,
     "E",
-    "E1.4. Kendine İnanma (Öz Yeterlilik), E2.2. Sorumluluk, E2.3. Girişkenlik, E3.2. Odaklanma"
+    "E1.4. Kendine İnanma (Öz Yeterlilik), E2.2. Sorumluluk"
   );
   const sosyalDuygusalBeceriler = extractCanonicalMaarifCodes(
     combined,
@@ -1585,12 +1611,12 @@ export function parseDersBilgiFormuStructured(
   const degerler = extractCanonicalMaarifCodes(
     combined,
     "D",
-    "D3. Çalışkanlık, D6. Dürüstlük, D12. Sabır, D16. Sorumluluk, D18. Temizlik"
+    "D3. Çalışkanlık, D16. Sorumluluk"
   );
   const okuryazarlikBecerileri = extractCanonicalMaarifCodes(
     combined,
     "OB",
-    "OB1. Bilgi Okuryazarlığı, OB2. Dijital Okuryazarlık, OB8. Sürdürülebilirlik Okuryazarlığı"
+    "OB1. Bilgi Okuryazarlığı, OB2. Dijital Okuryazarlık"
   );
   const becerilerArasiIliski = extractCanonicalMaarifCodes(
     combined,
@@ -1682,8 +1708,7 @@ export function parseDersBilgiFormuStructured(
       }
     }
     disiplinlerArasiIliski =
-      foundDisciplines.slice(0, 4).join(", ") ||
-      "Coğrafya, Biyoloji, Matematik";
+      foundDisciplines.slice(0, 4).join(", ") || "Türkçe, Matematik";
   }
 
   // 4. Parse All Learning Outcomes (ST.1.1, ST.1.2, BÜY.1.1, etc.) and Sub-Process Components (a, b, c, ç, d, e)
@@ -1920,13 +1945,18 @@ export function parseDersBilgiFormuStructured(
   }
 
   // Enrich outcomesMap from Ders Materyali chapter tree (1.1, 1.1.1..1.1.6, 1.2, 1.2.1..1.2.4)
-  // AND canonical MEB textbook mappings when EK-3 Ders Bilgi Formu only had unit-level outcomes without a), b), c), ç)
+  // Guard canonical Sürdürülebilir Tarım fallback so it NEVER applies to any other course!
+  const isSurdurulebilirTarimCourse = /SÜRDÜRÜLEBİLİR\s*TARIM/i.test(
+    `${meta.dersIsmi || ""} ${combined.slice(0, 1200)}`
+  );
   for (const [code, entry] of Object.entries(outcomesMap)) {
     const uoKey = `${entry.unitNumber}.${entry.outcomeNumber}`;
     const matSec = isMateryalCompatible
       ? materyalTree.sectionsByUnitAndOutcome[uoKey]
       : undefined;
-    const canonical = CANONICAL_MEB_TEXTBOOK_OUTCOMES[code];
+    const canonical = isSurdurulebilirTarimCourse
+      ? CANONICAL_MEB_TEXTBOOK_OUTCOMES[code]
+      : undefined;
 
     if (matSec) {
       if (matSec.sectionTitle && matSec.sectionTitle.length >= 4) {
@@ -2063,8 +2093,42 @@ export function parseDersBilgiFormuStructured(
   const ogretmeUygulamalariByUnit: Record<string, string[]> = {};
   const ogretmeUygulamalariSegments: DbfUygulamaSegment[] = [];
   let allOgretmeUygulamalariBullets: string[] = [];
+  let hasExplicitUnitHeadingsInUygulamalar = false;
 
   const targetLines = dbfLines.length > 0 ? dbfLines : combinedLines;
+
+  // 7.0 Pre-extract official unit names from DBF "ÖĞRENME BİRİMİ / MODÜL VE SÜRE TABLOSU" if present
+  for (let i = 0; i < targetLines.length; i++) {
+    const upperLine = toTrUpper(targetLines[i]);
+    if (/ÖĞRENME\s*BİRİMİ\s*\/?\s*MODÜL\s+VE\s+SÜRE/i.test(upperLine)) {
+      let tableUnitIdx = 0;
+      for (let j = i + 1; j < Math.min(targetLines.length, i + 25); j++) {
+        const tLine = normalizeTurkishUnicode(targetLines[j]).trim();
+        const tUpper = toTrUpper(tLine);
+        if (/^TOPLAM\b|ÖĞRENME\s*ÇIKTISI\s*GRUBU|UYGULAMA\s*FAALİYETLERİ/i.test(tUpper)) {
+          break;
+        }
+        if (/ÖĞRENME\s*BİRİMİ\s*\/?\s*MODÜL\s*(?:ADI|SÜRESİ)/i.test(tUpper)) {
+          continue;
+        }
+        const durMatch = tLine.match(
+          /^([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s,'()-]{2,65}?)\s+\d{1,3}\s*\/\s*\d{1,3}$/
+        );
+        if (durMatch) {
+          tableUnitIdx++;
+          const uName = durMatch[1].trim();
+          const formatted =
+            uName.charAt(0).toLocaleUpperCase("tr-TR") +
+            uName.slice(1).toLocaleLowerCase("tr-TR");
+          if (!unitsByNumber[tableUnitIdx]) {
+            unitsByNumber[tableUnitIdx] = formatted;
+          }
+        }
+      }
+      break;
+    }
+  }
+
   let uygulamalarStartIdx = -1;
   let uygulamalarEndIdx = targetLines.length;
 
@@ -2075,7 +2139,10 @@ export function parseDersBilgiFormuStructured(
     /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|SÜREC[İI]))(?=$|\s|[:|-])/i;
 
   const uygulamalarStopUpperRegex =
-    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:FARKL[Iİ]LAŞT[Iİ]RMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|ÖĞRETMEN\s*VE\s*ÖĞRENC[İI]|UYGUNDUR|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*ORTAM|ÖĞRETME\s*ORTAM|ORTAM\s*VE\s*DONANIM|ORTAM\s*:|DONANIM\s*:|ÖĞRENME\s*BİRİMİ\s*(?:\/|\s)\s*(?:MODÜL|VE\s*SÜRE)|ÖĞRENME\s*ÇIKTISI\s*GRUBU|UYGULAMA\s*FAALİYETLERİ|DERSİN\s*UYGULANMASINA|FARKL[Iİ]LAŞT[Iİ]RMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|ÖĞRETMEN\s*VE\s*ÖĞRENC[İI]|UYGUNDUR|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
+
+  const uygulamalarInlineStopRegex =
+    /(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME\s*ORTAM\s*VE\s*DONANIM|ORTAM\s*VE\s*DONANIM|ÖĞRENME\s*BİRİMİ\s*\/?\s*MODÜL\s+VE\s+SÜRE|ÖĞRENME\s*ÇIKTISI\s*GRUBU\s*VE\s*AÇIKLAMALARI|UYGULAMA\s*FAALİYETLERİ\s*\/?\s*TEMRİNLER|DERSİN\s*UYGULANMASINA\s*İLİŞKİN|FARKL[Iİ]LAŞT[Iİ]RMA)/i;
 
   // 7.1 First look for explicit "ÖĞRENME-ÖĞRETME UYGULAMALARI" / "ÖĞRETME UYGULAMALARI" subheading
   for (let i = 0; i < targetLines.length; i++) {
@@ -2096,7 +2163,7 @@ export function parseDersBilgiFormuStructured(
     }
   }
 
-  // 7.2 Fallback: If the Ders Bilgi Formu only had "ÖĞRENME-ÖĞRETME YAŞANTILARI" (or placed the unit/topic blocks right after KÖPRÜ KURMA without a separate "ÖĞRENME-ÖĞRETME UYGULAMALARI" line)
+  // 7.2 Fallback: If the Ders Bilgi Formu only had "ÖĞRENME-ÖĞRETME YAŞANTILARI" (or placed unit/topic blocks right after KÖPRÜ KURMA)
   if (uygulamalarStartIdx === -1) {
     let yasantilarIdx = -1;
     let kopruIdx = -1;
@@ -2110,7 +2177,12 @@ export function parseDersBilgiFormuStructured(
       }
     }
 
-    const searchFrom = kopruIdx !== -1 ? kopruIdx + 1 : yasantilarIdx !== -1 ? yasantilarIdx + 1 : -1;
+    const searchFrom =
+      kopruIdx !== -1
+        ? kopruIdx + 1
+        : yasantilarIdx !== -1
+        ? yasantilarIdx + 1
+        : -1;
     if (searchFrom !== -1 && searchFrom < targetLines.length) {
       let endIdx = targetLines.length;
       for (let j = searchFrom; j < targetLines.length; j++) {
@@ -2120,7 +2192,6 @@ export function parseDersBilgiFormuStructured(
         }
       }
 
-      // Skip past the short Köprü Kurma paragraph if we started at kopruIdx, stopping as soon as we see a unit heading or activity sentence
       let adjustedStart = searchFrom;
       if (kopruIdx !== -1) {
         for (let k = searchFrom; k < endIdx; k++) {
@@ -2136,12 +2207,13 @@ export function parseDersBilgiFormuStructured(
           }
         }
       } else if (yasantilarIdx !== -1) {
-        // Filter out Temel Kabuller, Ön Değerlendirme, Köprü Kurma lines if we started from ÖĞRENME-ÖĞRETME YAŞANTILARI
         for (let k = searchFrom; k < endIdx; k++) {
           const lineNorm = normalizeTurkishUnicode(targetLines[k]).trim();
           if (
             /^\*?\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,45}:\s*/.test(lineNorm) &&
-            !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA)/i.test(toTrUpper(lineNorm))
+            !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA)/i.test(
+              toTrUpper(lineNorm)
+            )
           ) {
             adjustedStart = k;
             break;
@@ -2183,23 +2255,49 @@ export function parseDersBilgiFormuStructured(
       !isDbfSectionPageArtifactOrSubHeader(firstRemainder) &&
       !yasantilarHeadingUpperRegex.test(toTrUpper(firstRemainder))
     ) {
-      rawUygulamaLines.push(firstRemainder);
+      const inlineStop = toTrUpper(firstRemainder).match(
+        uygulamalarInlineStopRegex
+      );
+      if (inlineStop && inlineStop.index !== undefined) {
+        const sliceBefore = firstRemainder.slice(0, inlineStop.index).trim();
+        if (sliceBefore) rawUygulamaLines.push(sliceBefore);
+      } else {
+        rawUygulamaLines.push(firstRemainder);
+      }
     }
 
     for (let k = uygulamalarStartIdx + 1; k < uygulamalarEndIdx; k++) {
       const candidateLine = normalizeTurkishUnicode(targetLines[k]).trim();
+      if (!candidateLine) continue;
+      const candidateUpper = toTrUpper(candidateLine);
+      if (uygulamalarStopUpperRegex.test(candidateUpper)) {
+        break;
+      }
+      const inlineStop = candidateUpper.match(uygulamalarInlineStopRegex);
+      if (inlineStop && inlineStop.index !== undefined) {
+        const beforeStop = candidateLine.slice(0, inlineStop.index).trim();
+        if (
+          beforeStop &&
+          !isDbfSectionPageArtifactOrSubHeader(beforeStop) &&
+          !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA)\s*[:|-]?$/i.test(
+            toTrUpper(beforeStop)
+          )
+        ) {
+          rawUygulamaLines.push(beforeStop);
+        }
+        break;
+      }
       if (
-        candidateLine &&
         !isDbfSectionPageArtifactOrSubHeader(candidateLine) &&
         !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA)\s*[:|-]?$/i.test(
-          toTrUpper(candidateLine)
+          candidateUpper
         )
       ) {
         rawUygulamaLines.push(candidateLine);
       }
     }
 
-    // Known unit names from outcomesMap & materyalTree to recognize unit headers even without colons
+    // Known unit names from outcomesMap & materyalTree & duration table to recognize unit headers even without colons
     const knownUnitNamesLower = new Map<string, { num: number; name: string }>();
     for (const [uNoStr, uName] of Object.entries(unitsByNumber)) {
       if (uName && uName.trim().length >= 3) {
@@ -2210,9 +2308,12 @@ export function parseDersBilgiFormuStructured(
       }
     }
 
-    // 7A. Check for explicit UnitTitle: subheadings (e.g. "* Onarıcı tarım:", "Generatif üretim:", "1. Ünite: ...")
+    // 7A. Check for explicit UnitTitle: subheadings (e.g. "Onarıcı Tarım:", "İyi Tarım Uygulamaları:", "Organik Tarım:")
     const unitSubheadingRegex =
       /^(?:[*•\-–]\s*)?(?:(\d{1,2})\.\s*(?:Öğrenme\s*Birimi|Ünite|Tema)\s*[:\-–]\s*)?([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s,'()-]{2,65}):\s*(.*)$/;
+    const nonUnitSubheadingRegex =
+      /^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte|Bu\s+öğrenme|Temel\s+Kabuller|Ön\s+Değerlendirme|Köprü\s+Kurma|Öğrenme\s+Kanıtları|Ortam|Donanım|Amaç|Süre|Dersin\s+Adı|Dersin\s+Sınıfı|Dersin\s+Süresi|Dersin\s+Amacı|Zenginleştirme|Destekleme|Öğrenme\s+Öğretme\s+Ortam)/i;
+
     let activeUnitKey = "";
     let activeUnitTitle = "";
     let currentUnitLines: string[] = [];
@@ -2259,47 +2360,41 @@ export function parseDersBilgiFormuStructured(
         const normalizedBody = normalizeMaarifCodeListsInText(bodyWithoutHeader);
         const subBlocks = splitIntoCodeTerminatedBlocks(normalizedBody);
 
-        const allUnitBullets: string[] = [];
-        subBlocks.forEach((subBlock, subIdx) => {
-          const bullets = splitOgretmeUygulamalariIntoBullets(
-            subBlock,
-            subIdx === 0 ? activeUnitTitle : undefined
-          );
+        const allUnitBullets: string[] = [`${activeUnitTitle}:`];
+        subBlocks.forEach((subBlock) => {
+          const bullets = splitOgretmeUygulamalariIntoBullets(subBlock);
           if (bullets.length > 0) {
-            allUnitBullets.push(...bullets);
-            // Ensure each segment also has the unit header as first item when displayed standalone
-            const segBulletsWithHeader =
-              bullets[0] && bullets[0].endsWith(":")
-                ? bullets
-                : [`${activeUnitTitle}:`, ...bullets];
+            for (const b of bullets) {
+              if (b.endsWith(":")) continue;
+              allUnitBullets.push(b);
+            }
             ogretmeUygulamalariSegments.push({
               index: ogretmeUygulamalariSegments.length,
               unitHint: activeUnitTitle,
               unitNumberHint: unitCounter,
               rawText: subBlock,
-              bullets: segBulletsWithHeader,
+              bullets: [`${activeUnitTitle}:`, ...bullets.filter((b) => !b.endsWith(":"))],
             });
           }
         });
-        if (allUnitBullets.length > 0) {
+        if (allUnitBullets.length > 1) {
           ogretmeUygulamalariByUnit[activeUnitKey] = allUnitBullets;
+          hasExplicitUnitHeadingsInUygulamalar = true;
         }
       }
     };
 
     for (const uLine of rawUygulamaLines) {
       const m = uLine.match(unitSubheadingRegex);
-      const cleanLineNoBullet = uLine.replace(/^[*•\-–]\s*/, "").replace(/:$/, "").trim();
+      const cleanLineNoBullet = uLine
+        .replace(/^[*•\-–]\s*/, "")
+        .replace(/:$/, "")
+        .trim();
       const matchedKnownUnit = knownUnitNamesLower.get(
         cleanLineNoBullet.toLocaleLowerCase("tr-TR")
       );
 
-      if (
-        m &&
-        !/^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte|Bu\s+öğrenme|Temel\s+Kabuller|Ön\s+Değerlendirme|Köprü\s+Kurma|Öğrenme\s+Kanıtları)/i.test(
-          m[2].trim()
-        )
-      ) {
+      if (m && !nonUnitSubheadingRegex.test(m[2].trim())) {
         flushUnit();
         activeUnitTitle = m[2].trim();
         const formattedUnitName =
@@ -2385,6 +2480,59 @@ export function parseDersBilgiFormuStructured(
             idx === 0 ? s.bullets : s.bullets.filter((b) => !b.endsWith(":"))
           )
         : splitOgretmeUygulamalariIntoBullets(normalizedFullUygulamalar);
+  }
+
+  // 7C. Generically index DBF Page 4-6 Curriculum & Temrin tables ("ÖĞRENME ÇIKTISI GRUBU VE AÇIKLAMALARI", "UYGULAMA FAALİYETLERİ / TEMRİNLER")
+  // so sub-topics (e.g. "İklim Değişikliği", "Bakım İşlemleri") map accurately back to their parent Learning Unit for ANY course!
+  const unitContextKeywords: Record<string, string> = {};
+  const indexedUnitNames = Array.from(
+    new Set([
+      ...Object.keys(ogretmeUygulamalariByUnit).filter(
+        (k) => !k.startsWith("unit-")
+      ),
+      ...Object.values(unitsByNumber)
+        .map((u) => u.trim().toLocaleLowerCase("tr-TR"))
+        .filter((u) => u.length >= 3),
+    ])
+  );
+  if (indexedUnitNames.length > 0 && dbfLines.length > 0) {
+    const joinedDbfLower = normalizeTurkishUnicode(dbfLines.join(" "))
+      .replace(/\s+/g, " ")
+      .toLocaleLowerCase("tr-TR");
+    const tableStartIdx = joinedDbfLower.indexOf("öğrenme çıktısı grubu");
+    const altTableStart = joinedDbfLower.indexOf("uygulama faaliyetleri");
+    const scanStart = tableStartIdx !== -1 ? tableStartIdx : altTableStart;
+    if (scanStart !== -1) {
+      const endMarkerIdx = joinedDbfLower.indexOf(
+        "dersin uygulanmasına",
+        scanStart
+      );
+      const tableSlice = joinedDbfLower.slice(
+        scanStart,
+        endMarkerIdx !== -1 ? endMarkerIdx : scanStart + 6000
+      );
+
+      // Split both the Outcome Group table and Temrinler section by unit headings
+      const occurrences: Array<{ unitKey: string; pos: number }> = [];
+      for (const uKey of indexedUnitNames) {
+        const escaped = uKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, "g");
+        let om: RegExpExecArray | null;
+        while ((om = re.exec(tableSlice)) !== null) {
+          occurrences.push({ unitKey: uKey, pos: om.index });
+        }
+      }
+      occurrences.sort((a, b) => a.pos - b.pos);
+      for (let oi = 0; oi < occurrences.length; oi++) {
+        const curr = occurrences[oi];
+        const nextPos =
+          oi + 1 < occurrences.length ? occurrences[oi + 1].pos : tableSlice.length;
+        const snippet = tableSlice.slice(curr.pos, Math.min(nextPos, curr.pos + 1600));
+        unitContextKeywords[curr.unitKey] = unitContextKeywords[curr.unitKey]
+          ? `${unitContextKeywords[curr.unitKey]} ${snippet}`
+          : snippet;
+      }
+    }
   }
 
   for (const outcome of Object.values(outcomesMap)) {
@@ -2502,6 +2650,8 @@ export function parseDersBilgiFormuStructured(
     ogretmeUygulamalariByUnit,
     ogretmeUygulamalariSegments,
     allOgretmeUygulamalariBullets,
+    unitContextKeywords,
+    hasExplicitUnitHeadingsInUygulamalar,
     farklilastirma,
     rawActivityCodes,
     rawOutcomesCatalogText,
@@ -2969,10 +3119,19 @@ export function extractWeekPlanStructured(
     ogrenmeBirimi = sanitizeShortTopicTitle(unitInWeek[1], "");
   }
   if (!ogrenmeBirimi) {
-    ogrenmeBirimi = deriveUnitNameFromOutcome(outcomeHeader);
+    const rawWindowLower = rawWeekWindowText.toLocaleLowerCase("tr-TR");
+    for (const uName of Object.values(structuredDbf.unitsByNumber)) {
+      if (uName && uName.length >= 3 && rawWindowLower.includes(uName.toLocaleLowerCase("tr-TR"))) {
+        ogrenmeBirimi = uName;
+        break;
+      }
+    }
   }
   if (!ogrenmeBirimi && structuredDbf.unitsByNumber[detectedUnitNo]) {
     ogrenmeBirimi = structuredDbf.unitsByNumber[detectedUnitNo];
+  }
+  if (!ogrenmeBirimi) {
+    ogrenmeBirimi = deriveUnitNameFromOutcome(outcomeHeader);
   }
   if (!ogrenmeBirimi && selectedWeekObj?.ogrenmeBirimi) {
     ogrenmeBirimi = sanitizeShortTopicTitle(selectedWeekObj.ogrenmeBirimi, "");
@@ -3114,7 +3273,105 @@ export function extractWeekPlanStructured(
     .map((p) => normalizeTurkishUnicode(p).toLocaleLowerCase("tr-TR").trim())
     .filter((p) => p.length >= 4);
 
-  if (segments.length > 0) {
+  let matchedExplicitUnitBlock = false;
+  const namedUnitEntries = Object.entries(
+    structuredDbf.ogretmeUygulamalariByUnit
+  ).filter(([uKey]) => !uKey.startsWith("unit-"));
+
+  // Priority 1: When DBF explicitly organizes Öğrenme Öğretme Uygulamaları by Learning Unit/Outcome heading
+  // (e.g. "Onarıcı Tarım:", "İyi Tarım Uygulamaları:", "Organik Tarım:" or any course's DBF unit headings),
+  // match the active week's unit/outcome/topic to the exact DBF unit and return its COMPLETE verbatim block!
+  if (
+    structuredDbf.hasExplicitUnitHeadingsInUygulamalar &&
+    namedUnitEntries.length > 0
+  ) {
+    const unitScores: Array<{ unitKey: string; bullets: string[]; score: number }> = [];
+    const lowerIcerik = icerikCercevesi.toLocaleLowerCase("tr-TR").trim();
+    const lowerOutcomeHeader = outcomeHeader.toLocaleLowerCase("tr-TR").trim();
+
+    namedUnitEntries.forEach(([unitKey, bullets], unitIdx) => {
+      let score = 0;
+      const contextKeywords =
+        structuredDbf.unitContextKeywords?.[unitKey] || "";
+      const fullUnitCorpus = [
+        unitKey,
+        bullets.join(" "),
+        contextKeywords,
+      ]
+        .join(" ")
+        .toLocaleLowerCase("tr-TR");
+
+      if (lowerUnit) {
+        if (unitKey === lowerUnit) {
+          score += 60;
+        } else if (unitKey.includes(lowerUnit) || lowerUnit.includes(unitKey)) {
+          score += 45;
+        }
+      }
+
+      if (lowerIcerik && lowerIcerik.length >= 4) {
+        if (unitKey.includes(lowerIcerik) || lowerIcerik.includes(unitKey)) {
+          score += 40;
+        } else if (contextKeywords.includes(lowerIcerik)) {
+          score += 25;
+        } else if (fullUnitCorpus.includes(lowerIcerik)) {
+          score += 18;
+        }
+      }
+
+      if (lowerOutcomeHeader && lowerOutcomeHeader.length >= 6) {
+        if (
+          lowerOutcomeHeader.includes(unitKey) ||
+          contextKeywords.includes(
+            lowerOutcomeHeader.replace(/^[a-zçğıöşü]{2,8}\.\d+(?:\.\d+)*\.?\s*/i, "")
+          )
+        ) {
+          score += 35;
+        }
+      }
+
+      for (const phrase of topicPhrases) {
+        if (phrase.length >= 5) {
+          if (unitKey.includes(phrase) || phrase.includes(unitKey)) {
+            score += 20;
+          } else if (contextKeywords.includes(phrase)) {
+            score += 14;
+          } else if (bullets.join(" ").toLocaleLowerCase("tr-TR").includes(phrase)) {
+            score += 10;
+          }
+        }
+      }
+
+      const unitKeyStems = extractDistinctiveStems(unitKey);
+      for (const stem of allWeekStems) {
+        if (unitKeyStems.includes(stem)) {
+          score += 8;
+        } else if (contextKeywords.includes(stem)) {
+          score += 4;
+        } else if (fullUnitCorpus.includes(stem)) {
+          score += 2;
+        }
+      }
+
+      if (unitIdx + 1 === detectedUnitNo) {
+        score += 5;
+      }
+
+      unitScores.push({ unitKey, bullets, score });
+    });
+
+    const bestUnitMatch = unitScores.reduce((prev, curr) =>
+      curr.score > prev.score ? curr : prev
+    );
+
+    if (bestUnitMatch && bestUnitMatch.score >= 5) {
+      unitOgretmeUygulamalari = bestUnitMatch.bullets;
+      matchedExplicitUnitBlock = true;
+    }
+  }
+
+  // Priority 2: Segment-level matching for DBFs without explicit unit headings (or if Priority 1 found no match)
+  if (!matchedExplicitUnitBlock && segments.length > 0) {
     // 7A. Identify segments belonging to this week's unit
     const unitMatchedSegments = segments.filter((seg) => {
       if (seg.unitHint && lowerUnit) {
@@ -3278,8 +3535,9 @@ export function extractWeekPlanStructured(
         : structuredDbf.allOgretmeUygulamalariBullets;
   }
 
-  // Ensure the unit heading bullet at index 0 matches this week's ogrenmeBirimi if a unit header bullet is present
+  // Preserve the DBF's exact unit heading when matched explicitly; only inject ogrenmeBirimi if no unit heading exists at index 0
   if (
+    !matchedExplicitUnitBlock &&
     unitOgretmeUygulamalari.length > 0 &&
     ogrenmeBirimi &&
     unitOgretmeUygulamalari[0].endsWith(":")
@@ -3469,18 +3727,20 @@ export function buildWeekSpecificActivitiesFallback(
       secondaryFocus.charAt(0).toLocaleUpperCase("tr-TR") +
       secondaryFocus.slice(1).toLocaleLowerCase("tr-TR")
     } süreçlerinin uygulama basamaklarını ve sağladığı kazanımları detaylıca kavrayacaksınız.`,
-    `Doğal kaynakları ve üretim ortamını koruyarak sürdürülebilir uygulama yapmanın mesleki verimliliği nasıl artırdığını keşfedeceksiniz.`,
-    `Edineceğiniz bilgi ve becerilerle sahada karşılaşılan problemlere çevre dostu ve bilimsel çözümler geliştirme yetkinliği kazanacaksınız.`,
+    `Mesleki uygulama standartlarını ve iş sağlığı-güvenliği kurallarını gözeterek doğru yöntemleri seçmenin verimliliği nasıl artırdığını keşfedeceksiniz.`,
+    `Edineceğiniz bilgi ve becerilerle sahada karşılaşılan problemlere bilimsel, planlı ve kaliteli çözümler geliştirme yetkinliği kazanacaksınız.`,
   ];
 
   const Dikkat_Cekme: string[] = [
-    `Geleneksel yöntemler yerine ${primaryFocus.toLocaleLowerCase("tr-TR")} ilkelerini uygulamak üretim ve çevre sağlığına gerçekten nasıl bir fark kazandırır?`,
+    `${
+      primaryFocus.charAt(0).toLocaleUpperCase("tr-TR") + primaryFocus.slice(1)
+    } ilkelerini doğru bir şekilde uygulamak mesleki kaliteye ve iş verimliliğine nasıl bir fark kazandırır?`,
     `${
       secondaryFocus.charAt(0).toLocaleUpperCase("tr-TR") +
       secondaryFocus.slice(1).toLocaleLowerCase("tr-TR")
     } aşamalarında yapılacak doğru bir planlama hem zamandan hem de kaynaklardan tasarruf etmeyi nasıl sağlar?`,
-    `Çevrenizdeki uygulamalarda ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} açısından karşılaşılan en önemli teknik veya çevresel engel sizce ne olabilir?`,
-    `Doğadaki doğal döngüleri koruyarak hem yüksek verim elde etmek hem de gelecek nesillere sağlıklı bir ekosistem bırakmak nasıl mümkün olabilir?`,
+    `Mesleki uygulamalarda ${weekData.icerikCercevesi.toLocaleLowerCase("tr-TR")} açısından karşılaşılan en önemli teknik sorun sizce ne olabilir?`,
+    `${weekData.ogrenmeBirimi} süreçlerinde hem yüksek uygulama kalitesi elde etmek hem de kaynakları verimli kullanmak nasıl mümkün olabilir?`,
   ];
 
   const obCodes = structuredDbf.rawActivityCodes.filter((c) =>
@@ -3500,7 +3760,7 @@ export function buildWeekSpecificActivitiesFallback(
   );
 
   const pair1 = `(${obCodes[0] || "OB1"}, ${kbCodes[0] || "KB2.2"})`;
-  const pair2 = `(${obCodes[2] || obCodes[1] || "OB8"}, ${eCodes[0] || "E1.4"})`;
+  const pair2 = `(${obCodes[2] || obCodes[1] || obCodes[0] || "OB2"}, ${eCodes[0] || "E1.4"})`;
   const pair3 = `(${kbCodes[1] || kbCodes[0] || "KB3.2"}, ${dCodes[0] || "D3.2"})`;
   const pair4 = `(${dCodes[2] || dCodes[1] || "D16.3"}, ${sdbCodes[1] || "SDB3.3"})`;
   const pair5 = `(${sdbCodes[0] || "SDB2.2"}, ${eCodes[1] || "E2.2"}, ${eCodes[2] || "E2.3"})`;
@@ -3509,12 +3769,12 @@ export function buildWeekSpecificActivitiesFallback(
   const Ek_Ogretme_Uygulamalari: string[] = [
     `${
       primaryFocus.charAt(0).toLocaleUpperCase("tr-TR") + primaryFocus.slice(1)
-    } konusunun temel aşamalarını ve uygulama ilkelerini gösteren şematik kesitler ve görseller sınıfta incelenebilir ${pair1}.`,
+    } konusunun temel aşamalarını ve uygulama ilkelerini gösteren şematik şablonlar ve görseller sınıfta incelenebilir ${pair1}.`,
     `Öğrenciler ${secondaryFocus.toLocaleLowerCase("tr-TR")} kapsamındaki yöntem ve materyallerin kritik noktalarını karşılaştırmalı olarak analiz edebilir ${pair2}.`,
-    `${weekData.icerikCercevesi} uygulamalarının kaynak tasarrufu, verimlilik ve çevre koruma açısından sağladığı yararlar somut saha verileriyle açıklanabilir ${pair3}.`,
-    `Konu kapsamındaki sistemlerin bölge koşullarına ve uygulama alanına uygun tasarlanma süreçleri örnek senaryolar üzerinden tartışılabilir ${pair4}.`,
+    `${weekData.icerikCercevesi} uygulamalarının kalite, verimlilik ve standartlara uygunluk açısından sağladığı yararlar somut örneklerle açıklanabilir ${pair3}.`,
+    `Konu kapsamındaki işlemlerin çalışma ortamı koşullarına uygun planlanma süreçleri örnek senaryolar üzerinden tartışılabilir ${pair4}.`,
     `Öğrencilerin ${primaryFocus.toLocaleLowerCase("tr-TR")} sürecinde karşılaşılabilecek temel zorluklara yönelik akılcı çözüm önerileri geliştirmeleri sağlanabilir ${pair5}.`,
-    `${weekData.ogrenmeBirimi} uygulamalarının sürdürülebilirlik ve ekosistem dengesi üzerindeki rolü kavram haritaları veya infografiklerle gösterilebilir ${pair6}.`,
+    `${weekData.ogrenmeBirimi} uygulamalarının mesleki süreçler ve kalite yönetimi üzerindeki rolü kavram haritaları veya infografiklerle gösterilebilir ${pair6}.`,
   ];
 
   let Ogretme_Uygulamalari = weekData.unitOgretmeUygulamalari;
@@ -3857,7 +4117,7 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
       "ilişkilendirilmesi mümkündür",
     ],
     characteristicPhrases: [
-      /(?:Öğrencilerin\s+günlük|Günlük\s+hayatta|Önceki\s+öğrenmeler|Tarlada\s+tohum)[\s\S]{15,650}?(?:bağ\s+kurulur|ilişki\s+kurulur|geçiş\s+sağlanır|geçiş\s+yapılır|ilişkilendirilmesi\s+mümkündür|kullanabilir)\./i,
+      /(?:Öğrencilerin\s+günlük|Günlük\s+hayatta|Önceki\s+öğrenmeler)[\s\S]{15,650}?(?:bağ\s+kurulur|ilişki\s+kurulur|geçiş\s+sağlanır|geçiş\s+yapılır|ilişkilendirilmesi\s+mümkündür|kullanabilir)\./i,
     ],
     minChars: 30,
     maxChars: 1400,
@@ -4131,7 +4391,7 @@ export function autoSearchOgretmeUygulamalariBulletsFallback(
     if (rawDbf && candidateHeader && candidateHeader.length >= 3) {
       const escapedHeader = candidateHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const blockRegex = new RegExp(
-        `(?:^|\\n)\\s*[*•\\-–]?\\s*${escapedHeader}\\s*:\\s*([\\s\\S]{40,3500}?)(?=\\n\\s*[*•\\-–]?\\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\\s,'()-]{2,55}:\\s|\\n\\s*(?:FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma|UYGUNDUR)|$)`,
+        `(?:^|\\n)\\s*[*•\\-–]?\\s*${escapedHeader}\\s*:\\s*([\\s\\S]{40,3500}?)(?=\\n\\s*[*•\\-–]?\\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\\s,'()-]{2,55}:\\s|\\n\\s*(?:ÖĞRENME\\s*[-–]?\\s*ÖĞRETME\\s*ORTAM|ORTAM\\s*VE\\s*DONANIM|Ortam\\s*:|ÖĞRENME\\s*BİRİMİ|UYGULAMA\\s*FAALİYETLERİ|FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma|UYGUNDUR)|$)`,
         "i"
       );
       const match = rawDbf.match(blockRegex);

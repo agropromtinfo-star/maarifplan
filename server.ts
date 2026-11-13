@@ -874,7 +874,7 @@ ${weekData.unitOgretmeUygulamalari.join("\n")}
   <farklilastirma_tam_metin>${structuredDbf.farklilastirma}</farklilastirma_tam_metin>
   <aktif_maarif_kodlari>${
     structuredDbf.rawActivityCodes.join(", ") ||
-    "OB1, OB2, OB8, KB2.2, KB3.2, E1.4, E2.2, E2.3, E3.2, SDB2.2, SDB3.3, D3.2, D12.3, D16.3, D18.3"
+    "OB1, OB2, KB2.2, KB3.2, E1.4, E2.2, SDB2.2, SDB3.3, D3.2, D16.3"
   }</aktif_maarif_kodlari>
 </ders_bilgi_formu>
 
