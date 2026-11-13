@@ -2059,7 +2059,7 @@ export function parseDersBilgiFormuStructured(
     }
   }
 
-  // 7. Extract Öğrenme-Öğretme / Öğretme-Öğrenme Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit AND Topic/Code-Block)
+  // 7. Extract Öğrenme-Öğretme Yaşantıları / Uygulamaları (Verbatim from Ders Bilgi Formu, organized by Learning Unit AND Topic/Code-Block)
   const ogretmeUygulamalariByUnit: Record<string, string[]> = {};
   const ogretmeUygulamalariSegments: DbfUygulamaSegment[] = [];
   let allOgretmeUygulamalariBullets: string[] = [];
@@ -2069,23 +2069,97 @@ export function parseDersBilgiFormuStructured(
   let uygulamalarEndIdx = targetLines.length;
 
   const uygulamalarHeadingUpperRegex =
-    /^(?:[\s|*•\-–]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:UYGULAMALARI|SÜRECİ\s*UYGULAMALARI)|ÖĞRETME\s*UYGULAMALARI|ÖĞRENME\s*UYGULAMALARI)(?=$|\s|[:|-])/i;
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:UYGULAMALAR[Iİ]|SÜREC[İI]\s*UYGULAMALAR[Iİ]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ])(?=$|\s|[:|-])/i;
+
+  const yasantilarHeadingUpperRegex =
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|SÜREC[İI]))(?=$|\s|[:|-])/i;
 
   const uygulamalarStopUpperRegex =
-    /^(?:[\s|*•\-–]+)*(?:FARKLILAŞTIRMA|ZENGİNLEŞTİRME|DESTEKLEME|ÖĞRETMEN\s*VE\s*ÖĞRENCİ|UYGUNDUR|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:FARKL[Iİ]LAŞT[Iİ]RMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|ÖĞRETMEN\s*VE\s*ÖĞRENC[İI]|UYGUNDUR|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
 
+  // 7.1 First look for explicit "ÖĞRENME-ÖĞRETME UYGULAMALARI" / "ÖĞRETME UYGULAMALARI" subheading
   for (let i = 0; i < targetLines.length; i++) {
     const upperLine = toTrUpper(targetLines[i]);
     if (uygulamalarHeadingUpperRegex.test(upperLine)) {
-      uygulamalarStartIdx = i;
+      let endIdx = targetLines.length;
       for (let j = i + 1; j < targetLines.length; j++) {
         if (uygulamalarStopUpperRegex.test(toTrUpper(targetLines[j]))) {
-          uygulamalarEndIdx = j;
+          endIdx = j;
           break;
         }
       }
-      if (uygulamalarEndIdx - uygulamalarStartIdx >= 2) {
+      if (endIdx - i >= 2) {
+        uygulamalarStartIdx = i;
+        uygulamalarEndIdx = endIdx;
         break;
+      }
+    }
+  }
+
+  // 7.2 Fallback: If the Ders Bilgi Formu only had "ÖĞRENME-ÖĞRETME YAŞANTILARI" (or placed the unit/topic blocks right after KÖPRÜ KURMA without a separate "ÖĞRENME-ÖĞRETME UYGULAMALARI" line)
+  if (uygulamalarStartIdx === -1) {
+    let yasantilarIdx = -1;
+    let kopruIdx = -1;
+    for (let i = 0; i < targetLines.length; i++) {
+      const upperLine = toTrUpper(targetLines[i]);
+      if (yasantilarIdx === -1 && yasantilarHeadingUpperRegex.test(upperLine)) {
+        yasantilarIdx = i;
+      }
+      if (/^(?:[\s|*•\-–#]+)*KÖPRÜ\s*KURMA(?=$|\s|[:|-])/i.test(upperLine)) {
+        kopruIdx = i;
+      }
+    }
+
+    const searchFrom = kopruIdx !== -1 ? kopruIdx + 1 : yasantilarIdx !== -1 ? yasantilarIdx + 1 : -1;
+    if (searchFrom !== -1 && searchFrom < targetLines.length) {
+      let endIdx = targetLines.length;
+      for (let j = searchFrom; j < targetLines.length; j++) {
+        if (uygulamalarStopUpperRegex.test(toTrUpper(targetLines[j]))) {
+          endIdx = j;
+          break;
+        }
+      }
+
+      // Skip past the short Köprü Kurma paragraph if we started at kopruIdx, stopping as soon as we see a unit heading or activity sentence
+      let adjustedStart = searchFrom;
+      if (kopruIdx !== -1) {
+        for (let k = searchFrom; k < endIdx; k++) {
+          const lineNorm = normalizeTurkishUnicode(targetLines[k]).trim();
+          if (
+            /^\*?\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,45}:\s*/.test(lineNorm) ||
+            /(?:Bu\s+öğrenme\s+birimi|Bu\s+ünitede|Bu\s+temada|Öğrencilere|Öğrencilerden|Öğretmen\s+tarafından|\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}))/i.test(
+              lineNorm
+            )
+          ) {
+            adjustedStart = k;
+            break;
+          }
+        }
+      } else if (yasantilarIdx !== -1) {
+        // Filter out Temel Kabuller, Ön Değerlendirme, Köprü Kurma lines if we started from ÖĞRENME-ÖĞRETME YAŞANTILARI
+        for (let k = searchFrom; k < endIdx; k++) {
+          const lineNorm = normalizeTurkishUnicode(targetLines[k]).trim();
+          if (
+            /^\*?\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,45}:\s*/.test(lineNorm) &&
+            !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME|KÖPRÜ\s*KURMA)/i.test(toTrUpper(lineNorm))
+          ) {
+            adjustedStart = k;
+            break;
+          }
+          if (
+            /(?:Bu\s+öğrenme\s+birimi\s+işlenirken|Bu\s+öğrenme\s+biriminde|Bu\s+ünitede|\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\s*[,;]\s*)+)/i.test(
+              lineNorm
+            )
+          ) {
+            adjustedStart = k;
+            break;
+          }
+        }
+      }
+
+      if (endIdx > adjustedStart) {
+        uygulamalarStartIdx = adjustedStart;
+        uygulamalarEndIdx = endIdx;
       }
     }
   }
@@ -2103,21 +2177,42 @@ export function parseDersBilgiFormuStructured(
           .slice((startMatch.index || 0) + startMatch[0].length)
           .replace(/^[:|\-–\s]+/, "")
           .trim()
-      : "";
-    if (firstRemainder && !isDbfSectionPageArtifactOrSubHeader(firstRemainder)) {
+      : startLineNorm.trim();
+    if (
+      firstRemainder &&
+      !isDbfSectionPageArtifactOrSubHeader(firstRemainder) &&
+      !yasantilarHeadingUpperRegex.test(toTrUpper(firstRemainder))
+    ) {
       rawUygulamaLines.push(firstRemainder);
     }
 
     for (let k = uygulamalarStartIdx + 1; k < uygulamalarEndIdx; k++) {
       const candidateLine = normalizeTurkishUnicode(targetLines[k]).trim();
-      if (candidateLine && !isDbfSectionPageArtifactOrSubHeader(candidateLine)) {
+      if (
+        candidateLine &&
+        !isDbfSectionPageArtifactOrSubHeader(candidateLine) &&
+        !/^(?:TEMEL\s*KABULLER|ÖN\s*DEĞERLENDİRME(?:\s*SÜRECİ)?|KÖPRÜ\s*KURMA)\s*[:|-]?$/i.test(
+          toTrUpper(candidateLine)
+        )
+      ) {
         rawUygulamaLines.push(candidateLine);
       }
     }
 
-    // 7A. Check for explicit UnitTitle: subheadings (e.g. "* Onarıcı tarım:", "Geleneksel tarım:")
+    // Known unit names from outcomesMap & materyalTree to recognize unit headers even without colons
+    const knownUnitNamesLower = new Map<string, { num: number; name: string }>();
+    for (const [uNoStr, uName] of Object.entries(unitsByNumber)) {
+      if (uName && uName.trim().length >= 3) {
+        knownUnitNamesLower.set(uName.trim().toLocaleLowerCase("tr-TR"), {
+          num: Number(uNoStr),
+          name: uName.trim(),
+        });
+      }
+    }
+
+    // 7A. Check for explicit UnitTitle: subheadings (e.g. "* Onarıcı tarım:", "Generatif üretim:", "1. Ünite: ...")
     const unitSubheadingRegex =
-      /^\*?\s*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,42}):\s*(.*)$/;
+      /^(?:[*•\-–]\s*)?(?:(\d{1,2})\.\s*(?:Öğrenme\s*Birimi|Ünite|Tema)\s*[:\-–]\s*)?([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s,'()-]{2,65}):\s*(.*)$/;
     let activeUnitKey = "";
     let activeUnitTitle = "";
     let currentUnitLines: string[] = [];
@@ -2126,7 +2221,7 @@ export function parseDersBilgiFormuStructured(
     const splitIntoCodeTerminatedBlocks = (textToSplit: string): string[] => {
       const rawBlocks = textToSplit
         .split(
-          /(?<=\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.)\s+(?=[A-ZÇĞİÖŞÜ*•])/g
+          /(?<=\((?:(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*(?:\s*[,;]\s*|\s+)){1,}(?:SDB|KB|OB|AB|E|D)\d{1,2}(?:\.\d{1,2})*\)\.?)\s+(?=[A-ZÇĞİÖŞÜ*•])/g
         )
         .map((b) => b.trim())
         .filter((b) => b.length >= 25);
@@ -2164,49 +2259,67 @@ export function parseDersBilgiFormuStructured(
         const normalizedBody = normalizeMaarifCodeListsInText(bodyWithoutHeader);
         const subBlocks = splitIntoCodeTerminatedBlocks(normalizedBody);
 
+        const allUnitBullets: string[] = [];
         subBlocks.forEach((subBlock, subIdx) => {
           const bullets = splitOgretmeUygulamalariIntoBullets(
             subBlock,
-            activeUnitTitle
+            subIdx === 0 ? activeUnitTitle : undefined
           );
           if (bullets.length > 0) {
-            if (subIdx === 0 || !ogretmeUygulamalariByUnit[activeUnitKey]) {
-              ogretmeUygulamalariByUnit[activeUnitKey] = bullets;
-            }
+            allUnitBullets.push(...bullets);
+            // Ensure each segment also has the unit header as first item when displayed standalone
+            const segBulletsWithHeader =
+              bullets[0] && bullets[0].endsWith(":")
+                ? bullets
+                : [`${activeUnitTitle}:`, ...bullets];
             ogretmeUygulamalariSegments.push({
               index: ogretmeUygulamalariSegments.length,
               unitHint: activeUnitTitle,
               unitNumberHint: unitCounter,
               rawText: subBlock,
-              bullets,
+              bullets: segBulletsWithHeader,
             });
           }
         });
+        if (allUnitBullets.length > 0) {
+          ogretmeUygulamalariByUnit[activeUnitKey] = allUnitBullets;
+        }
       }
     };
 
     for (const uLine of rawUygulamaLines) {
       const m = uLine.match(unitSubheadingRegex);
+      const cleanLineNoBullet = uLine.replace(/^[*•\-–]\s*/, "").replace(/:$/, "").trim();
+      const matchedKnownUnit = knownUnitNamesLower.get(
+        cleanLineNoBullet.toLocaleLowerCase("tr-TR")
+      );
+
       if (
         m &&
-        !/^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte|Bu\s+öğrenme)/i.test(
-          m[1].trim()
+        !/^(?:Örneğin|Not|Açıklama|Dikkat|Öğretmen|Öğrenciler|Bu\s+süreçte|Bu\s+öğrenme|Temel\s+Kabuller|Ön\s+Değerlendirme|Köprü\s+Kurma|Öğrenme\s+Kanıtları)/i.test(
+          m[2].trim()
         )
       ) {
         flushUnit();
-        activeUnitTitle = m[1].trim();
+        activeUnitTitle = m[2].trim();
         const formattedUnitName =
           activeUnitTitle.charAt(0).toLocaleUpperCase("tr-TR") +
           activeUnitTitle.slice(1).toLocaleLowerCase("tr-TR");
         activeUnitKey = activeUnitTitle.toLocaleLowerCase("tr-TR");
-        unitCounter++;
+        unitCounter = m[1] ? Number(m[1]) : unitCounter + 1;
         if (!unitsByNumber[unitCounter]) {
           unitsByNumber[unitCounter] = formattedUnitName;
         }
         currentUnitLines = [`${activeUnitTitle}:`];
-        if (m[2].trim()) {
-          currentUnitLines.push(m[2].trim());
+        if (m[3].trim()) {
+          currentUnitLines.push(m[3].trim());
         }
+      } else if (matchedKnownUnit && uLine.length <= 75) {
+        flushUnit();
+        activeUnitTitle = matchedKnownUnit.name;
+        activeUnitKey = activeUnitTitle.toLocaleLowerCase("tr-TR");
+        unitCounter = matchedKnownUnit.num;
+        currentUnitLines = [`${activeUnitTitle}:`];
       } else {
         currentUnitLines.push(uLine);
       }
@@ -2256,6 +2369,11 @@ export function parseDersBilgiFormuStructured(
           );
           if (!ogretmeUygulamalariByUnit[uKey]) {
             ogretmeUygulamalariByUnit[uKey] = segBullets;
+          } else {
+            ogretmeUygulamalariByUnit[uKey] = [
+              ...ogretmeUygulamalariByUnit[uKey],
+              ...segBullets.filter((b) => !b.endsWith(":")),
+            ];
           }
         }
       });
@@ -2263,7 +2381,9 @@ export function parseDersBilgiFormuStructured(
 
     allOgretmeUygulamalariBullets =
       ogretmeUygulamalariSegments.length > 0
-        ? ogretmeUygulamalariSegments[0].bullets
+        ? ogretmeUygulamalariSegments.flatMap((s, idx) =>
+            idx === 0 ? s.bullets : s.bullets.filter((b) => !b.endsWith(":"))
+          )
         : splitOgretmeUygulamalariIntoBullets(normalizedFullUygulamalar);
   }
 
@@ -2978,6 +3098,22 @@ export function extractWeekPlanStructured(
     `${specificTopicContext} ${ogrenmeBirimi}`
   );
 
+  // Extract concrete multi-word or single-word topic phrases from icerikCercevesi and sub-components for high-precision matching
+  const topicPhrases = [
+    icerikCercevesi,
+    ...finalSubComponents.map((s) =>
+      s
+        .replace(/^[a-zçğıöşü]\)\s*/i, "")
+        .replace(
+          /\s+(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir|gösterilir|tartışılır|açıklar|sıralar|yapar|yapılır)\.?$/i,
+          ""
+        )
+        .trim()
+    ),
+  ]
+    .map((p) => normalizeTurkishUnicode(p).toLocaleLowerCase("tr-TR").trim())
+    .filter((p) => p.length >= 4);
+
   if (segments.length > 0) {
     // 7A. Identify segments belonging to this week's unit
     const unitMatchedSegments = segments.filter((seg) => {
@@ -2999,13 +3135,31 @@ export function extractWeekPlanStructured(
     if (candidatePool.length === 1) {
       unitOgretmeUygulamalari = candidatePool[0].bullets;
     } else {
-      let bestSegment: DbfUygulamaSegment | null = null;
+      const scoredSegments: Array<{ seg: DbfUygulamaSegment; score: number }> = [];
       let bestTopicScore = -1;
       let tiedTopCount = 0;
 
       for (const seg of candidatePool) {
-        const segLower = seg.rawText.toLocaleLowerCase("tr-TR");
+        const segLower = normalizeTurkishUnicode(seg.rawText).toLocaleLowerCase(
+          "tr-TR"
+        );
         let score = 0;
+
+        // Exact phrase bonus for icerikCercevesi or sub-component phrases appearing inside the DBF segment
+        for (const phrase of topicPhrases) {
+          if (phrase.length >= 5 && segLower.includes(phrase)) {
+            score += 10;
+          } else {
+            const phraseWords = phrase
+              .split(/\s+/)
+              .filter((w) => w.length >= 4 && !genericPedagogicalWords.has(w));
+            for (const pw of phraseWords) {
+              if (segLower.includes(pw.slice(0, 6))) {
+                score += 3;
+              }
+            }
+          }
+        }
 
         // Score distinctive topic/sub-component stems higher than shared unit stems
         for (const stem of topicOnlyStems) {
@@ -3019,22 +3173,41 @@ export function extractWeekPlanStructured(
           }
         }
 
+        scoredSegments.push({ seg, score });
         if (score > bestTopicScore) {
           bestTopicScore = score;
-          bestSegment = seg;
           tiedTopCount = 1;
         } else if (score === bestTopicScore) {
           tiedTopCount++;
         }
       }
 
-      // If multiple segments in the same unit tied (because the Yıllık Plan row only had the unit-level outcome),
-      // pick the segment corresponding to this week's position within the outcome/unit span
-      if (
+      // If multiple segments in the same unit strongly match this week's topic/sub-components (e.g., 2 paragraphs in DBF cover this week's sub-topics), combine them!
+      const strongMatchedSegments = scoredSegments.filter(
+        (item) =>
+          item.score >= 8 &&
+          item.score >= bestTopicScore * 0.65 &&
+          unitMatchedSegments.includes(item.seg)
+      );
+
+      if (strongMatchedSegments.length > 1 && strongMatchedSegments.length <= 3) {
+        const combinedBullets: string[] = [];
+        strongMatchedSegments.forEach((item, idx) => {
+          for (const b of item.seg.bullets) {
+            if (idx > 0 && b.endsWith(":")) continue;
+            if (!combinedBullets.includes(b)) {
+              combinedBullets.push(b);
+            }
+          }
+        });
+        unitOgretmeUygulamalari = combinedBullets;
+      } else if (
         unitMatchedSegments.length > 1 &&
         (tiedTopCount > 1 || bestTopicScore <= 2) &&
         weeksWithThisOutcome.length > 1
       ) {
+        // If multiple segments in the same unit tied (because the Yıllık Plan row only had the unit-level outcome),
+        // pick the segment corresponding to this week's position within the outcome/unit span
         const weekPosIdx = Math.max(
           0,
           weeksWithThisOutcome.indexOf(targetWeekNo)
@@ -3047,8 +3220,11 @@ export function extractWeekPlanStructured(
           )
         );
         unitOgretmeUygulamalari = unitMatchedSegments[segIdx].bullets;
-      } else if (bestSegment) {
-        unitOgretmeUygulamalari = bestSegment.bullets;
+      } else {
+        const bestItem = scoredSegments.reduce((prev, curr) =>
+          curr.score > prev.score ? curr : prev
+        );
+        unitOgretmeUygulamalari = bestItem.seg.bullets;
       }
     }
   }
@@ -3082,7 +3258,24 @@ export function extractWeekPlanStructured(
     unitOgretmeUygulamalari.length === 0 &&
     structuredDbf.allOgretmeUygulamalariBullets.length > 0
   ) {
-    unitOgretmeUygulamalari = structuredDbf.allOgretmeUygulamalariBullets;
+    // Filter allOgretmeUygulamalariBullets by topic stems if possible before returning all
+    const topicFilteredBullets = structuredDbf.allOgretmeUygulamalariBullets.filter(
+      (b) => {
+        if (b.endsWith(":")) return false;
+        const bLower = b.toLocaleLowerCase("tr-TR");
+        return (
+          topicOnlyStems.some((st) => bLower.includes(st)) ||
+          allWeekStems.some((st) => bLower.includes(st))
+        );
+      }
+    );
+    unitOgretmeUygulamalari =
+      topicFilteredBullets.length >= 2
+        ? [
+            ...(ogrenmeBirimi ? [`${ogrenmeBirimi}:`] : []),
+            ...topicFilteredBullets,
+          ]
+        : structuredDbf.allOgretmeUygulamalariBullets;
   }
 
   // Ensure the unit heading bullet at index 0 matches this week's ogrenmeBirimi if a unit header bullet is present
@@ -3671,9 +3864,9 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
   },
   Ogretme_Uygulamalari: {
     headerRegex:
-      /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALARI|Uygulamaları)|ÖĞRETME\s*UYGULAMALARI)(?=$|\s|[:|-])/i,
+      /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME|Öğrenme\s*[-–]?\s*Öğretme|Öğretme\s*[-–]?\s*Öğrenme)\s*(?:UYGULAMALAR[Iİ]|YAŞANT[Iİ]LAR[Iİ]|Uygulamaları|Yaşantıları)|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ])(?=$|\s|[:|-])/i,
     stopRegex:
-      /^(?:FARKLILAŞTIRMA|Farklılaştırma|ZENGİNLEŞTİRME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|-])/i,
+      /^(?:FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME|UYGUNDUR)(?=$|\s|[:|-])/i,
     semanticKeywords: [
       "öğrenme birimi işlenirken",
       "araştırma görevi verilir",
@@ -3924,34 +4117,37 @@ export function autoSearchOgretmeUygulamalariBulletsFallback(
   weekData: WeekSpecificExtraction,
   aiCandidateBullets?: string[]
 ): string[] {
-  // 1. Check pre-indexed unit bullets in structuredDbf
+  // 1. Check pre-indexed unit/topic bullets in weekData (derived from structuredDbf)
   if (weekData.unitOgretmeUygulamalari.length > 0) {
     return weekData.unitOgretmeUygulamalari;
   }
 
   const rawDbf = structuredDbf.rawDbfText || "";
   const unitName = (weekData.ogrenmeBirimi || "").trim();
+  const topicName = (weekData.icerikCercevesi || "").trim();
 
-  // 2. Search rawDbfText directly around the unit name heading (e.g. "* Onarıcı Tarım:")
-  if (rawDbf && unitName && unitName.length >= 3) {
-    const escapedUnit = unitName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const unitBlockRegex = new RegExp(
-      `(?:^|\\n)\\s*\\*?\\s*${escapedUnit}\\s*:\\s*([\\s\\S]{40,3500}?)(?=\\n\\s*\\*?\\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\\s-]{2,40}:\\s|\\n\\s*(?:FARKLILAŞTIRMA|Farklılaştırma|UYGUNDUR)|$)`,
-      "i"
-    );
-    const match = rawDbf.match(unitBlockRegex);
-    if (match && match[1]) {
-      const bullets = splitOgretmeUygulamalariIntoBullets(
-        `${unitName}:\n${match[1].trim()}`,
-        unitName
+  // 2. Search rawDbfText directly around the unit name or topic name heading (e.g. "* Generatif Üretim:", "* Generatif Bitki Organları:")
+  for (const candidateHeader of [topicName, unitName]) {
+    if (rawDbf && candidateHeader && candidateHeader.length >= 3) {
+      const escapedHeader = candidateHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const blockRegex = new RegExp(
+        `(?:^|\\n)\\s*[*•\\-–]?\\s*${escapedHeader}\\s*:\\s*([\\s\\S]{40,3500}?)(?=\\n\\s*[*•\\-–]?\\s*[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\\s,'()-]{2,55}:\\s|\\n\\s*(?:FARKL[Iİ]LAŞT[Iİ]RMA|Farklılaştırma|UYGUNDUR)|$)`,
+        "i"
       );
-      if (bullets.length >= 2) {
-        return bullets;
+      const match = rawDbf.match(blockRegex);
+      if (match && match[1]) {
+        const bullets = splitOgretmeUygulamalariIntoBullets(
+          `${unitName || candidateHeader}:\n${match[1].trim()}`,
+          unitName || candidateHeader
+        );
+        if (bullets.length >= 2) {
+          return bullets;
+        }
       }
     }
   }
 
-  // 3. Auto-search the entire Öğretme-Öğrenme Uygulamaları section in rawDbfText
+  // 3. Auto-search the entire Öğrenme-Öğretme Yaşantıları / Uygulamaları section in rawDbfText and filter by this week's topic keywords
   const rawSection = autoSearchDocumentSectionFallback(
     "Ogretme_Uygulamalari",
     rawDbf,
@@ -3961,9 +4157,37 @@ export function autoSearchOgretmeUygulamalariBulletsFallback(
     aiCandidateBullets?.join(" ")
   );
   if (rawSection) {
-    const bullets = splitOgretmeUygulamalariIntoBullets(rawSection, unitName);
-    if (bullets.length >= 2) {
-      return bullets;
+    const cleanRawSection = rawSection
+      .replace(/^[\s\S]*?KÖPRÜ\s*KURMA\s*[:|-]?\s*[^\n]+\n?/i, "")
+      .replace(
+        /^(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME)\s*(?:YAŞANTILARI|UYGULAMALARI)|ÖĞRETME\s*UYGULAMALARI)\s*[:|-]?\s*/i,
+        ""
+      )
+      .trim();
+    const allBullets = splitOgretmeUygulamalariIntoBullets(
+      cleanRawSection,
+      unitName
+    );
+    if (allBullets.length >= 2) {
+      const topicWords = `${topicName} ${weekData.weekSubComponents.join(" ")}`
+        .toLocaleLowerCase("tr-TR")
+        .replace(/[^\p{L}\s]/gu, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 4);
+      if (topicWords.length > 0 && allBullets.length > 5) {
+        const matchedBullets = allBullets.filter((b) => {
+          if (b.endsWith(":")) return false;
+          const bLower = b.toLocaleLowerCase("tr-TR");
+          return topicWords.some((tw) => bLower.includes(tw.slice(0, 5)));
+        });
+        if (matchedBullets.length >= 2) {
+          return [
+            ...(unitName ? [`${unitName}:`] : []),
+            ...matchedBullets,
+          ];
+        }
+      }
+      return allBullets;
     }
   }
 
