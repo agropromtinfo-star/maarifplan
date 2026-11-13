@@ -155,13 +155,18 @@ export default function App() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
+          const rawSavedDers = String(parsed.dersIsmi ?? defaults.dersIsmi).trim();
+          const cleanedSavedDers = rawSavedDers.replace(
+            /^[A-ZÇĞİÖŞÜ\s]+\(\s*([^)]+)\s*\)$/,
+            "$1"
+          );
           return {
             ...defaults,
             okulAdi: String(parsed.okulAdi ?? defaults.okulAdi),
             egitimOgretimYili: String(
               parsed.egitimOgretimYili ?? defaults.egitimOgretimYili
             ),
-            dersIsmi: String(parsed.dersIsmi ?? defaults.dersIsmi),
+            dersIsmi: cleanedSavedDers,
             sinifDuzeyi: String(parsed.sinifDuzeyi ?? defaults.sinifDuzeyi),
             ogretmenAdSoyad: String(
               parsed.ogretmenAdSoyad ?? defaults.ogretmenAdSoyad
@@ -377,6 +382,31 @@ export default function App() {
       ...prev,
       [key]: value,
     }));
+    if (key === "dersIsmi") {
+      setCurrentPlan((prevPlan) =>
+        prevPlan
+          ? {
+              ...prevPlan,
+              Ders_Bilgisi: {
+                ...prevPlan.Ders_Bilgisi,
+                Ders: value,
+              },
+            }
+          : prevPlan
+      );
+    } else if (key === "sinifDuzeyi") {
+      setCurrentPlan((prevPlan) =>
+        prevPlan
+          ? {
+              ...prevPlan,
+              Ders_Bilgisi: {
+                ...prevPlan.Ders_Bilgisi,
+                Sinif: value,
+              },
+            }
+          : prevPlan
+      );
+    }
   };
 
   // Request ID tracker to discard stale async week-parse responses when a new course is uploaded
@@ -520,8 +550,7 @@ export default function App() {
         const detectedDocMeta = extractDocumentMetadataClient(
           `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
         );
-        const effectiveDersIsmi =
-          meta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
+        const effectiveDersIsmi = meta.dersIsmi.trim();
         const effectiveSinifDuzeyi =
           meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
 
@@ -538,6 +567,9 @@ export default function App() {
             tarihAraligi: validDate,
           },
         });
+        if (effectiveDersIsmi) {
+          weekSyncedPlan.Ders_Bilgisi.Ders = effectiveDersIsmi;
+        }
 
         if (found.ogrenmeKanitlari) {
           weekSyncedPlan.Ogrenme_Kanitlari = found.ogrenmeKanitlari;
@@ -587,19 +619,23 @@ export default function App() {
         const detectedDocMeta = extractDocumentMetadataClient(
           `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
         );
+        const effectiveDersIsmi = meta.dersIsmi.trim();
         const synced = synthesizePlanClientSide({
           yillik_plan: yillikPlan,
           ders_materyali: dersMateryali,
           ders_bilgi_formu: dersBilgiFormu,
           hafta_etiketi: activeWeek.haftaEtiketi,
           tarih_araligi: validDate,
-          ders_ismi: meta.dersIsmi.trim() || detectedDocMeta.dersIsmi,
+          ders_ismi: effectiveDersIsmi,
           sinif_duzeyi: meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi,
           secilen_hafta_verisi: {
             ...activeWeek,
             tarihAraligi: validDate,
           },
         });
+        if (effectiveDersIsmi) {
+          synced.Ders_Bilgisi.Ders = effectiveDersIsmi;
+        }
         if (activeWeek.ogrenmeKanitlari) {
           synced.Ogrenme_Kanitlari = activeWeek.ogrenmeKanitlari;
         }
@@ -665,13 +701,11 @@ export default function App() {
         ...prev,
         okulAdi: locks.okulAdi
           ? prev.okulAdi
-          : detectedDocMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
-        dersIsmi: locks.dersIsmi
-          ? prev.dersIsmi
-          : detectedDocMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+          : prev.okulAdi.trim() || detectedDocMeta.okulAdi?.trim() || "",
+        dersIsmi: prev.dersIsmi,
         sinifDuzeyi: locks.sinifDuzeyi
           ? prev.sinifDuzeyi
-          : detectedDocMeta.sinifDuzeyi?.trim() || prev.sinifDuzeyi.trim() || "",
+          : prev.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi?.trim() || "",
         haftaEtiketi: activeLocal.haftaEtiketi,
         tarihAraligi: activeLocal.tarihAraligi,
         onayTarihi:
@@ -785,21 +819,16 @@ export default function App() {
           ...prev,
           okulAdi: locks.okulAdi
             ? prev.okulAdi
-            : data.okulAdi?.trim() ||
+            : prev.okulAdi.trim() ||
+              data.okulAdi?.trim() ||
               detectedDocMeta.okulAdi?.trim() ||
-              prev.okulAdi.trim() ||
               "",
-          dersIsmi: locks.dersIsmi
-            ? prev.dersIsmi
-            : data.dersIsmi?.trim() ||
-              detectedDocMeta.dersIsmi?.trim() ||
-              prev.dersIsmi.trim() ||
-              "",
+          dersIsmi: prev.dersIsmi,
           sinifDuzeyi: locks.sinifDuzeyi
             ? prev.sinifDuzeyi
-            : data.sinifDuzeyi?.trim() ||
+            : prev.sinifDuzeyi.trim() ||
+              data.sinifDuzeyi?.trim() ||
               detectedDocMeta.sinifDuzeyi?.trim() ||
-              prev.sinifDuzeyi.trim() ||
               "",
           haftaEtiketi: targetWeek.haftaEtiketi,
           tarihAraligi: targetWeek.tarihAraligi,
@@ -872,21 +901,19 @@ export default function App() {
         [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
       }));
 
-      // Overwrite Okul Adı, Ders İsmi, and Sınıf Düzeyi whenever detected in the newly uploaded document (unless locked by the user)
+      // Never auto-overwrite user's manual Ders İsmi; only fill empty Okul Adı / Sınıf Düzeyi if unlocked
       if (result.detectedMeta) {
         const locks = lockedFieldsRef.current;
         setMeta((prev) => ({
           ...prev,
           okulAdi: locks.okulAdi
             ? prev.okulAdi
-            : result.detectedMeta.okulAdi?.trim() || prev.okulAdi.trim() || "",
-          dersIsmi: locks.dersIsmi
-            ? prev.dersIsmi
-            : result.detectedMeta.dersIsmi?.trim() || prev.dersIsmi.trim() || "",
+            : prev.okulAdi.trim() || result.detectedMeta.okulAdi?.trim() || "",
+          dersIsmi: prev.dersIsmi,
           sinifDuzeyi: locks.sinifDuzeyi
             ? prev.sinifDuzeyi
-            : result.detectedMeta.sinifDuzeyi?.trim() ||
-              prev.sinifDuzeyi.trim() ||
+            : prev.sinifDuzeyi.trim() ||
+              result.detectedMeta.sinifDuzeyi?.trim() ||
               "",
         }));
       }
@@ -1063,8 +1090,7 @@ export default function App() {
       const detectedDocMeta = extractDocumentMetadataClient(
         `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
       );
-      const effectiveDersIsmi =
-        meta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
+      const effectiveDersIsmi = meta.dersIsmi.trim();
       const effectiveSinifDuzeyi =
         meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
       const effectiveOkulAdi =
@@ -1184,10 +1210,14 @@ export default function App() {
         inferApprovalDateClient(finalTarihAraligi) ||
         meta.onayTarihi;
 
+      if (effectiveDersIsmi) {
+        generated.Ders_Bilgisi.Ders = effectiveDersIsmi;
+      }
+
       const updatedMeta: DocumentHeaderFooterMeta = {
         ...meta,
         okulAdi: meta.okulAdi.trim() || effectiveOkulAdi,
-        dersIsmi: meta.dersIsmi.trim() || generated.Ders_Bilgisi.Ders,
+        dersIsmi: meta.dersIsmi,
         sinifDuzeyi: meta.sinifDuzeyi.trim() || generated.Ders_Bilgisi.Sinif,
         haftaEtiketi: weekData.haftaEtiketi || meta.haftaEtiketi,
         tarihAraligi: finalTarihAraligi,

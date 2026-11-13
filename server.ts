@@ -1113,6 +1113,10 @@ ${outcomesCatalogText}
 GÖREV:
 Aşağıda verilen ders, hafta, konu ve ders materyali içeriğine dayanarak, LİSE ÖĞRENCİSİNİN (9-12. sınıf) kolayca okuyup anlayabileceği, sınavlara ve atölye/laboratuvar uygulamalarına hazırlanabileceği yüksek kaliteli bir "ÖĞRENCİ DERS NOTU VE KONU ÖZETİ" hazırla.
 
+KESİN YASAKLAR:
+- Ders kitabının künye bilgilerini, "Millî Eğitim Bakanlığının ... gün ve ... sayılı oluru ile", Talim ve Terbiye Kurulu kararlarını, İstiklal Marşı dizelerini ("Korkma, sönmez..."), Gençliğe Hitabe'yi, ISBN veya yayın/dizi numaralarını KESİNLİKLE özete dahil etme!
+- Yalnızca bu haftanın konusu olan "${icerik_cercevesi}" (${ogrenme_birimi}) ve ilgili kazanımlarını anlat.
+
 DERS BİLGİLERİ:
 - Ders: ${ders_ismi || "Meslek Dersi"}
 - Sınıf: ${sinif_duzeyi || "Lise Düzeyi"}
@@ -1137,7 +1141,7 @@ DERS NOTUNUN YAPISI VE KURALLARI:
 
           const response = await Promise.race([
             ai.models.generateContent({
-              model: "gemini-3.8-flash",
+              model: "gemini-2.5-flash",
               contents: prompt,
               config: {
                 temperature: 0.3,
@@ -1151,13 +1155,13 @@ DERS NOTUNUN YAPISI VE KURALLARI:
             ),
           ]);
 
-          const summaryText = response.text || "";
+          const summaryText = stripFrontMatter(response.text || "");
           if (summaryText.trim().length >= 80) {
             res.json({
               success: true,
               summaryMarkdown: summaryText.trim(),
               title: `${ders_ismi} — ${hafta_etiketi} Konu Özeti`,
-              source: "gemini-3.8-flash",
+              source: "gemini-2.5-flash",
             });
             return;
           }

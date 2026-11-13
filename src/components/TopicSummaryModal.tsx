@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   GeneratedTopicSummary,
   generateTopicSummaryClientSide,
+  sanitizeStudentSummaryText,
   TopicSummaryParams,
 } from "../utils/topicSummaryGenerator";
 import {
@@ -66,6 +67,7 @@ export const TopicSummaryModal: React.FC<TopicSummaryModalProps> = ({
       if (response.ok) {
         const data = await response.json();
         if (data.summaryMarkdown && data.summaryMarkdown.trim().length >= 50) {
+          const cleanedMd = sanitizeStudentSummaryText(data.summaryMarkdown);
           const generated: GeneratedTopicSummary = {
             title: data.title || `${params.dersIsmi} — ${params.haftaEtiketi} Konu Özeti`,
             dersIsmi: params.dersIsmi,
@@ -73,12 +75,12 @@ export const TopicSummaryModal: React.FC<TopicSummaryModalProps> = ({
             tarihAraligi: params.tarihAraligi,
             ogrenmeBirimi: params.ogrenmeBirimi,
             icerikCercevesi: params.icerikCercevesi,
-            markdownContent: data.summaryMarkdown,
-            htmlContent: data.summaryMarkdown,
+            markdownContent: cleanedMd,
+            htmlContent: cleanedMd,
           };
           setSummary(generated);
           setEditedMarkdown(generated.markdownContent);
-          setSourceType(data.source === "gemini-3.8-flash" ? "Yapay Zeka (Maarif Modeli)" : "Ders Materyali Motoru");
+          setSourceType(data.source ? "Yapay Zeka (Maarif Modeli)" : "Ders Materyali Motoru");
           setIsLoading(false);
           return;
         }
@@ -100,7 +102,7 @@ export const TopicSummaryModal: React.FC<TopicSummaryModalProps> = ({
       generateSummary();
       setIsEditing(false);
     }
-  }, [isOpen, params.haftaEtiketi, params.icerikCercevesi, params.dersIsmi]);
+  }, [isOpen, params.haftaEtiketi, params.icerikCercevesi, params.ogrenmeBirimi, params.dersIsmi]);
 
   if (!isOpen) return null;
 

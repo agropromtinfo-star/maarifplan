@@ -78,3 +78,5 @@ export interface SavedLessonPlanRecord {
   meta: DocumentHeaderFooterMeta;
   plan: MaarifLessonPlan;
 }
+
+

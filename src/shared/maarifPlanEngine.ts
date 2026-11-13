@@ -265,7 +265,15 @@ export function stripFrontMatter(rawText: string): string {
     .replace(
       /(?<![(,]\s*)\s+((?:E[123]\.\d{1,2}|SDB[123]\.\d|D\d{1,2}|OB[1-9]|KB(?:1|[23]\.\d{1,2}))\.\s+[A-ZÇĞİÖŞÜ])/g,
       "\n$1"
-    );
+    )
+    .replace(/ú/g, "ş")
+    .replace(/Ú/g, "Ş")
+    .replace(/þ/g, "ş")
+    .replace(/Þ/g, "Ş")
+    .replace(/ý/g, "ı")
+    .replace(/Ý/g, "İ")
+    .replace(/ð/g, "ğ")
+    .replace(/Ð/g, "Ğ");
 
   const lines = normalized.split(/\r?\n/);
   let seenAnnualPlanTitleCount = 0;
@@ -279,6 +287,15 @@ export function stripFrontMatter(rawText: string): string {
     const upperT = toTrUpper(t);
     if (
       /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|YARDIMCI\s*VE\s*KAYNAK|KİTAPLAR\s*DİZİSİ|DERS\s*MATERYAL[İI]|ALANI\s+BİTKİ\s+ÜRETİM|HER\s*HAKKI\s*SAKLIDIR|HİÇBİR\s*SURETTE\s*ALINIP\s*YAYIMLANAMAZ|ISBN\s*[:\d-]|BASKI\s*YILI|MATBAASI|İSTİKL[ÂA]L\s*MARŞI|GENÇLİĞE\s*HİTABE|EDİTÖR|GÖRSEL\s*TASARIM\s*UZMANI|PROGRAM\s*GELİŞTİRME\s*UZMANI|ÖLÇME\s*VE\s*DEĞERLENDİRME\s*UZMANI|REHBERLİK\s*UZMANI/.test(
+        upperT
+      ) ||
+      /(?:BAKANLIĞININ|KURULUNUN)\s*\d{1,2}[./]\d{1,2}[./]\d{4}\s*(?:GÜN|TARİH)\s*VE\s*\d+\s*SAYILI\s*(?:OLURU|KARARI)|TALİM\s*VE\s*TERBİYE\s*KURULU|DERS\s*MATERYALİ\s*OLARAK\s*HAZIRLANMIŞTIR/.test(
+        upperT
+      ) ||
+      /KORKMA,\s*SÖNMEZ\s*BU\s*ŞAFAKLARDA|YÜZEN\s*AL\s*SANCAK|SÖNMEDEN\s*YURDUMUN\s*ÜSTÜNDE\s*TÜTEN\s*EN\s*SON\s*OCAK|O\s*BENİM\s*MİLLETİMİN\s*YILDIZIDIR|O\s*BENİMDİR,\s*O\s*BENİM\s*MİLLETİMİNDİR\s*ANCAK|ÇATMA,\s*KURBAN\s*OLAYIM\s*ÇEHRENE|KAHRAMAN\s*IRKIMA\s*BİR\s*GÜL|SANA\s*OLMAZ\s*DÖKÜLEN\s*KANLARIMIZ|HAKKIDIR,\s*HAKK['’]?A\s*TAPAN\s*MİLLETİMİN\s*İSTİKL[ÂA]L|BEN\s*EZELDEN\s*BERİDİR\s*HÜR\s*YAŞADIM|DALGALAN\s*SEN\s*DE\s*ŞAFAKLAR\s*GİBİ|BASTIĞIN\s*YERLERİ\s*TOPRAK\s*DİYEREK\s*GEÇME|MEHMET\s*[ÂA]KİF\s*ERSOY/.test(
+        upperT
+      ) ||
+      /EY\s*TÜRK\s*GENÇLİĞİ|BİRİNCİ\s*VAZİFEN[;,]?\s*TÜRK\s*İSTİKL[ÂA]LİNİ|MEVCUDİYETİNİN\s*VE\s*İSTİKBALİNİN\s*YEG[ÂA]NE\s*TEMELİ|MUHTAÇ\s*OLDUĞUN\s*KUDRET,\s*DAMARLARINDAKİ\s*ASİL\s*KANDA/.test(
         upperT
       )
     ) {
@@ -296,7 +313,238 @@ export function stripFrontMatter(rawText: string): string {
     }
     return true;
   });
-  return cleanedLines.join("\n");
+  return applyBlacklistAndDensityFilter(
+    cleanedLines
+      .join("\n")
+      .replace(
+        /Mill[îi]\s*Eğitim\s*Bakanlığının\s*\d{1,2}[./]\d{1,2}[./]\d{4}\s*gün\s*ve\s*\d+\s*sayılı\s*oluru\s*ile[^\n.]*\.?/gi,
+        ""
+      )
+      .replace(
+        /Korkma,\s*sönmez\s*bu\s*şafaklarda\s*yüzen\s*al\s*sancak[;,]?\s*Sönmeden\s*yurdumun\s*üstünde\s*tüten\s*en\s*son\s*ocak\.?/gi,
+        ""
+      )
+      .trim()
+  );
+}
+
+/**
+ * Blacklist of state bureaucracy phrases, official decree/approval citations,
+ * textbook imprint identifiers, and ceremonial front-matter quotes that must
+ * never leak into MEB Ders Bilgi Formu or Gemini API generated lesson plan fields.
+ */
+export const STATE_DOCUMENT_AND_FRONTMATTER_BLACKLIST_KEYWORDS: readonly string[] = [
+  "sayılı oluru",
+  "sayılı kararı",
+  "oluru ile",
+  "kararı ile",
+  "gün ve",
+  "tarih ve",
+  "talim ve terbiye kurulu",
+  "resmî gazete",
+  "resmi gazete",
+  "tebliğler dergisi",
+  "kanun hükmünde",
+  "bakanlık makamının",
+  "müsteşarlığı",
+  "genel müdürlüğü",
+  "daire başkanlığı",
+  "arz ederim",
+  "gereğini rica",
+  "millî eğitim bakanlığı yayınları",
+  "milli eğitim bakanlığı yayınları",
+  "yardımcı ve kaynak kitaplar",
+  "ders kitapları dizisi",
+  "ders materyali olarak hazırlanmıştır",
+  "her hakkı saklıdır",
+  "hiçbir surette alınıp",
+  "basımevi",
+  "matbaası",
+  "baskı yılı",
+  "yayın no",
+  "dizi no",
+  "tanıtım şeması",
+  "organizasyon şeması",
+  "korkma, sönmez",
+  "yüzen al sancak",
+  "sönmeden yurdumun",
+  "tüten en son ocak",
+  "milletimin yıldızıdır",
+  "milletimindir ancak",
+  "çatma, kurban olayım",
+  "kahraman ırkıma",
+  "hakk'a tapan milletimin",
+  "istiklal marşı",
+  "istiklâl marşı",
+  "mehmet akif ersoy",
+  "mehmet âkif ersoy",
+  "ey türk gençliği",
+  "birinci vazifen",
+  "muhtaç olduğun kudret",
+  "damarlarındaki asil kanda",
+  "gençliğe hitabe",
+];
+
+export interface BlacklistDensityAnalysis {
+  isBlacklisted: boolean;
+  blacklistHits: number;
+  officialDateCount: number;
+  decreeOrCatalogNumberCount: number;
+  dottedLeaderDensity: number;
+  digitAndPunctDensity: number;
+  curriculumKeywordMatches: number;
+}
+
+/**
+ * Evaluates a text segment using keyword blacklist matching and text density metrics
+ * (date/decree number density, dotted table-of-contents leader density, digit/punctuation ratio,
+ * and curriculum keyword alignment) to detect irrelevant state document or imprint leaks.
+ */
+export function analyzeBlacklistAndTextDensity(
+  segment: string,
+  curriculumKeywords: string[] = []
+): BlacklistDensityAnalysis {
+  const normalized = (segment || "")
+    .replace(/ú/g, "ş")
+    .replace(/Ú/g, "Ş")
+    .replace(/þ/g, "ş")
+    .replace(/Þ/g, "Ş")
+    .replace(/ý/g, "ı")
+    .replace(/Ý/g, "İ")
+    .replace(/ð/g, "ğ")
+    .replace(/Ð/g, "Ğ")
+    .trim();
+
+  if (!normalized) {
+    return {
+      isBlacklisted: false,
+      blacklistHits: 0,
+      officialDateCount: 0,
+      decreeOrCatalogNumberCount: 0,
+      dottedLeaderDensity: 0,
+      digitAndPunctDensity: 0,
+      curriculumKeywordMatches: 0,
+    };
+  }
+
+  const lower = normalized.toLocaleLowerCase("tr-TR");
+
+  let blacklistHits = 0;
+  for (const phrase of STATE_DOCUMENT_AND_FRONTMATTER_BLACKLIST_KEYWORDS) {
+    if (lower.includes(phrase)) {
+      blacklistHits++;
+    }
+  }
+
+  // Count official date patterns (e.g., 24.12.2020, 14/09/2021)
+  const officialDates =
+    normalized.match(/\b\d{1,2}[./]\d{1,2}[./](?:19|20)\d{2}\b/g) || [];
+  const officialDateCount = officialDates.length;
+
+  // Count 5-10 digit decree/document numbers or catalog serial numbers
+  const decreeNumbers =
+    normalized.match(
+      /\b\d{5,10}\b|(?:sayılı|sayı|no|dizisi|yayınları)\s*[.:…\s]*\d{3,}/gi
+    ) || [];
+  const decreeOrCatalogNumberCount = decreeNumbers.length;
+
+  // Dotted leader density (e.g., "....: 10868")
+  const dottedMatches = normalized.match(/\.{3,}/g) || [];
+  const dottedChars = dottedMatches.reduce((acc, m) => acc + m.length, 0);
+  const dottedLeaderDensity = dottedChars / Math.max(1, normalized.length);
+
+  // Digit and bureaucratic punctuation density
+  const nonAlphaMatches = normalized.match(/[0-9:./;…_\\|-]/g) || [];
+  const digitAndPunctDensity =
+    nonAlphaMatches.length / Math.max(1, normalized.length);
+
+  // Check overlap with active curriculum keywords
+  let curriculumKeywordMatches = 0;
+  for (const kw of curriculumKeywords) {
+    const cleanKw = (kw || "").trim().toLocaleLowerCase("tr-TR");
+    if (cleanKw.length >= 4 && lower.includes(cleanKw.slice(0, 5))) {
+      curriculumKeywordMatches++;
+    }
+  }
+
+  const hasBureaucraticDateNumberCombo =
+    officialDateCount >= 1 &&
+    (decreeOrCatalogNumberCount >= 1 ||
+      /\b(?:sayılı|oluru|kararı|bakanlığ|kurulu|resm[îi]\s*gazete|tebliğ)\b/i.test(
+        lower
+      ));
+
+  const isHighNoiseZeroCurriculum =
+    (decreeOrCatalogNumberCount >= 2 || digitAndPunctDensity > 0.3) &&
+    curriculumKeywordMatches === 0;
+
+  const isBlacklisted =
+    blacklistHits >= 1 ||
+    hasBureaucraticDateNumberCombo ||
+    dottedLeaderDensity > 0.1 ||
+    isHighNoiseZeroCurriculum;
+
+  return {
+    isBlacklisted,
+    blacklistHits,
+    officialDateCount,
+    decreeOrCatalogNumberCount,
+    dottedLeaderDensity,
+    digitAndPunctDensity,
+    curriculumKeywordMatches,
+  };
+}
+
+/**
+ * Strips any line or sentence that triggers the state document / imprint / quote
+ * blacklist or text-density thresholds while preserving valid MEB curriculum sentences.
+ */
+export function applyBlacklistAndDensityFilter(
+  text: string,
+  curriculumKeywords: string[] = []
+): string {
+  if (!text) return "";
+  const normalizedFont = text
+    .replace(/ú/g, "ş")
+    .replace(/Ú/g, "Ş")
+    .replace(/þ/g, "ş")
+    .replace(/Þ/g, "Ş")
+    .replace(/ý/g, "ı")
+    .replace(/Ý/g, "İ")
+    .replace(/ð/g, "ğ")
+    .replace(/Ð/g, "Ğ");
+
+  const lines = normalizedFont.split(/\r?\n/);
+  const cleanedLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const trimmedLine = rawLine.trim();
+    if (!trimmedLine) continue;
+
+    // First check full line
+    const lineCheck = analyzeBlacklistAndTextDensity(
+      trimmedLine,
+      curriculumKeywords
+    );
+    if (lineCheck.isBlacklisted) {
+      // Split into sentences in case a valid curriculum sentence was concatenated with a blacklisted sentence
+      const sentences = trimmedLine
+        .split(/(?<=[.!?;])\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const validSentences = sentences.filter(
+        (s) => !analyzeBlacklistAndTextDensity(s, curriculumKeywords).isBlacklisted
+      );
+      if (validSentences.length > 0) {
+        cleanedLines.push(validSentences.join(" "));
+      }
+      continue;
+    }
+
+    cleanedLines.push(trimmedLine);
+  }
+
+  return cleanedLines.join("\n").trim();
 }
 
 /**
@@ -611,22 +859,14 @@ export function extractCleanDocumentMetadata(corpus: string): {
     }
   }
 
-  const rawDersAdi = parenDersAdi || explicitDersAdi || headerDersAdi;
-
-  // If Alan wasn't found via "TARIM ALANI", check if rawDersAdi contains "TARIM" (e.g. "SÜRDÜRÜLEBİLİR TARIM")
-  if (!alanAdi && /TARIM/i.test(rawDersAdi) && !rawDersAdi.startsWith("TARIM (")) {
-    alanAdi = "TARIM";
+  // Never artificially wrap the course name in ALAN (DERS) such as "TARIM (SÜRDÜRÜLEBİLİR TARIM)"
+  let cleanParenDers = parenDersAdi;
+  const innerParenMatch = cleanParenDers.match(/\(\s*([^)]+)\s*\)/);
+  if (innerParenMatch && innerParenMatch[1].trim().length >= 3) {
+    cleanParenDers = innerParenMatch[1].trim();
   }
 
-  let dersIsmi = rawDersAdi;
-  if (
-    alanAdi &&
-    rawDersAdi &&
-    !rawDersAdi.includes("(") &&
-    rawDersAdi !== alanAdi
-  ) {
-    dersIsmi = `${alanAdi} (${rawDersAdi})`;
-  }
+  const dersIsmi = explicitDersAdi || headerDersAdi || cleanParenDers;
 
   return {
     okulAdi,
@@ -4757,14 +4997,25 @@ export function verifyAndMergeDynamicBullets(
       let cleaned = rawBullet.replace(/^\s*[*•\-–]\s*/, "").trim();
       if (cleaned.length < options.minLength) continue;
 
-      // Reject copyright / front-matter / placeholder noise
+      // Reject copyright / front-matter / state document blacklist or high noise density
+      const bulletBlacklistAnalysis = analyzeBlacklistAndTextDensity(
+        cleaned,
+        weekData.searchKeywords
+      );
       if (
+        bulletBlacklistAnalysis.isBlacklisted ||
         /MİLL[İI]\s*EĞİTİM\s*BAKANLIĞI\s*YAYINLARI|Her\s*hakkı\s*saklıdır|YARDIMCI\s*VE\s*KAYNAK|\.{4,}|"16\.\s*Hafta"|"VE\s*SÜRE"/i.test(
           cleaned
         )
       ) {
         continue;
       }
+
+      cleaned = applyBlacklistAndDensityFilter(
+        cleaned,
+        weekData.searchKeywords
+      );
+      if (cleaned.length < options.minLength) continue;
 
       if (options.requireQuestionMark && !cleaned.endsWith("?")) {
         continue;
@@ -5275,35 +5526,77 @@ export function enforceAndMergeLessonPlan(
     "KB"
   );
 
+  const activeKeywords = weekData.searchKeywords || [
+    finalOgrenmeBirimi,
+    finalIcerikCercevesi,
+  ];
+
+  const sanitizeArrayWithBlacklist = (items: string[]): string[] =>
+    items
+      .map((item) => applyBlacklistAndDensityFilter(item, activeKeywords))
+      .filter((item) => item.length >= 10);
+
   return {
     Ders_Bilgisi: {
       Sinif: cleanSinif,
       Ders: cleanDers,
-      Ogrenme_Birimi: finalOgrenmeBirimi,
+      Ogrenme_Birimi: applyBlacklistAndDensityFilter(
+        finalOgrenmeBirimi,
+        activeKeywords
+      ),
       Sure: weekData.sure,
-      Alan_Becerileri: finalAlanBecerileri,
+      Alan_Becerileri: applyBlacklistAndDensityFilter(
+        finalAlanBecerileri,
+        activeKeywords
+      ),
       Egilimler: finalEgilimler,
     },
     Programlar_Arasi_Bilesenler: {
       Sosyal_Duygusal_Ogrenme_Becerileri: finalSdb,
       Degerler: finalDegerler,
       Okuryazarlik_Becerileri: finalOkuryazarlik,
-      Disiplinler_Arasi_Iliski: finalDisiplinlerArasi,
+      Disiplinler_Arasi_Iliski: applyBlacklistAndDensityFilter(
+        finalDisiplinlerArasi,
+        activeKeywords
+      ),
       Beceriler_Arasi_Iliski: finalBecerilerArasi,
     },
-    Ogrenme_Ciktilari_ve_Surec_Bilesenleri: finalOutcomesBlock,
-    Icerik_Cercevesi: finalIcerikCercevesi,
-    Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(finalOgrenmeKanitlari),
+    Ogrenme_Ciktilari_ve_Surec_Bilesenleri: applyBlacklistAndDensityFilter(
+      finalOutcomesBlock,
+      activeKeywords
+    ),
+    Icerik_Cercevesi: applyBlacklistAndDensityFilter(
+      finalIcerikCercevesi,
+      activeKeywords
+    ),
+    Ogrenme_Kanitlari: applyBlacklistAndDensityFilter(
+      cleanOgrenmeKanitlariPrefix(finalOgrenmeKanitlari),
+      activeKeywords
+    ),
     Ogrenme_Ogretme_Yasantilari: {
-      Temel_Kabuller: finalTemelKabuller,
-      On_Degerlendirme_Sureci: finalOnDegerlendirme,
-      Kopru_Kurma: finalKopruKurma,
-      Ogretme_Uygulamalari: finalOgretmeUygulamalari,
-      Guduleme: finalGuduleme,
-      Dikkat_Cekme: finalDikkat,
-      Ek_Ogretme_Uygulamalari: finalEkUygulamalar,
+      Temel_Kabuller: applyBlacklistAndDensityFilter(
+        finalTemelKabuller,
+        activeKeywords
+      ),
+      On_Degerlendirme_Sureci: applyBlacklistAndDensityFilter(
+        finalOnDegerlendirme,
+        activeKeywords
+      ),
+      Kopru_Kurma: applyBlacklistAndDensityFilter(
+        finalKopruKurma,
+        activeKeywords
+      ),
+      Ogretme_Uygulamalari: sanitizeArrayWithBlacklist(
+        finalOgretmeUygulamalari
+      ),
+      Guduleme: sanitizeArrayWithBlacklist(finalGuduleme),
+      Dikkat_Cekme: sanitizeArrayWithBlacklist(finalDikkat),
+      Ek_Ogretme_Uygulamalari: sanitizeArrayWithBlacklist(finalEkUygulamalar),
     },
-    Farklilastirma: finalFarklilastirma,
+    Farklilastirma: applyBlacklistAndDensityFilter(
+      finalFarklilastirma,
+      activeKeywords
+    ),
   };
 }
 
