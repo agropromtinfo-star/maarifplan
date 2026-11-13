@@ -38,6 +38,8 @@ import {
   parseDersBilgiFormuStructured,
   resolveValidDateRange,
   cleanOgrenmeKanitlariPrefix,
+  validateCourseNameAgainstDbf,
+  extractWeeklyMaterialSummaryBox,
 } from "./shared/maarifPlanEngine";
 import {
   Upload,
@@ -420,6 +422,11 @@ export default function App() {
       dersMateryali
     );
   }, [dersBilgiFormu, yillikPlan, dersMateryali]);
+
+  // Real-time validation comparing the user's manually entered 'Ders İsmi' with the uploaded 'Ders Bilgi Formu'
+  const dersIsmiValidation = useMemo(() => {
+    return validateCourseNameAgainstDbf(meta.dersIsmi, dersBilgiFormu);
+  }, [meta.dersIsmi, dersBilgiFormu]);
 
   // Memoized deterministic week & unit list derived directly from the active course documents
   const localParsedWeeks = useMemo<YillikPlanWeekItem[]>(() => {
@@ -1004,6 +1011,26 @@ export default function App() {
                         b.replace(/^\*\s*/, "").trim()
                       )
                     : prevPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+              },
+            };
+          });
+        } else if (fieldKey === "ders_materyali") {
+          setCurrentPlan((prevPlan) => {
+            if (!prevPlan) return prevPlan;
+            const updatedOzet = extractWeeklyMaterialSummaryBox(extractedText, {
+              ogrenmeBirimi: prevPlan.Ders_Bilgisi.Ogrenme_Birimi,
+              icerikCercevesi: prevPlan.Icerik_Cercevesi,
+              konuVeCiktiOzeti: selectedWeekObj?.konuVeCiktiOzeti || "",
+              ogrenmeCiktilari:
+                prevPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+            });
+            return {
+              ...prevPlan,
+              Ogrenme_Ogretme_Yasantilari: {
+                ...prevPlan.Ogrenme_Ogretme_Yasantilari,
+                Haftalik_Ozet:
+                  updatedOzet ||
+                  prevPlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet,
               },
             };
           });
@@ -1756,9 +1783,66 @@ export default function App() {
                       className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-none ${
                         lockedFields.dersIsmi
                           ? "border-amber-300 bg-amber-50/50 text-slate-900 font-medium cursor-not-allowed"
+                          : dersIsmiValidation.hasComparison &&
+                            !dersIsmiValidation.isValid
+                          ? "border-amber-400 bg-amber-50/40 text-slate-900 focus:bg-white focus:border-amber-600"
                           : "border-slate-300 bg-slate-50/70 text-slate-900 focus:bg-white focus:border-indigo-600"
                       }`}
                     />
+                    {dersIsmiValidation.hasComparison &&
+                      !dersIsmiValidation.isValid && (
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          className="mt-2 rounded-lg border border-amber-300 bg-amber-50/90 p-2.5 text-[11px] leading-relaxed text-amber-950 shadow-2xs"
+                        >
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="space-y-1.5 flex-1">
+                              <p className="font-medium text-amber-900">
+                                Nazik hatırlatma: Girdiğiniz{" "}
+                                <span className="font-semibold">
+                                  &ldquo;{dersIsmiValidation.manualCourseName}&rdquo;
+                                </span>{" "}
+                                ders ismi ile yüklenen Ders Bilgi Formu&apos;ndaki{" "}
+                                <span className="font-semibold">
+                                  &ldquo;{dersIsmiValidation.dbfCourseName}&rdquo;
+                                </span>{" "}
+                                ders ismi birbirinden farklı görünüyor (%
+                                {dersIsmiValidation.mismatchPercent} uyuşmazlık).
+                                Lütfen ders ismini veya yüklediğiniz Ders Bilgi
+                                Formu&apos;nu kontrol etmek isteyebilirsiniz.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateMetaField(
+                                    "dersIsmi",
+                                    dersIsmiValidation.dbfCourseName
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-200/80 hover:bg-amber-300/80 text-amber-950 font-semibold text-[10px] transition-colors cursor-pointer"
+                              >
+                                <Check className="w-3 h-3 text-amber-800" />
+                                <span>
+                                  &ldquo;{dersIsmiValidation.dbfCourseName}&rdquo;
+                                  Olarak Güncelle
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    {dersIsmiValidation.hasComparison &&
+                      dersIsmiValidation.isValid && (
+                        <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                          <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>
+                            Ders Bilgi Formu ile uyumlu (%
+                            {dersIsmiValidation.similarityPercent} eşleşme)
+                          </span>
+                        </p>
+                      )}
                   </div>
 
                   <div>
@@ -2656,6 +2740,9 @@ export default function App() {
                         plan={currentPlan}
                         meta={meta}
                         onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                        onOpenTopicSummary={() => setIsTopicSummaryOpen(true)}
+                        dersMateryali={dersMateryali}
+                        konuVeCiktiOzeti={selectedWeekObj?.konuVeCiktiOzeti || ""}
                       />
                     </div>
                   </div>
@@ -2694,6 +2781,8 @@ export default function App() {
                   meta={meta}
                   onUpdatePlan={(updated) => setCurrentPlan(updated)}
                   onOpenTopicSummary={() => setIsTopicSummaryOpen(true)}
+                  dersMateryali={dersMateryali}
+                  konuVeCiktiOzeti={selectedWeekObj?.konuVeCiktiOzeti || ""}
                 />
               </div>
             </div>

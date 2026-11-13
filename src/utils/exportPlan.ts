@@ -238,6 +238,14 @@ function buildSinglePlanSectionHtml(
         : ""
     }
     ${
+      ooy.Haftalik_Ozet && ooy.Haftalik_Ozet.trim().length > 0
+        ? `<tr>
+      <td class="label-cell">Haftalık Özet</td>
+      <td colspan="3">${formatWithBoldCodesHtml(ooy.Haftalik_Ozet)}</td>
+    </tr>`
+        : ""
+    }
+    ${
       shouldRenderRow(undefined, ooy.Ogretme_Uygulamalari)
         ? `<tr>
       <td class="label-cell">Öğretme Uygulamaları</td>

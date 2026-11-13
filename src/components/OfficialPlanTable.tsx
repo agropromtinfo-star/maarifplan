@@ -13,7 +13,11 @@ import {
   BookOpen,
 } from "lucide-react";
 import { downloadWordDoc, triggerPrintWithFileName } from "../utils/exportPlan";
-import { formatFullWeekAndDateRange, cleanOgrenmeKanitlariPrefix } from "../shared/maarifPlanEngine";
+import {
+  formatFullWeekAndDateRange,
+  cleanOgrenmeKanitlariPrefix,
+  extractWeeklyMaterialSummaryBox,
+} from "../shared/maarifPlanEngine";
 import { ExportConfigModal } from "./ExportConfigModal";
 import { PlanExportOptions } from "../types/exportOptions";
 
@@ -22,6 +26,8 @@ interface OfficialPlanTableProps {
   meta: DocumentHeaderFooterMeta;
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
   onOpenTopicSummary?: () => void;
+  dersMateryali?: string;
+  konuVeCiktiOzeti?: string;
 }
 
 // Helper to render codes like "E2.2. ", "SDB2.2. ", "D12. ", "OB1. ", "KB2.2. " in bold when followed by space
@@ -78,10 +84,31 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
   meta,
   onUpdatePlan,
   onOpenTopicSummary,
+  dersMateryali = "",
+  konuVeCiktiOzeti = "",
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isCompactView, setIsCompactView] = useState(true); // Kağıt tasarrufu için varsayılan olarak sıkıştırılmış
+
+  const autoExtractedHaftalikOzet = React.useMemo(() => {
+    return extractWeeklyMaterialSummaryBox(dersMateryali, {
+      ogrenmeBirimi: plan.Ders_Bilgisi.Ogrenme_Birimi,
+      icerikCercevesi: plan.Icerik_Cercevesi,
+      konuVeCiktiOzeti,
+      ogrenmeCiktilari: plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+    });
+  }, [
+    dersMateryali,
+    plan.Ders_Bilgisi.Ogrenme_Birimi,
+    plan.Icerik_Cercevesi,
+    konuVeCiktiOzeti,
+    plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+  ]);
+
+  const resolvedHaftalikOzet =
+    plan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet?.trim() ||
+    autoExtractedHaftalikOzet;
 
   const displayOkulAdi = meta.okulAdi.trim()
     ? meta.okulAdi.trim().toLocaleUpperCase("tr-TR")
@@ -139,7 +166,11 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
   };
 
   const updateYasantilarString = (
-    key: "Temel_Kabuller" | "On_Degerlendirme_Sureci" | "Kopru_Kurma",
+    key:
+      | "Temel_Kabuller"
+      | "On_Degerlendirme_Sureci"
+      | "Kopru_Kurma"
+      | "Haftalik_Ozet",
     val: string
   ) => {
     onUpdatePlan({
@@ -652,6 +683,59 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
                 multiline
                 onChange={(v) => updateYasantilarString("Kopru_Kurma", v)}
               />
+
+              {/* Otomatik Haftalık Özet Kutucuğu (Ders Materyali & Konu ve Çıktı Özeti Eşleşmesi) */}
+              {(isEditing || Boolean(resolvedHaftalikOzet)) && (
+                <tr>
+                  <td
+                    valign="top"
+                    className="border border-[#4bacc6] px-2.5 py-1.5 font-bold align-top w-[22%]"
+                  >
+                    <div>Haftalık Özet</div>
+                    <div className="no-print text-[10px] font-medium text-sky-800 mt-0.5">
+                      Ders Materyali &amp; Konu/Çıktı Eşleşmesi
+                    </div>
+                  </td>
+                  <td
+                    colSpan={3}
+                    valign="top"
+                    className="border border-[#4bacc6] px-2.5 py-1.5 align-top"
+                  >
+                    <div className="rounded-lg border border-sky-200/90 bg-sky-50/50 p-2.5 space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-200/70 pb-1">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-950">
+                          <BookOpen className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                          <span>
+                            Haftalık Özet ({plan.Icerik_Cercevesi || plan.Ders_Bilgisi.Ogrenme_Birimi})
+                          </span>
+                        </span>
+                        {konuVeCiktiOzeti && (
+                          <span className="no-print text-[10px] text-slate-600 truncate max-w-md">
+                            Eşleşen Çıktı: {konuVeCiktiOzeti}
+                          </span>
+                        )}
+                      </div>
+                      {isEditing ? (
+                        <textarea
+                          rows={4}
+                          value={resolvedHaftalikOzet}
+                          onChange={(e) =>
+                            updateYasantilarString(
+                              "Haftalik_Ozet",
+                              e.target.value
+                            )
+                          }
+                          className="w-full border border-slate-300 bg-white rounded px-2 py-1 text-xs"
+                        />
+                      ) : (
+                        <div className="whitespace-pre-line text-slate-900">
+                          {renderTextWithBoldCodes(resolvedHaftalikOzet)}
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
 
               {/*Exact order from sample images: Öğretme Uygulamaları -> Güdüleme -> Dikkat Çekme -> Ek Öğretme Uygulamaları */}
               <EditableAsteriskArrayRow

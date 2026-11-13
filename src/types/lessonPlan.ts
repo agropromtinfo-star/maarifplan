@@ -19,6 +19,7 @@ export interface OgrenmeOgretmeYasantilari {
   Temel_Kabuller: string;
   On_Degerlendirme_Sureci: string;
   Kopru_Kurma: string;
+  Haftalik_Ozet?: string;
   Ogretme_Uygulamalari: string[];
   Guduleme: string[];
   Dikkat_Cekme: string[];
@@ -47,6 +48,7 @@ export interface YillikPlanWeekItem {
   sure?: string;
   ogrenmeKanitlari?: string;
   ogretmeUygulamalari?: string[];
+  haftalikOzet?: string;
 }
 
 export interface DocumentHeaderFooterMeta {

@@ -5536,6 +5536,25 @@ export function enforceAndMergeLessonPlan(
       .map((item) => applyBlacklistAndDensityFilter(item, activeKeywords))
       .filter((item) => item.length >= 10);
 
+  const computedHaftalikOzet = extractWeeklyMaterialSummaryBox(materyalSlice, {
+    ogrenmeBirimi: finalOgrenmeBirimi,
+    icerikCercevesi: finalIcerikCercevesi,
+    konuVeCiktiOzeti: [
+      weekData.outcomeHeader,
+      ...weekData.weekSubComponents,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    ogrenmeCiktilari: finalOutcomesBlock,
+    weekSubComponents: weekData.weekSubComponents,
+  });
+
+  const finalHaftalikOzet = applyBlacklistAndDensityFilter(
+    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Haftalik_Ozet?.trim() ||
+      computedHaftalikOzet,
+    activeKeywords
+  );
+
   return {
     Ders_Bilgisi: {
       Sinif: cleanSinif,
@@ -5586,6 +5605,7 @@ export function enforceAndMergeLessonPlan(
         finalKopruKurma,
         activeKeywords
       ),
+      Haftalik_Ozet: finalHaftalikOzet,
       Ogretme_Uygulamalari: sanitizeArrayWithBlacklist(
         finalOgretmeUygulamalari
       ),
@@ -5599,4 +5619,356 @@ export function enforceAndMergeLessonPlan(
     ),
   };
 }
+
+export interface CourseNameValidationResult {
+  hasComparison: boolean;
+  isValid: boolean;
+  manualCourseName: string;
+  dbfCourseName: string;
+  similarityPercent: number;
+  mismatchPercent: number;
+  warningMessage: string | null;
+}
+
+function normalizeCourseNameForComparison(rawName: string): string {
+  if (!rawName) return "";
+  let cleaned = normalizeTurkishUnicode(rawName).trim();
+
+  // Extract inner course name if formatted like "TARIM (SÜRDÜRÜLEBİLİR TARIM)"
+  const parenMatch = cleaned.match(/^[A-ZÇĞİÖŞÜa-zçğıöşü\s]+\(\s*([^)]+)\s*\)$/);
+  if (parenMatch && parenMatch[1].trim().length >= 3) {
+    cleaned = parenMatch[1].trim();
+  }
+
+  return cleaned
+    .toLocaleLowerCase("tr-TR")
+    .replace(/\b(?:hazırlık|5|6|7|8|9|10|11|12)\s*\.?\s*sınıf\b/gi, " ")
+    .replace(/\bders(?:i|in)?\b/gi, " ")
+    .replace(/\s+(?:5|6|7|8|9|10|11|12)$/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function computeLevenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const matrix: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 0; j <= b.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
+function computeDiceBigramSimilarity(a: string, b: string): number {
+  const s1 = a.replace(/\s+/g, "");
+  const s2 = b.replace(/\s+/g, "");
+  if (s1 === s2) return 1;
+  if (s1.length < 2 || s2.length < 2) return 0;
+
+  const bigrams1 = new Map<string, number>();
+  for (let i = 0; i < s1.length - 1; i++) {
+    const bg = s1.slice(i, i + 2);
+    bigrams1.set(bg, (bigrams1.get(bg) || 0) + 1);
+  }
+
+  let intersection = 0;
+  for (let i = 0; i < s2.length - 1; i++) {
+    const bg = s2.slice(i, i + 2);
+    const count = bigrams1.get(bg) || 0;
+    if (count > 0) {
+      bigrams1.set(bg, count - 1);
+      intersection++;
+    }
+  }
+
+  return (2 * intersection) / (s1.length - 1 + (s2.length - 1));
+}
+
+/**
+ * Validates the user's manually entered 'Ders İsmi' against the course name
+ * extracted from the uploaded 'Ders Bilgi Formu'.
+ * Triggers a polite warning if the entered name and the Ders Bilgi Formu course name
+ * fail the 80% similarity / mismatch threshold.
+ */
+export function validateCourseNameAgainstDbf(
+  manualDersIsmi: string,
+  dersBilgiFormuText: string
+): CourseNameValidationResult {
+  const trimmedManual = (manualDersIsmi || "").trim();
+  const trimmedDbfText = (dersBilgiFormuText || "").trim();
+
+  if (!trimmedManual || !trimmedDbfText) {
+    return {
+      hasComparison: false,
+      isValid: true,
+      manualCourseName: trimmedManual,
+      dbfCourseName: "",
+      similarityPercent: 100,
+      mismatchPercent: 0,
+      warningMessage: null,
+    };
+  }
+
+  const rawExtracted =
+    extractCleanDocumentMetadata(trimmedDbfText).dersIsmi ||
+    extractCleanDocumentMetadata(stripFrontMatter(trimmedDbfText)).dersIsmi ||
+    "";
+
+  const dbfCourseName = rawExtracted.trim();
+  if (!dbfCourseName) {
+    return {
+      hasComparison: false,
+      isValid: true,
+      manualCourseName: trimmedManual,
+      dbfCourseName: "",
+      similarityPercent: 100,
+      mismatchPercent: 0,
+      warningMessage: null,
+    };
+  }
+
+  const normManual = normalizeCourseNameForComparison(trimmedManual);
+  const normDbf = normalizeCourseNameForComparison(dbfCourseName);
+
+  if (!normManual || !normDbf) {
+    return {
+      hasComparison: false,
+      isValid: true,
+      manualCourseName: trimmedManual,
+      dbfCourseName,
+      similarityPercent: 100,
+      mismatchPercent: 0,
+      warningMessage: null,
+    };
+  }
+
+  const maxLen = Math.max(normManual.length, normDbf.length);
+  const editDist = computeLevenshteinDistance(normManual, normDbf);
+  const levSimilarity = maxLen > 0 ? (maxLen - editDist) / maxLen : 1;
+  const diceSimilarity = computeDiceBigramSimilarity(normManual, normDbf);
+
+  const combinedSimilarity = Math.max(
+    levSimilarity,
+    (levSimilarity + diceSimilarity) / 2
+  );
+  const similarityPercent = Math.round(combinedSimilarity * 100);
+  const mismatchPercent = Math.max(0, 100 - similarityPercent);
+
+  // Valid if similarity is at least 80% (or mismatch is <= 20%)
+  const isValid = similarityPercent >= 80;
+
+  const warningMessage = isValid
+    ? null
+    : `Girdiğiniz ders ismi ("${trimmedManual}") ile yüklenen Ders Bilgi Formu'ndaki ders ismi ("${dbfCourseName}") arasında yüksek oranda (%${mismatchPercent}) uyuşmazlık tespit edildi. Lütfen ders ismini veya yüklediğiniz Ders Bilgi Formu'nu kontrol ediniz.`;
+
+  return {
+    hasComparison: true,
+    isValid,
+    manualCourseName: trimmedManual,
+    dbfCourseName,
+    similarityPercent,
+    mismatchPercent,
+    warningMessage,
+  };
+}
+
+export interface WeeklyMaterialSummaryContext {
+  ogrenmeBirimi?: string;
+  icerikCercevesi?: string;
+  konuVeCiktiOzeti?: string;
+  ogrenmeCiktilari?: string;
+  weekSubComponents?: string[];
+}
+
+/**
+ * Extracts passages from the uploaded 'Ders Materyali' that match the selected week's
+ * 'Konu ve Çıktı Özeti' (İçerik Çerçevesi, Öğrenme Çıktıları ve Süreç Bileşenleri)
+ * to populate the automatic 'Haftalık Özet' box inside 'Öğrenme-Öğretme Yaşantıları'.
+ */
+export function extractWeeklyMaterialSummaryBox(
+  dersMateryaliText: string,
+  context: WeeklyMaterialSummaryContext
+): string {
+  const cleanMateryal = applyBlacklistAndDensityFilter(
+    stripFrontMatter(dersMateryaliText || "")
+  ).trim();
+
+  const icerik = (context.icerikCercevesi || "").trim();
+  const birim = (context.ogrenmeBirimi || "").trim();
+  const ozet = (context.konuVeCiktiOzeti || "").trim();
+  const ciktilar = (context.ogrenmeCiktilari || "").trim();
+
+  const subLines =
+    context.weekSubComponents && context.weekSubComponents.length > 0
+      ? context.weekSubComponents
+      : ciktilar
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => /^[a-zçğıöşü]\)\s+/i.test(l));
+
+  const cleanedSubPhrases = subLines
+    .map((s) =>
+      s
+        .replace(/^[a-zçğıöşü]\)\s*/i, "")
+        .replace(
+          /\s+(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir|açıklar|sıralar|kavranır|yapılır)\.?$/i,
+          ""
+        )
+        .trim()
+    )
+    .filter((s) => s.length >= 4);
+
+  const primaryPhrases = [
+    icerik,
+    ...cleanedSubPhrases,
+    ...ozet
+      .split(/[·•;|]/)
+      .map((p) =>
+        p
+          .replace(/^[A-ZÇĞİÖŞÜ]{2,6}\.\d+(?:\.\d+)*\.?\s*/i, "")
+          .replace(/^[a-zçğıöşü]\)\s*/i, "")
+          .replace(
+            /\s+(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir|açıklar|sıralar)\.?$/i,
+            ""
+          )
+          .trim()
+      )
+      .filter((p) => p.length >= 4),
+  ].filter(Boolean);
+
+  const rawKeywordSource = `${icerik} ${ozet} ${cleanedSubPhrases.join(" ")} ${ciktilar}`;
+  const topicKeywords = Array.from(
+    new Set(
+      normalizeForUnitMatching(rawKeywordSource)
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter(
+          (w) =>
+            w.length >= 4 &&
+            !TURKISH_STOP_WORDS.has(w) &&
+            !/^(?:öğrenme|birimi|çıktısı|çıktıları|süreç|bileşenleri|hafta|ders|saati|açıklanır|sıralanır|uygulanır|incelenir|belirlenir|açıklar|sıralar)$/.test(
+              w
+            )
+        )
+    )
+  );
+
+  const unitKeywords = Array.from(
+    new Set(
+      normalizeForUnitMatching(birim)
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !TURKISH_STOP_WORDS.has(w))
+    )
+  );
+
+  if (cleanMateryal.length >= 40) {
+    // Split material into coherent paragraph/sentence blocks
+    const rawBlocks = cleanMateryal
+      .split(/\n\s*\n+|\r?\n(?=[A-ZÇĞİÖŞÜ0-9•*-])/)
+      .map((b) => b.replace(/\s+/g, " ").trim())
+      .filter((b) => {
+        if (b.length < 45 || b.length > 900) return false;
+        if (/^(?:sözlük|kaynakça|içindekiler|cevap\s*anahtarı|değerlendirme\s*soruları|ölçme\s*ve\s*değerlendirme)/i.test(b)) {
+          return false;
+        }
+        if (/\.{4,}|\b\d{1,2}\s*\/\s*\d{1,2}\b/.test(b)) return false;
+        const densityCheck = analyzeBlacklistAndTextDensity(b, topicKeywords);
+        return !densityCheck.isBlacklisted;
+      });
+
+    const scoredBlocks = rawBlocks
+      .map((block, index) => {
+        const normBlock = normalizeForUnitMatching(block);
+        let score = 0;
+
+        for (const phrase of primaryPhrases) {
+          const normPhrase = normalizeForUnitMatching(phrase);
+          if (normPhrase.length >= 5 && normBlock.includes(normPhrase)) {
+            score += 10;
+          }
+        }
+
+        for (const kw of topicKeywords) {
+          if (normBlock.includes(kw)) {
+            score += 3;
+          }
+        }
+
+        for (const ukw of unitKeywords) {
+          if (normBlock.includes(ukw)) {
+            score += 1.5;
+          }
+        }
+
+        // Prefer informative prose sentences ending with punctuation
+        if (/[.!]$/.test(block)) {
+          score += 1;
+        }
+
+        return { block, score, index };
+      })
+      .filter((item) => item.score >= 3)
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+
+    const selectedExcerpts: string[] = [];
+    let totalChars = 0;
+
+    for (const candidate of scoredBlocks) {
+      const normCand = normalizeForUnitMatching(candidate.block);
+      const isDuplicate = selectedExcerpts.some((existing) => {
+        const normExist = normalizeForUnitMatching(existing);
+        return (
+          normExist.includes(normCand.slice(0, 35)) ||
+          normCand.includes(normExist.slice(0, 35))
+        );
+      });
+      if (!isDuplicate) {
+        selectedExcerpts.push(candidate.block);
+        totalChars += candidate.block.length;
+        if (selectedExcerpts.length >= 3 || totalChars >= 580) {
+          break;
+        }
+      }
+    }
+
+    if (selectedExcerpts.length > 0) {
+      return selectedExcerpts.join("\n\n");
+    }
+  }
+
+  // Fallback synthesis when Ders Materyali is not yet uploaded or has no direct passage match
+  if (icerik || cleanedSubPhrases.length > 0 || ozet) {
+    const focusTitle = icerik || birim || "Haftalık Konu";
+    const subSummary =
+      cleanedSubPhrases.length > 0
+        ? cleanedSubPhrases.join(", ")
+        : ozet.replace(/^[A-ZÇĞİÖŞÜ]{2,6}\.\d+(?:\.\d+)*\.?\s*/i, "");
+
+    return cleanMateryal.length >= 40
+      ? `Bu haftaki ders materyali kapsamında "${focusTitle}" konusu doğrultusunda; ${subSummary} başlıklarına ilişkin temel kavramlar, uygulama ilkeleri ve süreç basamakları ele alınmaktadır.`
+      : `"${focusTitle}" konusu kapsamında bu hafta işlenecek çıktı ve süreç özeti: ${
+          subSummary || focusTitle
+        }. (Ders Materyali yüklendiğinde ilgili konu pasajları otomatik olarak buraya aktarılır.)`;
+  }
+
+  return "";
+}
+
+
 
