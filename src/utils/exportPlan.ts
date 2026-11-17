@@ -1,7 +1,6 @@
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
 import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
 import { PlanExportOptions, DEFAULT_EXPORT_OPTIONS } from "../types/exportOptions";
-import { convertSummaryToRichHtml } from "../components/WeeklySummaryRichModal";
 
 function escapeHtml(text: string): string {
   return (text || "")
@@ -235,14 +234,6 @@ function buildSinglePlanSectionHtml(
         ? `<tr>
       <td class="label-cell">Köprü Kurma</td>
       <td colspan="3">${formatWithBoldCodesHtml(ooy.Kopru_Kurma)}</td>
-    </tr>`
-        : ""
-    }
-    ${
-      ooy.Haftalik_Ozet && ooy.Haftalik_Ozet.trim().length > 0
-        ? `<tr>
-      <td class="label-cell">Haftalık Özet</td>
-      <td colspan="3">${convertSummaryToRichHtml(ooy.Haftalik_Ozet)}</td>
     </tr>`
         : ""
     }

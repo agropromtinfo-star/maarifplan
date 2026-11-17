@@ -643,9 +643,6 @@ export function synthesizeAllWeeksClientSide(params: {
       }
     );
 
-    if (weekItem.haftalikOzet) {
-      plan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet = weekItem.haftalikOzet;
-    }
     if (weekItem.ogrenmeKanitlari) {
       plan.Ogrenme_Kanitlari = weekItem.ogrenmeKanitlari;
     }

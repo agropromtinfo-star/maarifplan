@@ -5553,25 +5553,6 @@ export function enforceAndMergeLessonPlan(
       .map((item) => applyBlacklistAndDensityFilter(item, activeKeywords))
       .filter((item) => item.length >= 10);
 
-  const computedHaftalikOzet = extractWeeklyMaterialSummaryBox(materyalSlice, {
-    ogrenmeBirimi: finalOgrenmeBirimi,
-    icerikCercevesi: finalIcerikCercevesi,
-    konuVeCiktiOzeti: [
-      weekData.outcomeHeader,
-      ...weekData.weekSubComponents,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-    ogrenmeCiktilari: finalOutcomesBlock,
-    weekSubComponents: weekData.weekSubComponents,
-  });
-
-  const finalHaftalikOzet = applyBlacklistAndDensityFilter(
-    aiPlan?.Ogrenme_Ogretme_Yasantilari?.Haftalik_Ozet?.trim() ||
-      computedHaftalikOzet,
-    activeKeywords
-  );
-
   return {
     Ders_Bilgisi: {
       Sinif: cleanSinif,
@@ -5622,7 +5603,6 @@ export function enforceAndMergeLessonPlan(
         finalKopruKurma,
         activeKeywords
       ),
-      Haftalik_Ozet: finalHaftalikOzet,
       Ogretme_Uygulamalari: sanitizeArrayWithBlacklist(
         finalOgretmeUygulamalari
       ),

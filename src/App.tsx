@@ -40,7 +40,6 @@ import {
   resolveValidDateRange,
   cleanOgrenmeKanitlariPrefix,
   validateCourseNameAgainstDbf,
-  extractWeeklyMaterialSummaryBox,
 } from "./shared/maarifPlanEngine";
 import {
   Upload,
@@ -613,17 +612,6 @@ export default function App() {
           b.replace(/^\*\s*/, "").trim()
         );
     }
-    if (selectedWeekObj?.haftalikOzet) {
-      synthesized.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet =
-        selectedWeekObj.haftalikOzet;
-    }
-    if (
-      selectedWeekObj?.ogrenciCalismaSorulari &&
-      selectedWeekObj.ogrenciCalismaSorulari.length > 0
-    ) {
-      synthesized.Ogrenme_Ogretme_Yasantilari.Ogrenci_Calisma_Sorulari =
-        selectedWeekObj.ogrenciCalismaSorulari;
-    }
     return synthesized;
   }, [
     currentPlan,
@@ -684,17 +672,6 @@ export default function App() {
         if (found.ogretmeUygulamalari && found.ogretmeUygulamalari.length > 0) {
           weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
             found.ogretmeUygulamalari.map((b) => b.replace(/^\*\s*/, "").trim());
-        }
-        if (found.haftalikOzet) {
-          weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet =
-            found.haftalikOzet;
-        }
-        if (
-          found.ogrenciCalismaSorulari &&
-          found.ogrenciCalismaSorulari.length > 0
-        ) {
-          weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Ogrenci_Calisma_Sorulari =
-            found.ogrenciCalismaSorulari;
         }
 
         setCurrentPlan((prevPlan) => (prevPlan ? weekSyncedPlan : prevPlan));
@@ -1136,26 +1113,6 @@ export default function App() {
                         b.replace(/^\*\s*/, "").trim()
                       )
                     : prevPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
-              },
-            };
-          });
-        } else if (fieldKey === "ders_materyali") {
-          setCurrentPlan((prevPlan) => {
-            if (!prevPlan) return prevPlan;
-            const updatedOzet = extractWeeklyMaterialSummaryBox(extractedText, {
-              ogrenmeBirimi: prevPlan.Ders_Bilgisi.Ogrenme_Birimi,
-              icerikCercevesi: prevPlan.Icerik_Cercevesi,
-              konuVeCiktiOzeti: selectedWeekObj?.konuVeCiktiOzeti || "",
-              ogrenmeCiktilari:
-                prevPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
-            });
-            return {
-              ...prevPlan,
-              Ogrenme_Ogretme_Yasantilari: {
-                ...prevPlan.Ogrenme_Ogretme_Yasantilari,
-                Haftalik_Ozet:
-                  updatedOzet ||
-                  prevPlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet,
               },
             };
           });
@@ -3210,7 +3167,6 @@ export default function App() {
           setIsWeekDetailPanelOpen(false);
         }}
         onDownloadWord={() => downloadWordDoc(selectedWeekPreviewPlan, meta)}
-        dersMateryali={dersMateryali}
       />
 
       {/* Student Topic Summary & Study Note Modal */}
