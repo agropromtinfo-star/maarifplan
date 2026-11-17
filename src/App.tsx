@@ -613,6 +613,17 @@ export default function App() {
           b.replace(/^\*\s*/, "").trim()
         );
     }
+    if (selectedWeekObj?.haftalikOzet) {
+      synthesized.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet =
+        selectedWeekObj.haftalikOzet;
+    }
+    if (
+      selectedWeekObj?.ogrenciCalismaSorulari &&
+      selectedWeekObj.ogrenciCalismaSorulari.length > 0
+    ) {
+      synthesized.Ogrenme_Ogretme_Yasantilari.Ogrenci_Calisma_Sorulari =
+        selectedWeekObj.ogrenciCalismaSorulari;
+    }
     return synthesized;
   }, [
     currentPlan,
@@ -673,6 +684,17 @@ export default function App() {
         if (found.ogretmeUygulamalari && found.ogretmeUygulamalari.length > 0) {
           weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
             found.ogretmeUygulamalari.map((b) => b.replace(/^\*\s*/, "").trim());
+        }
+        if (found.haftalikOzet) {
+          weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet =
+            found.haftalikOzet;
+        }
+        if (
+          found.ogrenciCalismaSorulari &&
+          found.ogrenciCalismaSorulari.length > 0
+        ) {
+          weekSyncedPlan.Ogrenme_Ogretme_Yasantilari.Ogrenci_Calisma_Sorulari =
+            found.ogrenciCalismaSorulari;
         }
 
         setCurrentPlan((prevPlan) => (prevPlan ? weekSyncedPlan : prevPlan));
@@ -3188,6 +3210,7 @@ export default function App() {
           setIsWeekDetailPanelOpen(false);
         }}
         onDownloadWord={() => downloadWordDoc(selectedWeekPreviewPlan, meta)}
+        dersMateryali={dersMateryali}
       />
 
       {/* Student Topic Summary & Study Note Modal */}

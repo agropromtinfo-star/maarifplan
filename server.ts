@@ -18,6 +18,8 @@ import {
   stripFrontMatter,
   sanitizeOutcomeOrSubSentence,
   deriveUnitNameFromOutcome,
+  extractWeeklyMaterialSummaryBox,
+  applyBlacklistAndDensityFilter,
   WeekSpecificExtraction,
 } from "./src/shared/maarifPlanEngine";
 
@@ -343,15 +345,18 @@ async function generateWithFallback(
     apiKey,
     apiVersion: "v1beta",
     httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
       retryOptions: { attempts: 1 },
       timeout: 22000,
     },
   });
 
   const candidateModels = [
-    { name: "gemini-3-flash-preview", useThinkingConfig: true, maxMs: 21000 },
-    { name: "gemini-flash-lite-latest", useThinkingConfig: false, maxMs: 14000 },
-    { name: "gemini-flash-latest", useThinkingConfig: false, maxMs: 10000 },
+    { name: "gemini-4-hydrogen", useThinkingConfig: true, maxMs: 21000 },
+    { name: "gemini-3.1-flash-lite", useThinkingConfig: false, maxMs: 14000 },
+    { name: "gemini-3-flash-preview", useThinkingConfig: true, maxMs: 14000 },
   ];
 
   let lastError: unknown = null;
@@ -1139,7 +1144,12 @@ ${outcomesCatalogText}
         try {
           const ai = new GoogleGenAI({
             apiKey,
-            httpOptions: { timeout: 12000 },
+            httpOptions: {
+              headers: {
+                "User-Agent": "aistudio-build",
+              },
+              timeout: 12000,
+            },
           });
           const prompt = `Sen Türkiye Yüzyılı Maarif Modeli kapsamında meslek lisesi öğrencilerine ders anlatan, konuları sade, anlaşılır, ilgi çekici ve somut örneklerle açıklayan uzman bir öğretmensin.
 GÖREV:
@@ -1173,10 +1183,10 @@ DERS NOTUNUN YAPISI VE KURALLARI:
 
           const response = await Promise.race([
             ai.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-4-hydrogen",
               contents: prompt,
               config: {
-                temperature: 0.3,
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
               },
             }),
             new Promise<never>((_, reject) =>
@@ -1193,7 +1203,7 @@ DERS NOTUNUN YAPISI VE KURALLARI:
               success: true,
               summaryMarkdown: summaryText.trim(),
               title: `${ders_ismi} — ${hafta_etiketi} Konu Özeti`,
-              source: "gemini-2.5-flash",
+              source: "gemini-4-hydrogen",
             });
             return;
           }
@@ -1214,6 +1224,176 @@ DERS NOTUNUN YAPISI VE KURALLARI:
       console.error("Error in generate-topic-summary:", err);
       res.status(500).json({
         error: "Konu özeti oluşturulurken bir hata oluştu.",
+      });
+    }
+  });
+
+  // Endpoint for WeekDetailPanel "AI ile Özetle": generates Hafta Özeti and Öğrenci Çalışma Soruları per week from Ders Materyali
+  app.post("/api/summarize-week-detail", async (req, res) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const ders_ismi = String(body.ders_ismi || "").trim();
+      const sinif_duzeyi = String(body.sinif_duzeyi || "").trim();
+      const hafta_etiketi = String(body.hafta_etiketi || "1. HAFTA").trim();
+      const tarih_araligi = String(body.tarih_araligi || "").trim();
+      const ogrenme_birimi = String(body.ogrenme_birimi || "").trim();
+      const icerik_cercevesi = String(body.icerik_cercevesi || "").trim();
+      const konu_ve_cikti_ozeti = String(body.konu_ve_cikti_ozeti || "").trim();
+      const ogrenme_ciktilari = String(body.ogrenme_ciktilari || "").trim();
+      const ders_materyali = String(body.ders_materyali || "");
+
+      const weekNoMatch = hafta_etiketi.match(/\d+/);
+      const subCompLines = (ogrenme_ciktilari || konu_ve_cikti_ozeti)
+        .split(/\r?\n|·/)
+        .map((s) => s.trim())
+        .filter((s) => /^[a-zçğıöşü]\)/i.test(s));
+
+      const fakeWeekData: WeekSpecificExtraction = {
+        haftaNo: weekNoMatch ? Number(weekNoMatch[0]) : 1,
+        haftaEtiketi: hafta_etiketi,
+        tarihAraligi: tarih_araligi,
+        sure: "",
+        ogrenmeBirimi: ogrenme_birimi,
+        icerikCercevesi: icerik_cercevesi,
+        outcomeCode: "",
+        outcomeHeader:
+          ogrenme_ciktilari.split(/\r?\n/)[0]?.trim() || konu_ve_cikti_ozeti,
+        weekSubComponents: subCompLines,
+        formattedOutcomeAndProcessBlock:
+          ogrenme_ciktilari || konu_ve_cikti_ozeti,
+        unitOgrenmeKanitlari: "",
+        rawWeekWindowText: "",
+        unitOgretmeUygulamalari: [],
+        searchKeywords: [
+          ogrenme_birimi,
+          icerik_cercevesi,
+          ...icerik_cercevesi.split(/\s+/).filter((w) => w.length >= 3),
+        ],
+      };
+
+      const cleanMateryal = stripFrontMatter(ders_materyali);
+      const materyalSlice = extractWeekMateryalSlice(
+        cleanMateryal,
+        fakeWeekData,
+        14000
+      );
+
+      const fallbackSummary =
+        extractWeeklyMaterialSummaryBox(
+          materyalSlice || cleanMateryal,
+          fakeWeekData
+        ) ||
+        `**${icerik_cercevesi || ogrenme_birimi || hafta_etiketi} Hafta Özeti:**\n• Bu haftada **${ogrenme_birimi || "ilgili öğrenme birimi"}** kapsamında **${icerik_cercevesi || "haftalık konu"}** ele alınmaktadır.\n• ${konu_ve_cikti_ozeti || ogrenme_ciktilari || "Öğrenme çıktıları ve süreç bileşenleri doğrultusunda temel kavramlar ve uygulama adımları incelenir."}`;
+
+      const topicLabel =
+        icerik_cercevesi || ogrenme_birimi || "bu haftanın konusu";
+      const fallbackQuestions: string[] = [
+        `${topicLabel} konusunun temel kavramları ve mesleki uygulamadaki önemi nedir?`,
+        `${ogrenme_birimi || topicLabel} kapsamında dikkat edilmesi gereken başlıca uygulama basamakları nelerdir?`,
+        ...subCompLines.slice(0, 2).map((sub) => {
+          const cleanSub = sub
+            .replace(/^[a-zçğıöşü]\)\s*/i, "")
+            .replace(/\.$/, "")
+            .trim();
+          return `"${cleanSub}" süreci uygulamada nasıl gerçekleştirilir ve nelere dikkat edilmelidir?`;
+        }),
+        `${topicLabel} ile ilgili uygulamalarda karşılaşılabilecek olası sorunlar ve çözüm önerileri nelerdir?`,
+      ].slice(0, 5);
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey) {
+        try {
+          const weekSummarySchema = {
+            type: Type.OBJECT,
+            properties: {
+              haftaOzeti: {
+                type: Type.STRING,
+                description:
+                  "Seçilen haftanın ders materyali içeriğinden ve öğrenme çıktılarından sentezlenen, önemli kavramları (**kalın** vurgulu) ve maddeleri (• ile başlayan satırlar) içeren kapsamlı Hafta Özeti.",
+              },
+              ogrenciCalismaSorulari: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description:
+                  "Ders materyalindeki bu haftanın konusuna yönelik, öğrencilerin konuyu pekiştirmesini sağlayan 5 adet açık uçlu Öğrenci Çalışma Sorusu ('?' ile biten).",
+              },
+            },
+            required: ["haftaOzeti", "ogrenciCalismaSorulari"],
+          };
+
+          const prompt = `<gorev>
+Aşağıdaki seçilen hafta bilgilerini ve <ders_materyali> kesitini inceleyerek bu haftaya özel:
+1) 'haftaOzeti': Ders materyalinden bu haftanın konusu ("${icerik_cercevesi}") ve öğrenme çıktılarıyla doğrudan örtüşen, önemli kavramları **kalın** vurgulayan ve maddeler (•) halinde düzenlenmiş, anlaşılır ve doyurucu bir Hafta Özeti oluştur.
+2) 'ogrenciCalismaSorulari': Doğrudan bu haftanın ders materyali içeriğine ve süreç bileşenlerine dayanan, öğrencinin kavrama, analiz ve uygulama becerisini ölçen 5 adet özgün Öğrenci Çalışma Sorusu ('?' ile biten) oluştur.
+
+KESİN KURAL: Kitap künyesi, MEB onay/olur tarih ve sayıları, İstiklal Marşı veya Gençliğe Hitabe gibi ön sayfa metinlerini ASLA kullanma.
+</gorev>
+
+<hafta_bilgileri>
+Ders: ${ders_ismi} (${sinif_duzeyi})
+Hafta: ${hafta_etiketi} (${tarih_araligi})
+Öğrenme Birimi: ${ogrenme_birimi}
+İçerik Çerçevesi (Konu): ${icerik_cercevesi}
+Kazanım ve Süreç Bileşenleri:
+${ogrenme_ciktilari || konu_ve_cikti_ozeti}
+</hafta_bilgileri>
+
+<ders_materyali>
+${materyalSlice || cleanMateryal.slice(0, 10000)}
+</ders_materyali>`;
+
+          const rawJson = await generateWithFallback(
+            apiKey,
+            prompt,
+            "Sen MEB Türkiye Yüzyılı Maarif Modeli ders materyallerinden haftalık konu özeti ve öğrenci çalışma soruları hazırlayan uzman bir öğretmensin.",
+            weekSummarySchema
+          );
+          const parsed = JSON.parse(rawJson);
+          const cleanedOzet = applyBlacklistAndDensityFilter(
+            String(parsed.haftaOzeti || "").trim(),
+            [ogrenme_birimi, icerik_cercevesi]
+          );
+          const cleanedQuestions = Array.isArray(parsed.ogrenciCalismaSorulari)
+            ? parsed.ogrenciCalismaSorulari
+                .map((q: unknown) =>
+                  applyBlacklistAndDensityFilter(String(q || "").trim(), [
+                    ogrenme_birimi,
+                    icerik_cercevesi,
+                  ])
+                )
+                .filter((q: string) => q.length >= 10)
+            : [];
+
+          if (cleanedOzet.length >= 40) {
+            res.json({
+              success: true,
+              haftaOzeti: cleanedOzet,
+              ogrenciCalismaSorulari:
+                cleanedQuestions.length > 0
+                  ? cleanedQuestions
+                  : fallbackQuestions,
+              source: "ai",
+            });
+            return;
+          }
+        } catch (aiErr) {
+          console.warn(
+            "AI week detail summary fallback to deterministic material extractor:",
+            aiErr
+          );
+        }
+      }
+
+      res.json({
+        success: true,
+        haftaOzeti: fallbackSummary,
+        ogrenciCalismaSorulari: fallbackQuestions,
+        source: "materyal-motoru",
+      });
+    } catch (err: unknown) {
+      console.error("Error in /api/summarize-week-detail:", err);
+      res.status(500).json({
+        error: "Hafta özeti ve çalışma soruları oluşturulurken hata oluştu.",
       });
     }
   });

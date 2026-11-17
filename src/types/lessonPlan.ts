@@ -20,6 +20,7 @@ export interface OgrenmeOgretmeYasantilari {
   On_Degerlendirme_Sureci: string;
   Kopru_Kurma: string;
   Haftalik_Ozet?: string;
+  Ogrenci_Calisma_Sorulari?: string[];
   Ogretme_Uygulamalari: string[];
   Guduleme: string[];
   Dikkat_Cekme: string[];
@@ -49,6 +50,7 @@ export interface YillikPlanWeekItem {
   ogrenmeKanitlari?: string;
   ogretmeUygulamalari?: string[];
   haftalikOzet?: string;
+  ogrenciCalismaSorulari?: string[];
 }
 
 export interface DocumentHeaderFooterMeta {

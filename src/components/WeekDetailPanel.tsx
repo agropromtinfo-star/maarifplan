@@ -11,12 +11,18 @@ import {
   FileDown,
   SlidersHorizontal,
   FileText,
+  Loader2,
+  HelpCircle,
 } from "lucide-react";
 import {
   MaarifLessonPlan,
   YillikPlanWeekItem,
   DocumentHeaderFooterMeta,
 } from "../types/lessonPlan";
+import {
+  extractWeeklyMaterialSummaryBox,
+  WeekSpecificExtraction,
+} from "../shared/maarifPlanEngine";
 
 interface WeekDetailPanelProps {
   isOpen: boolean;
@@ -38,6 +44,7 @@ interface WeekDetailPanelProps {
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
   onGenerateOrApplyWeekPlan: () => void;
   onDownloadWord: () => void;
+  dersMateryali?: string;
 }
 
 export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
@@ -54,11 +61,14 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
   onUpdatePlan,
   onGenerateOrApplyWeekPlan,
   onDownloadWord,
+  dersMateryali = "",
 }) => {
   const [activeSection, setActiveSection] = useState<
-    "all" | "hafta" | "ders" | "cikti" | "yasantilar" | "farklilastirma"
+    "all" | "ai-ozet" | "hafta" | "ders" | "cikti" | "yasantilar" | "farklilastirma"
   >("all");
   const [savedToast, setSavedToast] = useState(false);
+  const [isSummarizingWeek, setIsSummarizingWeek] = useState(false);
+  const [aiStatusMessage, setAiStatusMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -72,6 +82,151 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
   const triggerSavedIndicator = () => {
     setSavedToast(true);
     window.setTimeout(() => setSavedToast(false), 1400);
+  };
+
+  const currentHaftaOzeti =
+    selectedWeek.haftalikOzet ||
+    activePlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet ||
+    "";
+
+  const currentCalismaSorulari: string[] =
+    selectedWeek.ogrenciCalismaSorulari &&
+    selectedWeek.ogrenciCalismaSorulari.length > 0
+      ? selectedWeek.ogrenciCalismaSorulari
+      : activePlan.Ogrenme_Ogretme_Yasantilari.Ogrenci_Calisma_Sorulari || [];
+
+  const handleSummarizeWithAi = async () => {
+    setIsSummarizingWeek(true);
+    setAiStatusMessage(null);
+
+    const ogrenmeBirimi =
+      activePlan.Ders_Bilgisi.Ogrenme_Birimi ||
+      selectedWeek.ogrenmeBirimi ||
+      "";
+    const icerikCercevesi =
+      activePlan.Icerik_Cercevesi || selectedWeek.icerikCercevesi || "";
+    const ogrenmeCiktilari =
+      activePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri ||
+      selectedWeek.konuVeCiktiOzeti ||
+      "";
+    const konuVeCiktiOzeti =
+      selectedWeek.konuVeCiktiOzeti || ogrenmeCiktilari || "";
+
+    try {
+      const response = await fetch("/api/summarize-week-detail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ders_ismi: meta.dersIsmi || activePlan.Ders_Bilgisi.Ders || "",
+          sinif_duzeyi: meta.sinifDuzeyi || activePlan.Ders_Bilgisi.Sinif || "",
+          hafta_etiketi: selectedWeek.haftaEtiketi || meta.haftaEtiketi,
+          tarih_araligi: selectedWeek.tarihAraligi || meta.tarihAraligi,
+          ogrenme_birimi: ogrenmeBirimi,
+          icerik_cercevesi: icerikCercevesi,
+          konu_ve_cikti_ozeti: konuVeCiktiOzeti,
+          ogrenme_ciktilari: ogrenmeCiktilari,
+          ders_materyali: dersMateryali,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.haftaOzeti) {
+          const newSummary = String(data.haftaOzeti).trim();
+          const newQuestions: string[] = Array.isArray(
+            data.ogrenciCalismaSorulari
+          )
+            ? data.ogrenciCalismaSorulari
+                .map((q: unknown) => String(q || "").trim())
+                .filter(Boolean)
+            : [];
+
+          onUpdateWeekItem(selectedWeek.id, {
+            haftalikOzet: newSummary,
+            ogrenciCalismaSorulari: newQuestions,
+          });
+          onUpdatePlan({
+            ...activePlan,
+            Ogrenme_Ogretme_Yasantilari: {
+              ...activePlan.Ogrenme_Ogretme_Yasantilari,
+              Haftalik_Ozet: newSummary,
+              Ogrenci_Calisma_Sorulari: newQuestions,
+            },
+          });
+          setAiStatusMessage(
+            `${selectedWeek.haftaEtiketi} için Hafta Özeti ve ${newQuestions.length} Öğrenci Çalışma Sorusu oluşturuldu.`
+          );
+          triggerSavedIndicator();
+          setIsSummarizingWeek(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Week detail AI summary fallback to local extractor:", err);
+    }
+
+    // Client-side fallback if offline
+    const subLines = ogrenmeCiktilari
+      .split(/\r?\n|·/)
+      .map((s) => s.trim())
+      .filter((s) => /^[a-zçğıöşü]\)/i.test(s));
+
+    const fakeWeekData: WeekSpecificExtraction = {
+      haftaNo: selectedWeek.haftaNo || 1,
+      haftaEtiketi: selectedWeek.haftaEtiketi || "1. HAFTA",
+      tarihAraligi: selectedWeek.tarihAraligi || "",
+      sure: selectedWeek.sure || "2 Ders Saati",
+      ogrenmeBirimi,
+      icerikCercevesi,
+      outcomeCode: "",
+      outcomeHeader: ogrenmeCiktilari.split(/\r?\n/)[0] || konuVeCiktiOzeti,
+      weekSubComponents: subLines,
+      formattedOutcomeAndProcessBlock: ogrenmeCiktilari,
+      unitOgrenmeKanitlari: "",
+      rawWeekWindowText: "",
+      unitOgretmeUygulamalari: [],
+      searchKeywords: [ogrenmeBirimi, icerikCercevesi].filter(Boolean),
+    };
+
+    const localSummary =
+      extractWeeklyMaterialSummaryBox(
+        dersMateryali,
+        fakeWeekData
+      ) ||
+      `**${icerikCercevesi || ogrenmeBirimi || selectedWeek.haftaEtiketi} Hafta Özeti:**\n• Bu haftada **${ogrenmeBirimi || "ilgili öğrenme birimi"}** kapsamında **${icerikCercevesi || "haftalık konu"}** işlenmektedir.\n• ${konuVeCiktiOzeti || "Öğrenme çıktıları ve süreç bileşenleri doğrultusunda temel kavramlar ve uygulama basamakları ele alınır."}`;
+
+    const topicTitle =
+      icerikCercevesi || ogrenmeBirimi || selectedWeek.haftaEtiketi;
+    const localQuestions: string[] = [
+      `${topicTitle} konusunun temel kavramları ve uygulama alanları nelerdir?`,
+      `${ogrenmeBirimi || topicTitle} kapsamında dikkat edilmesi gereken başlıca işlem basamakları nelerdir?`,
+      ...subLines.slice(0, 2).map((sub) => {
+        const cleanSub = sub
+          .replace(/^[a-zçğıöşü]\)\s*/i, "")
+          .replace(/\.$/, "")
+          .trim();
+        return `"${cleanSub}" süreci uygulamada nasıl gerçekleştirilir?`;
+      }),
+      `${topicTitle} uygulamalarında iş sağlığı ve güvenliği açısından nelere dikkat edilmelidir?`,
+    ].slice(0, 5);
+
+    onUpdateWeekItem(selectedWeek.id, {
+      haftalikOzet: localSummary,
+      ogrenciCalismaSorulari: localQuestions,
+    });
+    onUpdatePlan({
+      ...activePlan,
+      Ogrenme_Ogretme_Yasantilari: {
+        ...activePlan.Ogrenme_Ogretme_Yasantilari,
+        Haftalik_Ozet: localSummary,
+        Ogrenci_Calisma_Sorulari: localQuestions,
+      },
+    });
+    setAiStatusMessage(
+      `${selectedWeek.haftaEtiketi} için Hafta Özeti ve ${localQuestions.length} Öğrenci Çalışma Sorusu oluşturuldu.`
+    );
+    triggerSavedIndicator();
+    setIsSummarizingWeek(false);
   };
 
   const handleArrayTextChange = (
@@ -102,7 +257,13 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
   };
 
   const showSection = (
-    sec: "hafta" | "ders" | "cikti" | "yasantilar" | "farklilastirma"
+    sec:
+      | "ai-ozet"
+      | "hafta"
+      | "ders"
+      | "cikti"
+      | "yasantilar"
+      | "farklilastirma"
   ) => activeSection === "all" || activeSection === sec;
 
   return (
@@ -131,7 +292,9 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
                     Hafta Detay Paneli
                   </h2>
                   <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-sky-500/20 text-sky-200 border border-sky-400/30 tabular-nums">
-                    {currentIdx >= 0 ? `${currentIdx + 1} / ${weeks.length}` : `${weeks.length} Hafta`}
+                    {currentIdx >= 0
+                      ? `${currentIdx + 1} / ${weeks.length}`
+                      : `${weeks.length} Hafta`}
                   </span>
                   {savedToast && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
@@ -146,14 +309,36 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
-              title="Paneli Kapat"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isSummarizingWeek}
+                onClick={handleSummarizeWithAi}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 disabled:opacity-60 text-slate-950 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                title="Seçilen hafta için ders materyalinden otomatik Hafta Özeti ve Öğrenci Çalışma Soruları oluştur"
+              >
+                {isSummarizingWeek ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-950" />
+                    <span>Özetleniyor...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-950" />
+                    <span>AI ile Özetle</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                title="Paneli Kapat"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Week Switcher Bar */}
@@ -161,7 +346,12 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
             <button
               type="button"
               disabled={!prevWeek}
-              onClick={() => prevWeek && onSelectWeek(prevWeek.id)}
+              onClick={() => {
+                if (prevWeek) {
+                  setAiStatusMessage(null);
+                  onSelectWeek(prevWeek.id);
+                }
+              }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-35 disabled:pointer-events-none text-xs font-medium text-white transition-colors shrink-0"
               title="Önceki Hafta"
             >
@@ -172,11 +362,18 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
             <select
               aria-label="Hafta Seçimi"
               value={selectedWeek.id}
-              onChange={(e) => onSelectWeek(e.target.value)}
+              onChange={(e) => {
+                setAiStatusMessage(null);
+                onSelectWeek(e.target.value);
+              }}
               className="flex-1 min-w-0 rounded-lg bg-slate-900/90 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-amber-200 focus:outline-none focus:border-amber-400"
             >
               {weeks.map((w) => (
-                <option key={w.id} value={w.id} className="text-slate-900 bg-white">
+                <option
+                  key={w.id}
+                  value={w.id}
+                  className="text-slate-900 bg-white"
+                >
                   {w.haftaEtiketi} ({w.tarihAraligi})
                   {w.ogrenmeBirimi ? ` — ${w.ogrenmeBirimi}` : ""}
                 </option>
@@ -186,7 +383,12 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
             <button
               type="button"
               disabled={!nextWeek}
-              onClick={() => nextWeek && onSelectWeek(nextWeek.id)}
+              onClick={() => {
+                if (nextWeek) {
+                  setAiStatusMessage(null);
+                  onSelectWeek(nextWeek.id);
+                }
+              }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-35 disabled:pointer-events-none text-xs font-medium text-white transition-colors shrink-0"
               title="Sonraki Hafta"
             >
@@ -199,6 +401,7 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
           <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-0.5 text-[11px]">
             {[
               { id: "all", label: "Tüm Bölümler" },
+              { id: "ai-ozet", label: "AI Özet & Sorular" },
               { id: "hafta", label: "Hafta & Ünite" },
               { id: "ders", label: "Ders & Bileşenler" },
               { id: "cikti", label: "Çıktı & Kanıtlar" },
@@ -212,6 +415,7 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
                   setActiveSection(
                     tab.id as
                       | "all"
+                      | "ai-ozet"
                       | "hafta"
                       | "ders"
                       | "cikti"
@@ -233,6 +437,116 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
 
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5 bg-slate-50/60">
+          {/* AI HAFTA ÖZETİ & ÖĞRENCİ ÇALIŞMA SORULARI SECTION */}
+          {showSection("ai-ozet") && (
+            <section className="bg-gradient-to-br from-indigo-50/90 via-white to-amber-50/60 rounded-xl border border-indigo-200/90 p-4 shadow-2xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-700 shrink-0" />
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-950">
+                      AI Hafta Özeti &amp; Öğrenci Çalışma Soruları
+                    </h3>
+                    <p className="text-[11px] text-slate-600">
+                      {selectedWeek.haftaEtiketi} ({selectedWeek.tarihAraligi}) için ders materyalinden otomatik sentezlenir
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSummarizingWeek}
+                  onClick={handleSummarizeWithAi}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 disabled:opacity-60 text-white text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                >
+                  {isSummarizingWeek ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                      <span>Ders Materyalinden Özetleniyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>AI ile Özetle ({selectedWeek.haftaEtiketi})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {aiStatusMessage && (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[11px] font-medium text-emerald-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{aiStatusMessage}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="flex items-center justify-between text-[11px] font-semibold text-slate-800 mb-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Hafta Özeti (Ders Materyali Sentezi)</span>
+                  </span>
+                  <span className="text-[10px] font-normal text-slate-500">
+                    Planın Haftalık Özet kutucuğuna yansır
+                  </span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={currentHaftaOzeti}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onUpdateWeekItem(selectedWeek.id, { haftalikOzet: val });
+                    onUpdatePlan({
+                      ...activePlan,
+                      Ogrenme_Ogretme_Yasantilari: {
+                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
+                        Haftalik_Ozet: val,
+                      },
+                    });
+                    triggerSavedIndicator();
+                  }}
+                  placeholder="Yukarıdaki 'AI ile Özetle' butonuna tıklayarak bu haftanın ders materyali özetini otomatik oluşturabilir veya buraya yazabilirsiniz..."
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center justify-between text-[11px] font-semibold text-slate-800 mb-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    <HelpCircle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Öğrenci Çalışma Soruları (Her satır bir soru)</span>
+                  </span>
+                  <span className="text-[10px] font-normal text-slate-500">
+                    {currentCalismaSorulari.length} Soru
+                  </span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={currentCalismaSorulari.join("\n")}
+                  onChange={(e) => {
+                    const questions = e.target.value
+                      .split(/\r?\n/)
+                      .map((q) => q.replace(/^\d+[.)]\s*|^[-•*]\s*/, "").trim())
+                      .filter(Boolean);
+                    onUpdateWeekItem(selectedWeek.id, {
+                      ogrenciCalismaSorulari: questions,
+                    });
+                    onUpdatePlan({
+                      ...activePlan,
+                      Ogrenme_Ogretme_Yasantilari: {
+                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
+                        Ogrenci_Calisma_Sorulari: questions,
+                      },
+                    });
+                    triggerSavedIndicator();
+                  }}
+                  placeholder="Yukarıdaki 'AI ile Özetle' butonuna tıklayarak bu haftanın konusuna özel öğrenci çalışma sorularını otomatik oluşturabilirsiniz..."
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
+                />
+              </div>
+            </section>
+          )}
+
           {/* SECTION 1: Hafta, Tarih ve Ünite Bilgileri */}
           {showSection("hafta") && (
             <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
@@ -759,32 +1073,6 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
                     });
                     triggerSavedIndicator();
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Haftalık Özet (Ders Materyali Eşleşmesi)
-                </label>
-                <textarea
-                  rows={3}
-                  value={
-                    activePlan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet || ""
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    onUpdateWeekItem(selectedWeek.id, { haftalikOzet: val });
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ogrenme_Ogretme_Yasantilari: {
-                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
-                        Haftalik_Ozet: val,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  placeholder="Ders materyalinden bu haftanın konusuyla eşleşen özet metin..."
                   className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
                 />
               </div>
