@@ -501,6 +501,38 @@ export interface BulkWeekExportItem {
   meta: DocumentHeaderFooterMeta;
 }
 
+export function buildAllWeeksExportFileNameBase(
+  meta?: DocumentHeaderFooterMeta,
+  plan?: MaarifLessonPlan | null
+): string {
+  const rawDers = (
+    meta?.dersIsmi?.trim() ||
+    plan?.Ders_Bilgisi?.Ders?.trim() ||
+    "Ders"
+  )
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `${rawDers}_Tüm Plan`;
+}
+
+export function applyAllWeeksDocumentTitleForPdf(
+  meta?: DocumentHeaderFooterMeta,
+  plan?: MaarifLessonPlan | null
+): string {
+  const fileNameBase = buildAllWeeksExportFileNameBase(meta, plan);
+  document.title = fileNameBase;
+  try {
+    if (window.parent && window.parent.document) {
+      window.parent.document.title = fileNameBase;
+    }
+  } catch {
+    // ignore cross-origin parent frame access
+  }
+  return fileNameBase;
+}
+
 export function downloadAllWeeksWordDoc(
   items: BulkWeekExportItem[],
   exportOptions?: Partial<PlanExportOptions>
@@ -512,7 +544,7 @@ export function downloadAllWeeksWordDoc(
     ...(exportOptions || {}),
   };
 
-  const exportFileName = buildExportFileNameBase(
+  const exportFileName = buildAllWeeksExportFileNameBase(
     items[0].meta,
     items[0].plan
   );
@@ -570,7 +602,7 @@ export function exportAllWeeksPdfPrint(
     ...(exportOptions || {}),
   };
 
-  const exportFileName = applyDocumentTitleForPdf(
+  const exportFileName = applyAllWeeksDocumentTitleForPdf(
     items[0].meta,
     items[0].plan
   );
@@ -623,7 +655,7 @@ ${bodySections}
     doc.title = exportFileName;
 
     window.setTimeout(() => {
-      applyDocumentTitleForPdf(items[0].meta, items[0].plan);
+      applyAllWeeksDocumentTitleForPdf(items[0].meta, items[0].plan);
       try {
         iframe.contentWindow?.focus();
         iframe.contentWindow?.print();

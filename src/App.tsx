@@ -14,6 +14,7 @@ import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
 import { TopicSummaryModal } from "./components/TopicSummaryModal";
+import { WeekDetailPanel } from "./components/WeekDetailPanel";
 import {
   downloadWordDoc,
   downloadAllWeeksWordDoc,
@@ -59,6 +60,8 @@ import {
   Lock,
   Unlock,
   BookOpen,
+  SlidersHorizontal,
+  FilePlus,
 } from "lucide-react";
 
 type ActiveTab = "workspace" | "official-table" | "saved-plans";
@@ -339,6 +342,8 @@ export default function App() {
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isTopicSummaryOpen, setIsTopicSummaryOpen] = useState<boolean>(false);
+  const [isWeekDetailPanelOpen, setIsWeekDetailPanelOpen] =
+    useState<boolean>(false);
 
   // Saved plans in localStorage
   const [savedPlans, setSavedPlans] = useState<SavedLessonPlanRecord[]>(() => {
@@ -552,6 +557,74 @@ export default function App() {
       activeWeekList.find((w) => w.id === selectedWeekId) || activeWeekList[0]
     );
   }, [activeWeekList, selectedWeekId]);
+
+  const handleUpdateWeekItem = (
+    weekId: string,
+    patch: Partial<YillikPlanWeekItem>
+  ) => {
+    setExtractedWeeks((prev) => {
+      const source = prev.length > 0 ? prev : activeWeekList;
+      return source.map((w) => (w.id === weekId ? { ...w, ...patch } : w));
+    });
+  };
+
+  const selectedWeekPreviewPlan = useMemo<MaarifLessonPlan>(() => {
+    if (currentPlan) {
+      return currentPlan;
+    }
+    const validDate = resolveValidDateRange(
+      selectedWeekObj?.tarihAraligi || meta.tarihAraligi,
+      selectedWeekObj?.haftaNo || 1
+    );
+    const detectedDocMeta = extractDocumentMetadataClient(
+      `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
+    );
+    const effectiveDersIsmi = meta.dersIsmi.trim();
+    const effectiveSinifDuzeyi =
+      meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
+
+    const synthesized = synthesizePlanClientSide({
+      yillik_plan: yillikPlan,
+      ders_materyali: dersMateryali,
+      ders_bilgi_formu: dersBilgiFormu,
+      hafta_etiketi: selectedWeekObj?.haftaEtiketi || meta.haftaEtiketi,
+      tarih_araligi: validDate,
+      ders_ismi: effectiveDersIsmi,
+      sinif_duzeyi: effectiveSinifDuzeyi,
+      secilen_hafta_verisi: selectedWeekObj
+        ? {
+            ...selectedWeekObj,
+            tarihAraligi: validDate,
+          }
+        : undefined,
+    });
+    if (effectiveDersIsmi) {
+      synthesized.Ders_Bilgisi.Ders = effectiveDersIsmi;
+    }
+    if (selectedWeekObj?.ogrenmeKanitlari) {
+      synthesized.Ogrenme_Kanitlari = selectedWeekObj.ogrenmeKanitlari;
+    }
+    if (
+      selectedWeekObj?.ogretmeUygulamalari &&
+      selectedWeekObj.ogretmeUygulamalari.length > 0
+    ) {
+      synthesized.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
+        selectedWeekObj.ogretmeUygulamalari.map((b) =>
+          b.replace(/^\*\s*/, "").trim()
+        );
+    }
+    return synthesized;
+  }, [
+    currentPlan,
+    selectedWeekObj,
+    meta.tarihAraligi,
+    meta.haftaEtiketi,
+    meta.dersIsmi,
+    meta.sinifDuzeyi,
+    yillikPlan,
+    dersMateryali,
+    dersBilgiFormu,
+  ]);
 
   const handleSelectWeek = (weekId: string) => {
     setSelectedWeekId(weekId);
@@ -1457,6 +1530,60 @@ export default function App() {
     setSavedPlans((prev) => prev.filter((item) => item.id !== id));
   };
 
+  const handlePrepareNewPlan = () => {
+    // 1. Cancel any pending async week parsing
+    weekParseRequestIdRef.current++;
+    setIsParsingWeeks(false);
+
+    // 2. Clear all uploaded document texts, file names, field errors, and DOM file inputs
+    setYillikPlan("");
+    setDersMateryali("");
+    setDersBilgiFormu("");
+    setUploadedFileNames({
+      yillik_plan: null,
+      ders_materyali: null,
+      ders_bilgi_formu: null,
+    });
+    setFieldErrors({
+      yillik_plan: null,
+      ders_materyali: null,
+      ders_bilgi_formu: null,
+    });
+    if (yillikPlanInputRef.current) yillikPlanInputRef.current.value = "";
+    if (dersMateryaliInputRef.current) dersMateryaliInputRef.current.value = "";
+    if (dersBilgiFormuInputRef.current)
+      dersBilgiFormuInputRef.current.value = "";
+
+    // 3. Reset extracted weeks, active lesson plan, and open drawers/modals
+    setExtractedWeeks([]);
+    setSelectedWeekId("meb-1");
+    setCurrentPlan(null);
+    setErrorMessage(null);
+    setIsAllWeeksMenuOpen(false);
+    setIsTopicSummaryOpen(false);
+    setIsWeekDetailPanelOpen(false);
+
+    // 4. Preserve ONLY locked header/footer fields; clear unlocked fields
+    const locks = lockedFieldsRef.current;
+    setMeta((prev) => ({
+      okulAdi: locks.okulAdi ? prev.okulAdi : "",
+      egitimOgretimYili: locks.egitimOgretimYili
+        ? prev.egitimOgretimYili
+        : "",
+      dersIsmi: locks.dersIsmi ? prev.dersIsmi : "",
+      sinifDuzeyi: locks.sinifDuzeyi ? prev.sinifDuzeyi : "",
+      haftaEtiketi: "1. HAFTA",
+      tarihAraligi: "14 - 18 Eylül",
+      onayTarihi: "14/09/2026",
+      ogretmenAdSoyad: locks.ogretmenAdSoyad ? prev.ogretmenAdSoyad : "",
+      ogretmenBransi: locks.ogretmenBransi ? prev.ogretmenBransi : "",
+      okulMuduruAdSoyad: locks.okulMuduruAdSoyad ? prev.okulMuduruAdSoyad : "",
+    }));
+
+    // 5. Switch to workspace tab
+    setActiveTab("workspace");
+  };
+
   const filteredSavedPlans = savedPlans.filter((item) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
@@ -1534,6 +1661,15 @@ export default function App() {
           </a>
           <button
             type="button"
+            onClick={handlePrepareNewPlan}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 hover:text-white border border-amber-400/40 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+            title="Kilitli üst başlık verilerini koruyarak tüm yüklemeleri temizle ve yeni plan hazırla"
+          >
+            <FilePlus className="w-3.5 h-3.5 text-amber-300" />
+            Yeni Plan Hazırla
+          </button>
+          <button
+            type="button"
             onClick={() => setIsTopicSummaryOpen(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-white border border-emerald-500/40 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
             title="Seçilen haftanın konusunu ders materyalinden özetle ve lise düzeyinde öğrenci notu çıkar"
@@ -1578,6 +1714,15 @@ export default function App() {
           }`}
         >
           Kayıtlı Planlar ({savedPlans.length})
+        </button>
+        <button
+          type="button"
+          onClick={handlePrepareNewPlan}
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md whitespace-nowrap shrink-0 bg-amber-400/20 text-amber-300 hover:text-white border border-amber-400/40 cursor-pointer"
+          title="Kilitli üst başlık verilerini koruyarak tüm yüklemeleri temizle ve yeni plan hazırla"
+        >
+          <FilePlus className="w-3 h-3 text-amber-300" />
+          Yeni Plan Hazırla
         </button>
         <button
           type="button"
@@ -2141,25 +2286,36 @@ export default function App() {
                       </h2>
                     </div>
 
-                    {yillikPlan.trim().length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        disabled={isParsingWeeks}
-                        onClick={() => analyzeWeeksFromYillikPlan(yillikPlan)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-50 border border-sky-200 hover:bg-sky-100 text-xs font-medium text-sky-800 transition-colors"
+                        onClick={() => setIsWeekDetailPanelOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
                       >
-                        <RefreshCw
-                          className={`w-3.5 h-3.5 ${
-                            isParsingWeeks ? "animate-spin" : ""
-                          }`}
-                        />
-                        <span>
-                          {isParsingWeeks
-                            ? "Yıllık Plandan Haftalar Çıkarılıyor..."
-                            : "Yıllık Plandan Haftaları Yenile"}
-                        </span>
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        <span>Hafta Detay Paneli (İncele &amp; Düzenle)</span>
                       </button>
-                    )}
+
+                      {yillikPlan.trim().length > 0 && (
+                        <button
+                          type="button"
+                          disabled={isParsingWeeks}
+                          onClick={() => analyzeWeeksFromYillikPlan(yillikPlan)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-50 border border-sky-200 hover:bg-sky-100 text-xs font-medium text-sky-800 transition-colors"
+                        >
+                          <RefreshCw
+                            className={`w-3.5 h-3.5 ${
+                              isParsingWeeks ? "animate-spin" : ""
+                            }`}
+                          />
+                          <span>
+                            {isParsingWeeks
+                              ? "Yıllık Plandan Haftalar Çıkarılıyor..."
+                              : "Yıllık Plandan Haftaları Yenile"}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
@@ -2698,18 +2854,37 @@ export default function App() {
                         dosyalarınızı yükleyip üstten{" "}
                         <strong>Hafta ve Tarih</strong> seçerek planınızı oluşturun.
                       </p>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsWeekDetailPanelOpen(true)}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-white text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Seçilen Haftanın İçeriğini Hafta Detay Panelinde İncele</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-3 print:space-y-0">
-                    <div className="no-print flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs">
+                    <div className="no-print flex flex-wrap items-center justify-between gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs">
                       <span className="font-medium text-slate-600">
                         Aktif Plan:{" "}
                         <strong className="text-slate-900">
                           {displayHaftaSatiri}
                         </strong>
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsWeekDetailPanelOpen(true)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-amber-100 hover:bg-amber-200 text-slate-950 border border-amber-300 font-semibold cursor-pointer"
+                          title="Seçilen haftanın plan içeriğini sağ panelde hızlıca incele ve düzenle"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5 text-amber-800" />
+                          Hafta Detay Paneli
+                        </button>
                         <button
                           type="button"
                           onClick={handleSaveCurrentPlan}
@@ -2979,6 +3154,41 @@ export default function App() {
           onExecutePrint={() => triggerPrintWithFileName(meta, currentPlan)}
         />
       )}
+
+      {/* Floating Right-Edge Toggle Button for Hafta Detay Paneli */}
+      {!isWeekDetailPanelOpen && (
+        <button
+          type="button"
+          onClick={() => setIsWeekDetailPanelOpen(true)}
+          className="no-print fixed right-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1.5 rounded-l-xl bg-indigo-950 hover:bg-indigo-900 text-white px-3 py-3 shadow-lg border border-r-0 border-amber-400/40 transition-all cursor-pointer"
+          title="Seçilen haftanın plan içeriğini hızlıca incele ve düzenle"
+        >
+          <SlidersHorizontal className="w-4 h-4 text-amber-300 shrink-0" />
+          <span className="text-xs font-semibold tracking-wide">
+            Hafta Detay Paneli
+          </span>
+        </button>
+      )}
+
+      {/* Right-Side Scrollable Week Detail Panel */}
+      <WeekDetailPanel
+        isOpen={isWeekDetailPanelOpen}
+        onClose={() => setIsWeekDetailPanelOpen(false)}
+        weeks={activeWeekList}
+        selectedWeek={selectedWeekObj}
+        onSelectWeek={handleSelectWeek}
+        meta={meta}
+        onUpdateMetaField={updateMetaField}
+        onUpdateWeekItem={handleUpdateWeekItem}
+        activePlan={selectedWeekPreviewPlan}
+        hasGeneratedPlan={Boolean(currentPlan)}
+        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+        onGenerateOrApplyWeekPlan={() => {
+          setCurrentPlan(selectedWeekPreviewPlan);
+          setIsWeekDetailPanelOpen(false);
+        }}
+        onDownloadWord={() => downloadWordDoc(selectedWeekPreviewPlan, meta)}
+      />
 
       {/* Student Topic Summary & Study Note Modal */}
       <TopicSummaryModal

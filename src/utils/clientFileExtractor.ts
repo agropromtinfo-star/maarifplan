@@ -643,6 +643,22 @@ export function synthesizeAllWeeksClientSide(params: {
       }
     );
 
+    if (weekItem.haftalikOzet) {
+      plan.Ogrenme_Ogretme_Yasantilari.Haftalik_Ozet = weekItem.haftalikOzet;
+    }
+    if (weekItem.ogrenmeKanitlari) {
+      plan.Ogrenme_Kanitlari = weekItem.ogrenmeKanitlari;
+    }
+    if (
+      weekItem.ogretmeUygulamalari &&
+      weekItem.ogretmeUygulamalari.length > 0
+    ) {
+      plan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
+        weekItem.ogretmeUygulamalari.map((b) =>
+          b.replace(/^\*\s*/, "").trim()
+        );
+    }
+
     const weekMeta: DocumentHeaderFooterMeta = {
       ...baseMeta,
       okulAdi: effectiveOkulAdi || baseMeta.okulAdi,
