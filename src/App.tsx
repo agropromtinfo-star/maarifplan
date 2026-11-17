@@ -442,7 +442,7 @@ export default function App() {
     }
 
     const baseWeeks: YillikPlanWeekItem[] =
-      extractedWeeks.length > 0
+      extractedWeeks.length > 0 || localParsedWeeks.length > 0
         ? (() => {
             const distinctAiUnits = new Set(
               extractedWeeks
@@ -455,36 +455,52 @@ export default function App() {
                 .filter(Boolean)
             );
 
-            return extractedWeeks.map((w) => {
+            const allWeekNos = Array.from(
+              new Set([
+                ...localParsedWeeks.map((lw) => lw.haftaNo),
+                ...extractedWeeks.map((ew) => ew.haftaNo),
+              ])
+            )
+              .filter((n) => n >= 1 && n <= 42)
+              .sort((a, b) => a - b);
+
+            return allWeekNos.map((weekNo) => {
+              const w = extractedWeeks.find((ew) => ew.haftaNo === weekNo);
               const localMatch = localParsedWeeks.find(
-                (lw) => lw.haftaNo === w.haftaNo
+                (lw) => lw.haftaNo === weekNo
               );
+              if (!w && localMatch) {
+                return localMatch;
+              }
+              const baseItem = w || localMatch!;
               const preferLocalUnit =
                 Boolean(localMatch?.ogrenmeBirimi) &&
-                (!w.ogrenmeBirimi ||
+                (!baseItem.ogrenmeBirimi ||
                   (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
                   (distinctLocalUnits.size > 0 &&
-                    !distinctLocalUnits.has((w.ogrenmeBirimi || "").trim())));
+                    !distinctLocalUnits.has(
+                      (baseItem.ogrenmeBirimi || "").trim()
+                    )));
 
               return {
-                ...w,
+                ...baseItem,
                 tarihAraligi: resolveValidDateRange(
-                  w.tarihAraligi || localMatch?.tarihAraligi || "",
-                  w.haftaNo
+                  baseItem.tarihAraligi || localMatch?.tarihAraligi || "",
+                  weekNo
                 ),
                 ogrenmeBirimi: preferLocalUnit
                   ? localMatch!.ogrenmeBirimi
-                  : w.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
+                  : baseItem.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "",
                 icerikCercevesi:
-                  localMatch?.icerikCercevesi || w.icerikCercevesi || "",
+                  localMatch?.icerikCercevesi || baseItem.icerikCercevesi || "",
                 konuVeCiktiOzeti:
-                  localMatch?.konuVeCiktiOzeti || w.konuVeCiktiOzeti || "",
-                sure: w.sure || localMatch?.sure || "",
+                  localMatch?.konuVeCiktiOzeti ||
+                  baseItem.konuVeCiktiOzeti ||
+                  "",
+                sure: baseItem.sure || localMatch?.sure || "",
               };
             });
           })()
-        : localParsedWeeks.length > 0
-        ? localParsedWeeks
         : DEFAULT_MEB_WEEKS;
 
     // Dynamically filter 'Öğrenme Kanıtları' and 'Öğretme Uygulamaları' from dersBilgiFormu for each week's specific unit and topic
@@ -727,7 +743,7 @@ export default function App() {
       const response = await fetch("/api/parse-weeks", {
         method: "POST",
         headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: `<yillik_plan>${cleanText.slice(0, 12000)}</yillik_plan>`,
+        body: `<yillik_plan>${cleanText.slice(0, 45000)}</yillik_plan>`,
       });
       const parsed = await safeReadJsonResponse<{
         okulAdi?: string;
@@ -758,35 +774,49 @@ export default function App() {
             .filter(Boolean)
         );
 
-        const mergedWeeks: YillikPlanWeekItem[] = aiWeeks.map((aiW) => {
+        const allWeekNos = Array.from(
+          new Set([
+            ...localDeterministicWeeks.map((lw) => lw.haftaNo),
+            ...aiWeeks.map((aw) => aw.haftaNo),
+          ])
+        )
+          .filter((n) => n >= 1 && n <= 42)
+          .sort((a, b) => a - b);
+
+        const mergedWeeks: YillikPlanWeekItem[] = allWeekNos.map((weekNo) => {
+          const aiW = aiWeeks.find((aw) => aw.haftaNo === weekNo);
           const localMatch = localDeterministicWeeks.find(
-            (lw) => lw.haftaNo === aiW.haftaNo
+            (lw) => lw.haftaNo === weekNo
           );
+          const baseW = aiW || localMatch!;
           const preferLocalUnit =
             Boolean(localMatch?.ogrenmeBirimi) &&
-            (!aiW.ogrenmeBirimi ||
+            (!baseW.ogrenmeBirimi ||
               (distinctAiUnits.size <= 1 && distinctLocalUnits.size > 1) ||
               (distinctLocalUnits.size > 0 &&
-                !distinctLocalUnits.has((aiW.ogrenmeBirimi || "").trim())));
+                !distinctLocalUnits.has((baseW.ogrenmeBirimi || "").trim())));
 
           const resolvedDate = resolveValidDateRange(
-            aiW.tarihAraligi || localMatch?.tarihAraligi || "",
-            aiW.haftaNo
+            baseW.tarihAraligi || localMatch?.tarihAraligi || "",
+            weekNo
           );
           const resolvedUnit = preferLocalUnit
             ? localMatch!.ogrenmeBirimi
-            : aiW.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "";
+            : baseW.ogrenmeBirimi || localMatch?.ogrenmeBirimi || "";
           const resolvedSummary =
-            localMatch?.konuVeCiktiOzeti || aiW.konuVeCiktiOzeti || "";
+            localMatch?.konuVeCiktiOzeti || baseW.konuVeCiktiOzeti || "";
 
           const candidateWeekItem: YillikPlanWeekItem = {
-            ...aiW,
+            ...baseW,
+            id: baseW.id || `week-${weekNo}`,
+            haftaNo: weekNo,
+            haftaEtiketi: baseW.haftaEtiketi || `${weekNo}. HAFTA`,
             tarihAraligi: resolvedDate,
             ogrenmeBirimi: resolvedUnit,
             icerikCercevesi:
-              localMatch?.icerikCercevesi || aiW.icerikCercevesi || "",
+              localMatch?.icerikCercevesi || baseW.icerikCercevesi || "",
             konuVeCiktiOzeti: resolvedSummary,
-            sure: aiW.sure || localMatch?.sure || "",
+            sure: baseW.sure || localMatch?.sure || "",
           };
 
           const weekSpecific = extractWeekPlanStructured(

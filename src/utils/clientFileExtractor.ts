@@ -109,10 +109,10 @@ export function parseQuickWeeksClient(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const m = line.match(
-      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/i
+    const matches = line.matchAll(
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA\b|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/gi
     );
-    if (m) {
+    for (const m of matches) {
       const wNo = Number(m[1] || m[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);

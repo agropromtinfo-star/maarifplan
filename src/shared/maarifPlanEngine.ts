@@ -266,6 +266,8 @@ export function stripFrontMatter(rawText: string): string {
       /(?<![(,]\s*)\s+((?:E[123]\.\d{1,2}|SDB[123]\.\d|D\d{1,2}|OB[1-9]|KB(?:1|[23]\.\d{1,2}))\.\s+[A-ZÇĞİÖŞÜ])/g,
       "\n$1"
     )
+    // Join week numbers split across line breaks (e.g., "10.\nHAFTA" -> "10. HAFTA")
+    .replace(/\b(\d{1,2})\s*\.\s*\r?\n\s*(HAFTA|Hafta|hafta)\b/g, "$1. $2")
     .replace(/ú/g, "ş")
     .replace(/Ú/g, "Ş")
     .replace(/þ/g, "ş")
@@ -453,13 +455,26 @@ export function analyzeBlacklistAndTextDensity(
   const dottedChars = dottedMatches.reduce((acc, m) => acc + m.length, 0);
   const dottedLeaderDensity = dottedChars / Math.max(1, normalized.length);
 
-  // Digit and bureaucratic punctuation density
-  const nonAlphaMatches = normalized.match(/[0-9:./;…_\\|-]/g) || [];
+  // Digit and bureaucratic punctuation density (excluding table cell pipes/hyphens/slashes)
+  const nonAlphaMatches = normalized.match(/[0-9:.;…_\\]/g) || [];
   const digitAndPunctDensity =
     nonAlphaMatches.length / Math.max(1, normalized.length);
 
+  // Detect valid MEB annual plan & curriculum structural tokens (weeks 1..42, dates, hours, Maarif codes, sub-bullets)
+  const hasCurriculumStructureToken =
+    /\b\d{1,2}\s*\.\s*hafta\b|\bhafta\s*[:|-]?\s*\d{1,2}\b/i.test(normalized) ||
+    Boolean(extractDateRangeFromText(normalized)) ||
+    /\b\d{1,2}\s*(?:ders\s*)?saat[i]?\b/i.test(normalized) ||
+    /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}|(?:SDB|KB|OB|AB|E|D)\d{1,2})\b/i.test(
+      normalized
+    ) ||
+    /(?:^|\s)[a-zçğıöşü]\)\s/i.test(normalized) ||
+    /\b(?:ünite|öğrenme\s*birimi|alan\s*becerileri|kavramsal\s*beceriler|eğilimler)\b/i.test(
+      lower
+    );
+
   // Check overlap with active curriculum keywords
-  let curriculumKeywordMatches = 0;
+  let curriculumKeywordMatches = hasCurriculumStructureToken ? 1 : 0;
   for (const kw of curriculumKeywords) {
     const cleanKw = (kw || "").trim().toLocaleLowerCase("tr-TR");
     if (cleanKw.length >= 4 && lower.includes(cleanKw.slice(0, 5))) {
@@ -475,13 +490,15 @@ export function analyzeBlacklistAndTextDensity(
       ));
 
   const isHighNoiseZeroCurriculum =
-    (decreeOrCatalogNumberCount >= 2 || digitAndPunctDensity > 0.3) &&
-    curriculumKeywordMatches === 0;
+    !hasCurriculumStructureToken &&
+    curriculumKeywordMatches === 0 &&
+    (decreeOrCatalogNumberCount >= 2 ||
+      (normalized.length >= 30 && digitAndPunctDensity > 0.45));
 
   const isBlacklisted =
     blacklistHits >= 1 ||
     hasBureaucraticDateNumberCombo ||
-    dottedLeaderDensity > 0.1 ||
+    dottedLeaderDensity > 0.12 ||
     isHighNoiseZeroCurriculum;
 
   return {
@@ -2996,10 +3013,10 @@ export function extractWeekPlanStructured(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const wMatch = line.match(
-      /(?:\b(\d{1,2})\s*\.\s*HAFTA|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/i
+    const matches = line.matchAll(
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA\b|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/gi
     );
-    if (wMatch) {
+    for (const wMatch of matches) {
       const wNo = Number(wMatch[1] || wMatch[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeekNos.has(wNo)) {
         seenWeekNos.add(wNo);

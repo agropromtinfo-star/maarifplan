@@ -256,9 +256,11 @@ function parseWeeksRegexFallback(text: string) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const m = line.match(/\b(\d{1,2})\s*\.\s*HAFTA(?:\s*\(?([^)|]+)\)?)?/i);
-    if (m) {
-      const wNo = Number(m[1]);
+    const matches = line.matchAll(
+      /(?:\b(\d{1,2})\s*\.\s*HAFTA\b|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/gi
+    );
+    for (const m of matches) {
+      const wNo = Number(m[1] || m[2]);
       if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
         seenWeeks.add(wNo);
         let nextWeekIdx = lines.length;
@@ -406,7 +408,18 @@ function extractXmlTag(xmlString: string, tagName: string): string {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const portArgIndex = process.argv.indexOf("--port");
+  const cliPort =
+    portArgIndex !== -1 && process.argv[portArgIndex + 1]
+      ? Number(process.argv[portArgIndex + 1])
+      : 0;
+  const envPort =
+    process.env.PORT && process.env.PORT !== process.env.NGINX_PORT
+      ? Number(process.env.PORT)
+      : 0;
+  const PORT =
+    cliPort ||
+    (process.env.NODE_ENV === "production" ? envPort || 3000 : 3000);
 
   app.use(express.json({ limit: "50mb" }));
   app.use(
@@ -591,7 +604,7 @@ async function startServer() {
 
       const weekPrompt = `<gorev>Aşağıdaki <yillik_plan> etiketi içindeki MEB Ünitelendirilmiş Yıllık Plan metnini incele ve planda yer alan tüm haftaları, tarih aralıklarını (örn: "14 - 18 Eylül"), her haftanın ilk gününe karşılık gelen GG/AA/YYYY onay tarihini (örn: "14/09/2026"), öğrenme birimini, o haftanın Öğrenme Çıktısı / Kazanım kodu ve cümlesi ile altındaki a), b), c) süreç bileşenlerini ve ders saati süresini sırasıyla çıkar. Ayrıca yıllık plan başlığında okul adı, ders ismi ve sınıf düzeyi varsa onları da çıkar.</gorev>\n\n<yillik_plan>\n${yillik_plan.slice(
         0,
-        15000
+        45000
       )}\n</yillik_plan>`;
 
       const rawJson = await generateWithFallback(
@@ -602,7 +615,8 @@ async function startServer() {
       );
 
       const parsed = JSON.parse(rawJson);
-      const weeks = Array.isArray(parsed.weeks)
+      const regexWeeks = parseWeeksRegexFallback(yillik_plan);
+      const aiWeeks: typeof regexWeeks = Array.isArray(parsed.weeks)
         ? parsed.weeks.map((w: Record<string, unknown>, idx: number) => ({
             id: `week-${w.haftaNo || idx + 1}`,
             haftaNo: Number(w.haftaNo) || idx + 1,
@@ -615,7 +629,25 @@ async function startServer() {
             konuVeCiktiOzeti: String(w.konuVeCiktiOzeti || ""),
             sure: String(w.sure || ""),
           }))
-        : parseWeeksRegexFallback(yillik_plan);
+        : [];
+
+      const allWeekNos = Array.from(
+        new Set([
+          ...regexWeeks.map((rw) => rw.haftaNo),
+          ...aiWeeks.map((aw) => aw.haftaNo),
+        ])
+      )
+        .filter((n) => n >= 1 && n <= 42)
+        .sort((a, b) => a - b);
+
+      const weeks =
+        allWeekNos.length > 0
+          ? allWeekNos.map(
+              (wNo) =>
+                aiWeeks.find((aw) => aw.haftaNo === wNo) ||
+                regexWeeks.find((rw) => rw.haftaNo === wNo)!
+            )
+          : regexWeeks;
 
       res.json({
         okulAdi: parsed.okulAdi || "",
