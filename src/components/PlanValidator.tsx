@@ -4,7 +4,10 @@ import {
   DocumentHeaderFooterMeta,
   YillikPlanWeekItem,
 } from "../types/lessonPlan";
-import { inferApprovalDateClient } from "../utils/clientFileExtractor";
+import {
+  inferApprovalDateClient,
+  synthesizePlanClientSide,
+} from "../utils/clientFileExtractor";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -12,8 +15,6 @@ import {
   CheckCircle2,
   XCircle,
   Wand2,
-  CalendarClock,
-  FileCheck,
   FileDown,
   Printer,
   ChevronDown,
@@ -23,7 +24,7 @@ import {
   Check,
   Sparkles,
   ArrowRight,
-  RefreshCw,
+  Loader2,
 } from "lucide-react";
 
 export type ValidationSeverity = "error" | "warning" | "success";
@@ -46,6 +47,8 @@ export interface ValidationIssue {
   canAutoFix?: boolean;
   autoFixLabel?: string;
   autoFixAction?: () => void;
+  canAiAutoComplete?: boolean;
+  aiAutoCompleteLabel?: string;
   editableKey?: string;
   editableType?: "meta" | "plan_db" | "plan_root";
 }
@@ -67,6 +70,9 @@ export interface PlanValidatorProps {
   onPrint?: () => void;
   availableWeeks?: YillikPlanWeekItem[];
   isOpenInitially?: boolean;
+  yillikPlan?: string;
+  dersBilgiFormu?: string;
+  dersMateryali?: string;
 }
 
 const TURKISH_MONTH_INDEX: Record<string, number> = {
@@ -100,6 +106,9 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
   onPrint,
   availableWeeks = [],
   isOpenInitially = true,
+  yillikPlan = "",
+  dersBilgiFormu = "",
+  dersMateryali = "",
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(isOpenInitially);
   const [selectedFilter, setSelectedFilter] = useState<
@@ -112,6 +121,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
   const [pendingExportAction, setPendingExportAction] = useState<
     "word" | "print" | null
   >(null);
+  const [aiCompletingId, setAiCompletingId] = useState<string | null>(null);
+  const [aiStatusBanner, setAiStatusBanner] = useState<string | null>(null);
 
   // Run comprehensive validation scan over plan & meta
   const { issues, passedChecks, scorePercent, errorCount, warningCount } =
@@ -122,7 +133,9 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
       // ------------------------------------------------------------------
       // 1. KONTROL GRUBU: ÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ (Kritik)
       // ------------------------------------------------------------------
-      const ciktilar = (plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || "").trim();
+      const ciktilar = (
+        plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""
+      ).trim();
       if (!ciktilar) {
         issuesList.push({
           id: "cikti-bos",
@@ -133,9 +146,12 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
             "MEB Maarif Modeli formatında günlük ders planının omurgası olan Öğrenme Çıktısı (örn: ST.1.2...) ve süreç bileşenleri girilmemiş.",
           fieldLabel: "Öğrenme Çıktıları ve Süreç Bileşenleri",
           currentValue: "Boş",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+          editableKey: "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+          editableType: "plan_root",
         });
       } else {
-        // Kod kontrolü (örn: ST.1.2 veya MAT.9.1.2)
         const hasCode = /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}(?:\.\d{1,2})*\b/.test(
           ciktilar
         );
@@ -148,12 +164,17 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
             description:
               "Çıktı metninde maarif kodu (örn: 'ST.1.2.', 'TDE.9.2.1.') tespit edilemedi. Kodsuz metin resmî teftiş standartlarına uymayabilir.",
             fieldLabel: "Öğrenme Çıktıları",
-            currentValue: ciktilar.slice(0, 80) + (ciktilar.length > 80 ? "..." : ""),
+            currentValue:
+              ciktilar.slice(0, 80) + (ciktilar.length > 80 ? "..." : ""),
+            canAiAutoComplete: true,
+            aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+            editableKey: "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+            editableType: "plan_root",
           });
         }
 
-        // Alt süreç bileşenleri kontrolü (a), b), c), ç)...)
-        const subComponentMatches = ciktilar.match(/\b[a-zçğıöşü]\)\s+/gi) || [];
+        const subComponentMatches =
+          ciktilar.match(/\b[a-zçğıöşü]\)\s+/gi) || [];
         if (subComponentMatches.length === 0 && ciktilar.length < 80) {
           issuesList.push({
             id: "cikti-alt-madde-eksik",
@@ -164,6 +185,10 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
               "Öğrenme çıktısı tek satırda kalmış; derste işlenecek basamakları belirten a), b), c) alt süreç bileşenleri yer almıyor.",
             fieldLabel: "Süreç Bileşenleri",
             currentValue: ciktilar.slice(0, 100),
+            canAiAutoComplete: true,
+            aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+            editableKey: "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+            editableType: "plan_root",
           });
         } else {
           passedList.push({
@@ -179,6 +204,60 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         }
       }
 
+      // 1.2 İçerik Çerçevesi (Konu) Kontrolü
+      const icerikCercevesi = (plan.Icerik_Cercevesi || "").trim();
+      if (!icerikCercevesi) {
+        issuesList.push({
+          id: "bos-icerik-cercevesi",
+          category: "ogrenme_ciktilari",
+          severity: "error",
+          title: "İçerik Çerçevesi (Haftalık Konu) Boş",
+          description:
+            "Bu haftada işlenecek konu başlığı (İçerik Çerçevesi) belirtilmemiş.",
+          fieldLabel: "İçerik Çerçevesi",
+          currentValue: "(Boş)",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+          editableKey: "Icerik_Cercevesi",
+          editableType: "plan_root",
+        });
+      } else {
+        passedList.push({
+          id: "icerik-cercevesi-tamam",
+          category: "ogrenme_ciktilari",
+          title: "İçerik Çerçevesi (Konu) Tanımlı",
+          description: icerikCercevesi.slice(0, 110),
+        });
+      }
+
+      // 1.3 Öğrenme Kanıtları (Ölçme ve Değerlendirme) Kontrolü
+      const ogrenmeKanitlari = (plan.Ogrenme_Kanitlari || "").trim();
+      if (!ogrenmeKanitlari) {
+        issuesList.push({
+          id: "bos-ogrenme-kanitlari",
+          category: "ogrenme_ciktilari",
+          severity: "error",
+          title: "Öğrenme Kanıtları (Ölçme ve Değerlendirme) Boş",
+          description:
+            "Öğrenme çıktılarının hangi ölçme araçlarıyla (kontrol listesi, gözlem formu, performans görevi, açık uçlu sorular vb.) değerlendirileceği yazılmamış.",
+          fieldLabel: "Öğrenme Kanıtları",
+          currentValue: "(Boş)",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+          editableKey: "Ogrenme_Kanitlari",
+          editableType: "plan_root",
+        });
+      } else {
+        passedList.push({
+          id: "ogrenme-kanitlari-tamam",
+          category: "ogrenme_ciktilari",
+          title: "Öğrenme Kanıtları (Ölçme-Değerlendirme) Mevcut",
+          description:
+            ogrenmeKanitlari.slice(0, 110) +
+            (ogrenmeKanitlari.length > 110 ? "..." : ""),
+        });
+      }
+
       // ------------------------------------------------------------------
       // 2. KONTROL GRUBU: TARİH VE HAFTA UYUŞMAZLIKLARI
       // ------------------------------------------------------------------
@@ -189,7 +268,6 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
       const weekNumberMatch = haftaEtiketi.match(/\b(\d{1,2})\b/);
       const weekNo = weekNumberMatch ? Number(weekNumberMatch[1]) : null;
 
-      // 2.1 Tarih Aralığı Kontrolü
       if (!tarihAraligi || /^\d+\s*\.\s*hafta$/i.test(tarihAraligi)) {
         issuesList.push({
           id: "tarih-araligi-bos",
@@ -217,9 +295,9 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         });
       }
 
-      // 2.2 Onay Tarihi Kontrolü
       if (!onayTarihi || onayTarihi.includes("202...")) {
-        const suggestedDate = inferApprovalDateClient(tarihAraligi) || "14/09/2026";
+        const suggestedDate =
+          inferApprovalDateClient(tarihAraligi) || "14/09/2026";
         issuesList.push({
           id: "onay-tarihi-bos",
           category: "tarih_ve_hafta",
@@ -241,8 +319,6 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         });
       }
 
-      // 2.3 TARİH UYUŞMAZLIĞI (DATE MISMATCH) KONTROLÜ
-      // Örnek: Hafta 16 (Ocak ayı) veya Tarih Aralığı "19 - 23 Ekim" iken Onay Tarihi "14/09/2026" (Eylül) kalmışsa!
       if (tarihAraligi && onayTarihi && !onayTarihi.includes("202...")) {
         const lowerRange = tarihAraligi.toLocaleLowerCase("tr-TR");
         let rangeMonthNum: number | null = null;
@@ -300,7 +376,6 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
       // ------------------------------------------------------------------
       const db = plan.Ders_Bilgisi;
 
-      // 3.1 Ders Adı
       if (!db.Ders || db.Ders.trim() === "DERS") {
         issuesList.push({
           id: "bos-ders",
@@ -318,19 +393,23 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           id: "ders-dolu",
           category: "bos_alanlar",
           title: "Ders Bilgisi Doğrulandı",
-          description: `${db.Ders} (${db.Sinif || meta.sinifDuzeyi || "Sınıf Belirtilmiş"})`,
+          description: `${db.Ders} (${
+            db.Sinif || meta.sinifDuzeyi || "Sınıf Belirtilmiş"
+          })`,
         });
       }
 
-      // 3.2 Öğrenme Birimi (Suspicious "VE SÜRE" vs Real Unit)
       if (!db.Ogrenme_Birimi || db.Ogrenme_Birimi.trim() === "") {
         issuesList.push({
           id: "bos-birim",
           category: "bos_alanlar",
           severity: "error",
           title: "Öğrenme Birimi (Ünite / Tema) Boş",
-          description: "Ders planının ait olduğu ünite veya öğrenme birimi yazılmamış.",
+          description:
+            "Ders planının ait olduğu ünite veya öğrenme birimi yazılmamış.",
           fieldLabel: "Öğrenme Birimi",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
           editableKey: "Ogrenme_Birimi",
           editableType: "plan_db",
         });
@@ -344,12 +423,13 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
             "Tablo başlığındaki sütun ismi ('ÖĞRENME BİRİMİ VE SÜRE') içerik olarak algılanmış olabilir. Gerçek ünite adını girmeniz önerilir.",
           fieldLabel: "Öğrenme Birimi",
           currentValue: db.Ogrenme_Birimi,
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
           editableKey: "Ogrenme_Birimi",
           editableType: "plan_db",
         });
       }
 
-      // 3.3 Süre
       if (!db.Sure || db.Sure.trim() === "") {
         issuesList.push({
           id: "bos-sure",
@@ -370,7 +450,6 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         });
       }
 
-      // 3.4 Alan Becerileri ve Eğilimler
       if (!db.Alan_Becerileri || db.Alan_Becerileri.trim() === "") {
         issuesList.push({
           id: "bos-alan-becerileri",
@@ -380,6 +459,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           description:
             "Maarif Modelinde her meslek veya kültür dersinin alan becerisi tanımlanmalıdır.",
           fieldLabel: "Alan Becerileri",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
           editableKey: "Alan_Becerileri",
           editableType: "plan_db",
         });
@@ -391,10 +472,33 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           category: "bos_alanlar",
           severity: "warning",
           title: "Eğilimler (E1.1, E2.2...) Alanı Boş",
-          description: "Öğrencinin sergileyeceği zihinsel ve sosyal eğilimler belirtilmemiş.",
+          description:
+            "Öğrencinin sergileyeceği zihinsel ve sosyal eğilimler belirtilmemiş.",
           fieldLabel: "Eğilimler",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
           editableKey: "Egilimler",
           editableType: "plan_db",
+        });
+      }
+
+      // Programlar Arası Bileşenler Kontrolü
+      const pab = plan.Programlar_Arasi_Bilesenler;
+      if (
+        !pab?.Sosyal_Duygusal_Ogrenme_Becerileri?.trim() ||
+        !pab?.Degerler?.trim() ||
+        !pab?.Okuryazarlik_Becerileri?.trim()
+      ) {
+        issuesList.push({
+          id: "bos-programlar-arasi",
+          category: "bos_alanlar",
+          severity: "warning",
+          title: "Programlar Arası Bileşenler Eksik",
+          description:
+            "Sosyal-Duygusal Öğrenme Becerileri (SDB), Değerler (D) veya Okuryazarlık Becerileri (OB) alanlarından biri veya birkaçı boş.",
+          fieldLabel: "Programlar Arası Bileşenler",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
         });
       }
 
@@ -412,6 +516,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           description:
             "Dersin işleniş sürecini adım adım anlatan uygulama basamakları (* ile başlayan maddeler) bulunmuyor.",
           fieldLabel: "Öğretme Uygulamaları",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
         });
       } else {
         passedList.push({
@@ -431,10 +537,53 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           id: "eksik-hazirlik-surecleri",
           category: "yasantilar",
           severity: "warning",
-          title: "Hazırlık Süreçleri Eksik (Temel Kabuller / Ön Değerlendirme / Köprü Kurma)",
+          title:
+            "Hazırlık Süreçleri Eksik (Temel Kabuller / Ön Değerlendirme / Köprü Kurma)",
           description:
             "Öğrencilerin ön bilgileri veya günlük hayatla ilişki kurma bölümlerinden biri boş bırakılmış.",
           fieldLabel: "Öğrenme-Öğretme Yaşantıları Giriş Bölümü",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+        });
+      }
+
+      if (
+        !yasantilar.Dikkat_Cekme?.length ||
+        !yasantilar.Guduleme?.length
+      ) {
+        issuesList.push({
+          id: "bos-dikkat-guduleme",
+          category: "yasantilar",
+          severity: "warning",
+          title: "Dikkat Çekme veya Güdüleme Basamakları Eksik",
+          description:
+            "Derse girişte öğrencinin ilgisini çekecek Dikkat Çekme ve Güdüleme maddeleri tanımlanmamış.",
+          fieldLabel: "Dikkat Çekme & Güdüleme",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+        });
+      }
+
+      if (!plan.Farklilastirma?.trim()) {
+        issuesList.push({
+          id: "bos-farklilastirma",
+          category: "yasantilar",
+          severity: "warning",
+          title: "Farklılaştırma (Zenginleştirme & Destekleme) Alanı Boş",
+          description:
+            "Bireysel öğrenme farklılıklarına yönelik Zenginleştirme ve Destekleme uygulamaları belirtilmemiş.",
+          fieldLabel: "Farklılaştırma",
+          canAiAutoComplete: true,
+          aiAutoCompleteLabel: "Otomatik Tamamla (AI)",
+          editableKey: "Farklilastirma",
+          editableType: "plan_root",
+        });
+      } else {
+        passedList.push({
+          id: "farklilastirma-tamam",
+          category: "yasantilar",
+          title: "Farklılaştırma Uygulamaları Tanımlı",
+          description: "Zenginleştirme ve destekleme adımları mevcut.",
         });
       }
 
@@ -469,7 +618,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           category: "resmi_bilgiler",
           severity: "warning",
           title: "Ders Öğretmeni Ad-Soyad Boş",
-          description: "İmza bloğunda nokta yerine öğretmen adı görüntülenmesi önerilir.",
+          description:
+            "İmza bloğunda nokta yerine öğretmen adı görüntülenmesi önerilir.",
           fieldLabel: "Ders Öğretmeni",
           editableKey: "ogretmenAdSoyad",
           editableType: "meta",
@@ -482,19 +632,17 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           category: "resmi_bilgiler",
           severity: "warning",
           title: "Okul Müdürü Ad-Soyad Boş",
-          description: "UYGUNDUR onay bloğu altına okul müdürünün adı girilmelidir.",
+          description:
+            "UYGUNDUR onay bloğu altına okul müdürünün adı girilmelidir.",
           fieldLabel: "Okul Müdürü",
           editableKey: "okulMuduruAdSoyad",
           editableType: "meta",
         });
       }
 
-      const totalChecks = issuesList.length + passedList.length;
-      const passedCount = passedList.length;
       const errors = issuesList.filter((i) => i.severity === "error").length;
       const warnings = issuesList.filter((i) => i.severity === "warning").length;
 
-      // Penalize errors heavily, warnings moderately
       const penalty = errors * 18 + warnings * 6;
       const score = Math.max(15, Math.min(100, Math.round(100 - penalty)));
 
@@ -506,6 +654,168 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         warningCount: warnings,
       };
     }, [plan, meta, availableWeeks, onUpdateMeta, onUpdatePlan]);
+
+  const aiCompletableIssues = useMemo(
+    () => issues.filter((i) => i.canAiAutoComplete),
+    [issues]
+  );
+
+  // AI Auto-Complete handler (works for a single issue ID or "all")
+  const handleAiAutoComplete = async (targetIssueId: string = "all") => {
+    setAiCompletingId(targetIssueId);
+    setAiStatusBanner(null);
+
+    // If completing all, also run deterministic meta fixes (date range / approval date)
+    if (targetIssueId === "all") {
+      issues.forEach((issue) => {
+        if (issue.canAutoFix && issue.autoFixAction) {
+          issue.autoFixAction();
+        }
+      });
+    }
+
+    try {
+      const response = await fetch("/api/autocomplete-plan-fields", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan,
+          meta,
+          target_issue_id: targetIssueId,
+          yillik_plan: yillikPlan,
+          ders_bilgi_formu: dersBilgiFormu,
+          ders_materyali: dersMateryali,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.updatedPlan) {
+          onUpdatePlan(data.updatedPlan);
+          const fieldsList =
+            Array.isArray(data.completedFields) &&
+            data.completedFields.length > 0
+              ? data.completedFields.join(", ")
+              : "Eksik plan alanları";
+          setAiStatusBanner(
+            `AI Otomatik Tamamlama tamamlandı: ${fieldsList} başarıyla dolduruldu.`
+          );
+          setAiCompletingId(null);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("AI autocomplete fallback to client-side synthesis:", err);
+    }
+
+    // Client-side fallback if offline
+    const fallbackPlan = synthesizePlanClientSide({
+      yillik_plan: yillikPlan,
+      ders_materyali: dersMateryali,
+      ders_bilgi_formu: dersBilgiFormu,
+      hafta_etiketi: meta.haftaEtiketi || "1. HAFTA",
+      tarih_araligi: meta.tarihAraligi || "",
+      ders_ismi: meta.dersIsmi || plan.Ders_Bilgisi.Ders || "Meslek Dersi",
+      sinif_duzeyi: meta.sinifDuzeyi || plan.Ders_Bilgisi.Sinif || "9. Sınıf",
+    });
+
+    const mergedPlan: MaarifLessonPlan = {
+      ...plan,
+      Ders_Bilgisi: {
+        ...plan.Ders_Bilgisi,
+        Ogrenme_Birimi:
+          plan.Ders_Bilgisi.Ogrenme_Birimi?.trim() &&
+          targetIssueId !== "bos-birim"
+            ? plan.Ders_Bilgisi.Ogrenme_Birimi
+            : fallbackPlan.Ders_Bilgisi.Ogrenme_Birimi,
+        Sure: plan.Ders_Bilgisi.Sure?.trim() || "2 Ders Saati",
+        Alan_Becerileri:
+          plan.Ders_Bilgisi.Alan_Becerileri?.trim() &&
+          targetIssueId !== "bos-alan-becerileri"
+            ? plan.Ders_Bilgisi.Alan_Becerileri
+            : fallbackPlan.Ders_Bilgisi.Alan_Becerileri,
+        Egilimler:
+          plan.Ders_Bilgisi.Egilimler?.trim() &&
+          targetIssueId !== "bos-egilimler"
+            ? plan.Ders_Bilgisi.Egilimler
+            : fallbackPlan.Ders_Bilgisi.Egilimler,
+      },
+      Programlar_Arasi_Bilesenler: {
+        Sosyal_Duygusal_Ogrenme_Becerileri:
+          plan.Programlar_Arasi_Bilesenler.Sosyal_Duygusal_Ogrenme_Becerileri?.trim() ||
+          fallbackPlan.Programlar_Arasi_Bilesenler
+            .Sosyal_Duygusal_Ogrenme_Becerileri,
+        Degerler:
+          plan.Programlar_Arasi_Bilesenler.Degerler?.trim() ||
+          fallbackPlan.Programlar_Arasi_Bilesenler.Degerler,
+        Okuryazarlik_Becerileri:
+          plan.Programlar_Arasi_Bilesenler.Okuryazarlik_Becerileri?.trim() ||
+          fallbackPlan.Programlar_Arasi_Bilesenler.Okuryazarlik_Becerileri,
+        Disiplinler_Arasi_Iliski:
+          plan.Programlar_Arasi_Bilesenler.Disiplinler_Arasi_Iliski?.trim() ||
+          fallbackPlan.Programlar_Arasi_Bilesenler.Disiplinler_Arasi_Iliski,
+        Beceriler_Arasi_Iliski:
+          plan.Programlar_Arasi_Bilesenler.Beceriler_Arasi_Iliski?.trim() ||
+          fallbackPlan.Programlar_Arasi_Bilesenler.Beceriler_Arasi_Iliski,
+      },
+      Ogrenme_Ciktilari_ve_Surec_Bilesenleri:
+        plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri?.trim() &&
+        targetIssueId !== "cikti-bos" &&
+        targetIssueId !== "cikti-kod-eksik" &&
+        targetIssueId !== "cikti-alt-madde-eksik"
+          ? plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+          : fallbackPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+      Icerik_Cercevesi:
+        plan.Icerik_Cercevesi?.trim() &&
+        targetIssueId !== "bos-icerik-cercevesi"
+          ? plan.Icerik_Cercevesi
+          : fallbackPlan.Icerik_Cercevesi,
+      Ogrenme_Kanitlari:
+        plan.Ogrenme_Kanitlari?.trim() &&
+        targetIssueId !== "bos-ogrenme-kanitlari"
+          ? plan.Ogrenme_Kanitlari
+          : fallbackPlan.Ogrenme_Kanitlari,
+      Ogrenme_Ogretme_Yasantilari: {
+        ...plan.Ogrenme_Ogretme_Yasantilari,
+        Temel_Kabuller:
+          plan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller?.trim() ||
+          fallbackPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller,
+        On_Degerlendirme_Sureci:
+          plan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci?.trim() ||
+          fallbackPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci,
+        Kopru_Kurma:
+          plan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma?.trim() ||
+          fallbackPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma,
+        Ogretme_Uygulamalari:
+          plan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari?.length > 0 &&
+          targetIssueId !== "bos-ogretme-uygulamalari"
+            ? plan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari
+            : fallbackPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+        Guduleme:
+          plan.Ogrenme_Ogretme_Yasantilari.Guduleme?.length > 0
+            ? plan.Ogrenme_Ogretme_Yasantilari.Guduleme
+            : fallbackPlan.Ogrenme_Ogretme_Yasantilari.Guduleme,
+        Dikkat_Cekme:
+          plan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme?.length > 0
+            ? plan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme
+            : fallbackPlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme,
+        Ek_Ogretme_Uygulamalari:
+          plan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari?.length > 0
+            ? plan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari
+            : fallbackPlan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari,
+      },
+      Farklilastirma:
+        plan.Farklilastirma?.trim() && targetIssueId !== "bos-farklilastirma"
+          ? plan.Farklilastirma
+          : fallbackPlan.Farklilastirma,
+    };
+
+    onUpdatePlan(mergedPlan);
+    setAiStatusBanner(
+      "Eksik plan alanları (Öğretme Uygulamaları, Öğrenme Kanıtları vb.) otomatik tamamlandı."
+    );
+    setAiCompletingId(null);
+  };
 
   // Filtered issues to display
   const displayedIssues = useMemo(() => {
@@ -523,13 +833,19 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
     setEditingFieldId(issue.id);
     if (issue.editableType === "meta" && issue.editableKey) {
       setEditingTextValue(
-        (meta[issue.editableKey as keyof DocumentHeaderFooterMeta] as string) || ""
+        (meta[
+          issue.editableKey as keyof DocumentHeaderFooterMeta
+        ] as string) || ""
       );
     } else if (issue.editableType === "plan_db" && issue.editableKey) {
       setEditingTextValue(
         (plan.Ders_Bilgisi[
           issue.editableKey as keyof MaarifLessonPlan["Ders_Bilgisi"]
         ] as string) || ""
+      );
+    } else if (issue.editableType === "plan_root" && issue.editableKey) {
+      setEditingTextValue(
+        (plan[issue.editableKey as keyof MaarifLessonPlan] as string) || ""
       );
     } else {
       setEditingTextValue(issue.currentValue || "");
@@ -549,6 +865,11 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           ...plan.Ders_Bilgisi,
           [issue.editableKey]: editingTextValue.trim(),
         },
+      });
+    } else if (issue.editableType === "plan_root" && issue.editableKey) {
+      onUpdatePlan({
+        ...plan,
+        [issue.editableKey]: editingTextValue.trim(),
       });
     }
     setEditingFieldId(null);
@@ -631,7 +952,33 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         </div>
 
         {/* Right Action Cluster */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* AI Otomatik Tamamla Action Button */}
+          <button
+            type="button"
+            disabled={aiCompletingId !== null}
+            onClick={() => handleAiAutoComplete("all")}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-indigo-950 via-indigo-900 to-sky-900 hover:from-indigo-900 hover:to-sky-800 disabled:opacity-60 rounded-lg shadow-xs transition-all cursor-pointer shrink-0"
+            title="Plan içeriğindeki eksik kısımları (Öğretme Uygulamaları, Öğrenme Kanıtları, Çıktılar vb.) AI ile otomatik olarak doldur"
+          >
+            {aiCompletingId === "all" ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                <span>AI ile Tamamlanıyor...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>
+                  Otomatik Tamamla
+                  {aiCompletableIssues.length > 0
+                    ? ` (${aiCompletableIssues.length})`
+                    : ""}
+                </span>
+              </>
+            )}
+          </button>
+
           {onExportWord && (
             <button
               type="button"
@@ -673,6 +1020,23 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           </button>
         </div>
       </div>
+
+      {/* AI Completion Status Notification */}
+      {aiStatusBanner && (
+        <div className="px-5 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between gap-3 text-xs text-emerald-900 font-medium">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{aiStatusBanner}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAiStatusBanner(null)}
+            className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-950"
+          >
+            Kapat
+          </button>
+        </div>
+      )}
 
       {/* Expanded Validator Details Body */}
       {isExpanded && (
@@ -729,23 +1093,45 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
               </button>
             </div>
 
-            {/* Quick Auto-Fix All Action */}
-            {issues.some((i) => i.canAutoFix) && (
-              <button
-                type="button"
-                onClick={() => {
-                  issues.forEach((issue) => {
-                    if (issue.canAutoFix && issue.autoFixAction) {
-                      issue.autoFixAction();
-                    }
-                  });
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg transition-colors"
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                Uyuşmazlıkları Otomatik Düzelt
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* AI Auto-Complete Missing Plan Content Button */}
+              {aiCompletableIssues.length > 0 && (
+                <button
+                  type="button"
+                  disabled={aiCompletingId !== null}
+                  onClick={() => handleAiAutoComplete("all")}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors cursor-pointer"
+                >
+                  {aiCompletingId === "all" ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-900" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-900" />
+                  )}
+                  <span>
+                    Eksik Plan Alanlarını AI ile Otomatik Tamamla (
+                    {aiCompletableIssues.length})
+                  </span>
+                </button>
+              )}
+
+              {/* Quick Auto-Fix All Action */}
+              {issues.some((i) => i.canAutoFix) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    issues.forEach((issue) => {
+                      if (issue.canAutoFix && issue.autoFixAction) {
+                        issue.autoFixAction();
+                      }
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg transition-colors"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  Tarih / Süre Uyuşmazlıklarını Düzelt
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Section: Issues List */}
@@ -753,6 +1139,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
             <div className="space-y-3">
               {displayedIssues.map((issue) => {
                 const isEditing = editingFieldId === issue.id;
+                const isThisAiLoading =
+                  aiCompletingId === issue.id || aiCompletingId === "all";
 
                 return (
                   <div
@@ -808,8 +1196,33 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                         )}
                       </div>
 
-                      {/* Action Zone: Auto-Fix or Quick Inline Edit */}
+                      {/* Action Zone: AI Auto-Complete, Auto-Fix, or Quick Inline Edit */}
                       <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                        {issue.canAiAutoComplete && (
+                          <button
+                            type="button"
+                            disabled={aiCompletingId !== null}
+                            onClick={() => handleAiAutoComplete(issue.id)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-950 hover:bg-indigo-900 disabled:opacity-60 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                            title={`${issue.fieldLabel} alanını AI ile otomatik doldur`}
+                          >
+                            {isThisAiLoading ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                                <span>Tamamlanıyor...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                <span>
+                                  {issue.aiAutoCompleteLabel ||
+                                    "Otomatik Tamamla"}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        )}
+
                         {issue.canAutoFix && issue.autoFixAction && (
                           <button
                             type="button"
@@ -880,7 +1293,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                 Bu kategoride herhangi bir eksik veya uyuşmazlık bulunamadı.
               </p>
               <p className="text-xs text-slate-500 mt-0.5">
-                Planda bulunan tüm temel kontroller başarılı bir şekilde tamamlandı.
+                Planda bulunan tüm temel kontroller başarılı bir şekilde
+                tamamlandı.
               </p>
             </div>
           )}
@@ -916,7 +1330,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
               <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
               <span>
                 Resmî Maarif tablosu aşağıda sunulmaktadır. Çıktı almadan önce
-                yukarıdaki uyarıları incelemeniz evrak geçerliliği için önerilir.
+                yukarıdaki uyarıları incelemeniz evrak geçerliliği için
+                önerilir.
               </span>
             </div>
 
@@ -953,7 +1368,8 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
 
             <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-xs text-rose-900 space-y-2">
               <p className="font-semibold">
-                Tespit edilen kritik alanlar resmî evrak formatını etkileyebilir:
+                Tespit edilen kritik alanlar resmî evrak formatını
+                etkileyebilir:
               </p>
               <ul className="list-disc list-inside space-y-1 text-[11px] text-rose-800">
                 {issues
@@ -967,17 +1383,30 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
             </div>
 
             <p className="text-xs text-slate-600">
-              Bu alanları &quot;Hemen Düzelt&quot; butonları ile tamamlayabilir veya
-              mevcut haliyle dışa aktarmaya devam edebilirsiniz.
+              Bu alanları &quot;Otomatik Tamamla&quot; butonu ile AI yardımıyla
+              doldurabilir veya mevcut haliyle dışa aktarmaya devam
+              edebilirsiniz.
             </p>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={aiCompletingId !== null}
+                onClick={async () => {
+                  await handleAiAutoComplete("all");
+                  setExportWarningModalOpen(false);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-indigo-950 rounded-lg hover:bg-indigo-900 transition-colors cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                AI ile Otomatik Tamamla
+              </button>
               <button
                 type="button"
                 onClick={() => setExportWarningModalOpen(false)}
                 className="px-4 py-2 text-xs font-semibold text-indigo-950 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors"
               >
-                Geri Dön ve Düzelt
+                Geri Dön
               </button>
               <button
                 type="button"

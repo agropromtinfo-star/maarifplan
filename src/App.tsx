@@ -2905,7 +2905,17 @@ export default function App() {
                       <PlanValidator
                         plan={currentPlan}
                         meta={meta}
-                        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                        onUpdatePlan={(updated) => {
+                          setCurrentPlan(updated);
+                          if (selectedWeekObj) {
+                            handleUpdateWeekItem(selectedWeekObj.id, {
+                              ogrenmeKanitlari: updated.Ogrenme_Kanitlari,
+                              ogretmeUygulamalari:
+                                updated.Ogrenme_Ogretme_Yasantilari
+                                  .Ogretme_Uygulamalari,
+                            });
+                          }
+                        }}
                         onUpdateMeta={(updated) => setMeta(updated)}
                         availableWeeks={activeWeekList}
                         onProceedToTable={() => {
@@ -2916,6 +2926,9 @@ export default function App() {
                         onExportWord={() => setIsExportConfigOpen(true)}
                         onPrint={() => triggerPrintWithFileName(meta, currentPlan)}
                         isOpenInitially={true}
+                        yillikPlan={yillikPlan}
+                        dersBilgiFormu={dersBilgiFormu}
+                        dersMateryali={dersMateryali}
                       />
                     </div>
 
@@ -2945,7 +2958,17 @@ export default function App() {
                 <PlanValidator
                   plan={currentPlan}
                   meta={meta}
-                  onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                  onUpdatePlan={(updated) => {
+                    setCurrentPlan(updated);
+                    if (selectedWeekObj) {
+                      handleUpdateWeekItem(selectedWeekObj.id, {
+                        ogrenmeKanitlari: updated.Ogrenme_Kanitlari,
+                        ogretmeUygulamalari:
+                          updated.Ogrenme_Ogretme_Yasantilari
+                            .Ogretme_Uygulamalari,
+                      });
+                    }
+                  }}
                   onUpdateMeta={(updated) => setMeta(updated)}
                   availableWeeks={activeWeekList}
                   onProceedToTable={() => {
@@ -2956,6 +2979,9 @@ export default function App() {
                   onExportWord={() => setIsExportConfigOpen(true)}
                   onPrint={() => triggerPrintWithFileName(meta, currentPlan)}
                   isOpenInitially={false}
+                  yillikPlan={yillikPlan}
+                  dersBilgiFormu={dersBilgiFormu}
+                  dersMateryali={dersMateryali}
                 />
               </div>
 

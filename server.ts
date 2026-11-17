@@ -22,6 +22,7 @@ import {
   applyBlacklistAndDensityFilter,
   WeekSpecificExtraction,
 } from "./src/shared/maarifPlanEngine";
+import { MaarifLessonPlan } from "./src/types/lessonPlan";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1228,172 +1229,492 @@ DERS NOTUNUN YAPISI VE KURALLARI:
     }
   });
 
-  // Endpoint for WeekDetailPanel "AI ile Özetle": generates Hafta Özeti and Öğrenci Çalışma Soruları per week from Ders Materyali
-  app.post("/api/summarize-week-detail", async (req, res) => {
+  // Endpoint for PlanValidator "Otomatik Tamamla": AI-powered auto-completion for missing lesson plan fields (Öğretme Uygulamaları, Öğrenme Kanıtları, vb.)
+  app.post("/api/autocomplete-plan-fields", async (req, res) => {
     try {
       const body = (req.body || {}) as Record<string, unknown>;
-      const ders_ismi = String(body.ders_ismi || "").trim();
-      const sinif_duzeyi = String(body.sinif_duzeyi || "").trim();
-      const hafta_etiketi = String(body.hafta_etiketi || "1. HAFTA").trim();
-      const tarih_araligi = String(body.tarih_araligi || "").trim();
-      const ogrenme_birimi = String(body.ogrenme_birimi || "").trim();
-      const icerik_cercevesi = String(body.icerik_cercevesi || "").trim();
-      const konu_ve_cikti_ozeti = String(body.konu_ve_cikti_ozeti || "").trim();
-      const ogrenme_ciktilari = String(body.ogrenme_ciktilari || "").trim();
+      const currentPlan = (body.plan || {}) as Partial<MaarifLessonPlan>;
+      const meta = (body.meta || {}) as Record<string, string>;
+      const targetIssueId = String(body.target_issue_id || "all").trim();
+      const yillik_plan = String(body.yillik_plan || "");
+      const ders_bilgi_formu = String(body.ders_bilgi_formu || "");
       const ders_materyali = String(body.ders_materyali || "");
 
-      const weekNoMatch = hafta_etiketi.match(/\d+/);
-      const subCompLines = (ogrenme_ciktilari || konu_ve_cikti_ozeti)
-        .split(/\r?\n|·/)
-        .map((s) => s.trim())
-        .filter((s) => /^[a-zçğıöşü]\)/i.test(s));
+      const dersIsmi =
+        String(meta.dersIsmi || currentPlan.Ders_Bilgisi?.Ders || "").trim() ||
+        "Meslek Dersi";
+      const sinifDuzeyi =
+        String(meta.sinifDuzeyi || currentPlan.Ders_Bilgisi?.Sinif || "").trim() ||
+        "9. Sınıf";
+      const haftaEtiketi =
+        String(meta.haftaEtiketi || "1. HAFTA").trim();
+      const tarihAraligi =
+        String(meta.tarihAraligi || "").trim();
+      const ogrenmeBirimi =
+        String(currentPlan.Ders_Bilgisi?.Ogrenme_Birimi || "").trim();
+      const icerikCercevesi =
+        String(currentPlan.Icerik_Cercevesi || "").trim();
+      const ogrenmeCiktilari =
+        String(currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || "").trim();
 
-      const fakeWeekData: WeekSpecificExtraction = {
-        haftaNo: weekNoMatch ? Number(weekNoMatch[0]) : 1,
-        haftaEtiketi: hafta_etiketi,
-        tarihAraligi: tarih_araligi,
-        sure: "",
-        ogrenmeBirimi: ogrenme_birimi,
-        icerikCercevesi: icerik_cercevesi,
-        outcomeCode: "",
-        outcomeHeader:
-          ogrenme_ciktilari.split(/\r?\n/)[0]?.trim() || konu_ve_cikti_ozeti,
-        weekSubComponents: subCompLines,
-        formattedOutcomeAndProcessBlock:
-          ogrenme_ciktilari || konu_ve_cikti_ozeti,
-        unitOgrenmeKanitlari: "",
-        rawWeekWindowText: "",
-        unitOgretmeUygulamalari: [],
-        searchKeywords: [
-          ogrenme_birimi,
-          icerik_cercevesi,
-          ...icerik_cercevesi.split(/\s+/).filter((w) => w.length >= 3),
-        ],
-      };
+      const structuredDbf = parseDersBilgiFormuStructured(
+        ders_bilgi_formu
+      );
 
+      const weekData = extractWeekPlanStructured(
+        yillik_plan,
+        haftaEtiketi,
+        tarihAraligi,
+        structuredDbf
+      );
+      if (ogrenmeBirimi && !weekData.ogrenmeBirimi) {
+        weekData.ogrenmeBirimi = ogrenmeBirimi;
+      }
+      if (icerikCercevesi && !weekData.icerikCercevesi) {
+        weekData.icerikCercevesi = icerikCercevesi;
+      }
+      if (ogrenmeCiktilari && !weekData.formattedOutcomeAndProcessBlock) {
+        weekData.formattedOutcomeAndProcessBlock = ogrenmeCiktilari;
+      }
       const cleanMateryal = stripFrontMatter(ders_materyali);
       const materyalSlice = extractWeekMateryalSlice(
         cleanMateryal,
-        fakeWeekData,
-        14000
+        weekData,
+        12000
       );
 
-      const fallbackSummary =
-        extractWeeklyMaterialSummaryBox(
-          materyalSlice || cleanMateryal,
-          fakeWeekData
-        ) ||
-        `**${icerik_cercevesi || ogrenme_birimi || hafta_etiketi} Hafta Özeti:**\n• Bu haftada **${ogrenme_birimi || "ilgili öğrenme birimi"}** kapsamında **${icerik_cercevesi || "haftalık konu"}** ele alınmaktadır.\n• ${konu_ve_cikti_ozeti || ogrenme_ciktilari || "Öğrenme çıktıları ve süreç bileşenleri doğrultusunda temel kavramlar ve uygulama adımları incelenir."}`;
+      // Deterministic baseline plan
+      const baselinePlan = enforceAndMergeLessonPlan(
+        null,
+        structuredDbf,
+        weekData,
+        materyalSlice,
+        {
+          dersIsmi,
+          sinifDuzeyi,
+        }
+      );
 
-      const topicLabel =
-        icerik_cercevesi || ogrenme_birimi || "bu haftanın konusu";
-      const fallbackQuestions: string[] = [
-        `${topicLabel} konusunun temel kavramları ve mesleki uygulamadaki önemi nedir?`,
-        `${ogrenme_birimi || topicLabel} kapsamında dikkat edilmesi gereken başlıca uygulama basamakları nelerdir?`,
-        ...subCompLines.slice(0, 2).map((sub) => {
-          const cleanSub = sub
-            .replace(/^[a-zçğıöşü]\)\s*/i, "")
-            .replace(/\.$/, "")
-            .trim();
-          return `"${cleanSub}" süreci uygulamada nasıl gerçekleştirilir ve nelere dikkat edilmelidir?`;
-        }),
-        `${topicLabel} ile ilgili uygulamalarda karşılaşılabilecek olası sorunlar ve çözüm önerileri nelerdir?`,
-      ].slice(0, 5);
+      let aiGeneratedPartial: Partial<MaarifLessonPlan> | null = null;
+      let usedSource: "ai" | "maarif-motoru" = "maarif-motoru";
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (apiKey) {
         try {
-          const weekSummarySchema = {
+          const autocompleteSchema = {
             type: Type.OBJECT,
             properties: {
-              haftaOzeti: {
+              Ogrenme_Birimi: { type: Type.STRING },
+              Sure: { type: Type.STRING },
+              Alan_Becerileri: { type: Type.STRING },
+              Egilimler: { type: Type.STRING },
+              Sosyal_Duygusal_Ogrenme_Becerileri: { type: Type.STRING },
+              Degerler: { type: Type.STRING },
+              Okuryazarlik_Becerileri: { type: Type.STRING },
+              Disiplinler_Arasi_Iliski: { type: Type.STRING },
+              Beceriler_Arasi_Iliski: { type: Type.STRING },
+              Ogrenme_Ciktilari_ve_Surec_Bilesenleri: {
                 type: Type.STRING,
                 description:
-                  "Seçilen haftanın ders materyali içeriğinden ve öğrenme çıktılarından sentezlenen, önemli kavramları (**kalın** vurgulu) ve maddeleri (• ile başlayan satırlar) içeren kapsamlı Hafta Özeti.",
+                  "Maarif kodu (örn: ST.1.1.) ile başlayan öğrenme çıktısı ve alt satırlarda a), b), c) şeklinde süreç bileşenleri.",
               },
-              ogrenciCalismaSorulari: {
+              Icerik_Cercevesi: { type: Type.STRING },
+              Ogrenme_Kanitlari: {
+                type: Type.STRING,
+                description:
+                  "Bu haftanın konusuna ve öğrenme çıktısına uygun ölçme ve değerlendirme kanıtları (Performans görevi, gözlem formu, kontrol listesi, açık uçlu sorular vb.).",
+              },
+              Temel_Kabuller: { type: Type.STRING },
+              On_Degerlendirme_Sureci: { type: Type.STRING },
+              Kopru_Kurma: { type: Type.STRING },
+              Ogretme_Uygulamalari: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
                 description:
-                  "Ders materyalindeki bu haftanın konusuna yönelik, öğrencilerin konuyu pekiştirmesini sağlayan 5 adet açık uçlu Öğrenci Çalışma Sorusu ('?' ile biten).",
+                  "Dersin işlenişini adım adım anlatan, süreç bileşenleriyle (a, b, c) uyumlu en az 4-5 adet zengin ve pedagojik Öğretme Uygulaması maddesi.",
+              },
+              Guduleme: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              Dikkat_Cekme: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              Ek_Ogretme_Uygulamalari: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              Farklilastirma: {
+                type: Type.STRING,
+                description:
+                  "Zenginleştirme: ... ve Destekleme: ... başlıklarını içeren farklılaştırma açıklaması.",
               },
             },
-            required: ["haftaOzeti", "ogrenciCalismaSorulari"],
+            required: [
+              "Ogrenme_Birimi",
+              "Alan_Becerileri",
+              "Egilimler",
+              "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+              "Icerik_Cercevesi",
+              "Ogrenme_Kanitlari",
+              "Temel_Kabuller",
+              "On_Degerlendirme_Sureci",
+              "Kopru_Kurma",
+              "Ogretme_Uygulamalari",
+              "Guduleme",
+              "Dikkat_Cekme",
+              "Ek_Ogretme_Uygulamalari",
+              "Farklilastirma",
+            ],
           };
 
           const prompt = `<gorev>
-Aşağıdaki seçilen hafta bilgilerini ve <ders_materyali> kesitini inceleyerek bu haftaya özel:
-1) 'haftaOzeti': Ders materyalinden bu haftanın konusu ("${icerik_cercevesi}") ve öğrenme çıktılarıyla doğrudan örtüşen, önemli kavramları **kalın** vurgulayan ve maddeler (•) halinde düzenlenmiş, anlaşılır ve doyurucu bir Hafta Özeti oluştur.
-2) 'ogrenciCalismaSorulari': Doğrudan bu haftanın ders materyali içeriğine ve süreç bileşenlerine dayanan, öğrencinin kavrama, analiz ve uygulama becerisini ölçen 5 adet özgün Öğrenci Çalışma Sorusu ('?' ile biten) oluştur.
+Aşağıdaki MEB Türkiye Yüzyılı Maarif Modeli günlük ders planında eksik veya geliştirilmesi gereken alanları (özellikle Öğretme Uygulamaları, Öğrenme Kanıtları, Öğrenme Çıktıları ve Süreç Bileşenleri, Hazırlık Süreçleri, Alan Becerileri, Eğilimler ve Farklılaştırma) dersin konusuna, öğrenme birimine ve varsa kaynak dokümanlara tam uyumlu olarak tamamla.
 
-KESİN KURAL: Kitap künyesi, MEB onay/olur tarih ve sayıları, İstiklal Marşı veya Gençliğe Hitabe gibi ön sayfa metinlerini ASLA kullanma.
+Hedef Alan: ${targetIssueId}
+Ders: ${dersIsmi}
+Sınıf: ${sinifDuzeyi}
+Hafta: ${haftaEtiketi} (${tarihAraligi})
+Mevcut Öğrenme Birimi: ${ogrenmeBirimi || baselinePlan.Ders_Bilgisi.Ogrenme_Birimi}
+Mevcut İçerik Çerçevesi (Konu): ${icerikCercevesi || baselinePlan.Icerik_Cercevesi}
+Mevcut Öğrenme Çıktıları:
+${ogrenmeCiktilari || baselinePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri}
+
+Kurallar:
+1. 'Ogretme_Uygulamalari' alanında dersin konusuna ("${icerikCercevesi || baselinePlan.Icerik_Cercevesi || dersIsmi}") özel, öğretmenin ve öğrencinin derste yapacağı etkinlikleri anlatan 4-6 adet somut ve nitelikli uygulama basamağı üret.
+2. 'Ogrenme_Kanitlari' alanında bu konunun nasıl ölçüleceğini (gözlem formu, dereceli puanlama anahtarı, açık uçlu soru, uygulama kontrol listesi vb.) somut olarak yaz.
+3. 'Ogrenme_Ciktilari_ve_Surec_Bilesenleri' alanında mutlaka Maarif formatında kod (örn: BÜY.1.1. veya dersin baş harflerinden oluşan kod) ve alt satırlarda a), b), c) süreç bileşenleri yer alsın.
+4. Kitap künyesi, MEB onay/olur sayıları veya İstiklal Marşı gibi ön sayfa metinlerini ASLA kullanma.
 </gorev>
 
-<hafta_bilgileri>
-Ders: ${ders_ismi} (${sinif_duzeyi})
-Hafta: ${hafta_etiketi} (${tarih_araligi})
-Öğrenme Birimi: ${ogrenme_birimi}
-İçerik Çerçevesi (Konu): ${icerik_cercevesi}
-Kazanım ve Süreç Bileşenleri:
-${ogrenme_ciktilari || konu_ve_cikti_ozeti}
-</hafta_bilgileri>
+<mevcut_plan_ozeti>
+${JSON.stringify(currentPlan, null, 2)}
+</mevcut_plan_ozeti>
 
-<ders_materyali>
-${materyalSlice || cleanMateryal.slice(0, 10000)}
-</ders_materyali>`;
+<kaynak_kesiti>
+${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000)).slice(0, 8000)}
+</kaynak_kesiti>`;
 
           const rawJson = await generateWithFallback(
             apiKey,
             prompt,
-            "Sen MEB Türkiye Yüzyılı Maarif Modeli ders materyallerinden haftalık konu özeti ve öğrenci çalışma soruları hazırlayan uzman bir öğretmensin.",
-            weekSummarySchema
+            "Sen MEB Türkiye Yüzyılı Maarif Modeli günlük ders planlarındaki eksik alanları (Öğretme Uygulamaları, Öğrenme Kanıtları, Süreç Bileşenleri, Farklılaştırma vb.) pedagojik ve resmi standartlara tam uygun şekilde tamamlayan uzman bir eğitim programcısısın.",
+            autocompleteSchema
           );
           const parsed = JSON.parse(rawJson);
-          const cleanedOzet = applyBlacklistAndDensityFilter(
-            String(parsed.haftaOzeti || "").trim(),
-            [ogrenme_birimi, icerik_cercevesi]
-          );
-          const cleanedQuestions = Array.isArray(parsed.ogrenciCalismaSorulari)
-            ? parsed.ogrenciCalismaSorulari
-                .map((q: unknown) =>
-                  applyBlacklistAndDensityFilter(String(q || "").trim(), [
-                    ogrenme_birimi,
-                    icerik_cercevesi,
-                  ])
-                )
-                .filter((q: string) => q.length >= 10)
-            : [];
-
-          if (cleanedOzet.length >= 40) {
-            res.json({
-              success: true,
-              haftaOzeti: cleanedOzet,
-              ogrenciCalismaSorulari:
-                cleanedQuestions.length > 0
-                  ? cleanedQuestions
-                  : fallbackQuestions,
-              source: "ai",
-            });
-            return;
-          }
+          aiGeneratedPartial = {
+            Ders_Bilgisi: {
+              Sinif: sinifDuzeyi,
+              Ders: dersIsmi,
+              Ogrenme_Birimi: String(parsed.Ogrenme_Birimi || "").trim(),
+              Sure: String(parsed.Sure || "2 Ders Saati").trim(),
+              Alan_Becerileri: String(parsed.Alan_Becerileri || "").trim(),
+              Egilimler: String(parsed.Egilimler || "").trim(),
+            },
+            Programlar_Arasi_Bilesenler: {
+              Sosyal_Duygusal_Ogrenme_Becerileri: String(
+                parsed.Sosyal_Duygusal_Ogrenme_Becerileri || ""
+              ).trim(),
+              Degerler: String(parsed.Degerler || "").trim(),
+              Okuryazarlik_Becerileri: String(
+                parsed.Okuryazarlik_Becerileri || ""
+              ).trim(),
+              Disiplinler_Arasi_Iliski: String(
+                parsed.Disiplinler_Arasi_Iliski || ""
+              ).trim(),
+              Beceriler_Arasi_Iliski: String(
+                parsed.Beceriler_Arasi_Iliski || ""
+              ).trim(),
+            },
+            Ogrenme_Ciktilari_ve_Surec_Bilesenleri: String(
+              parsed.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""
+            ).trim(),
+            Icerik_Cercevesi: String(parsed.Icerik_Cercevesi || "").trim(),
+            Ogrenme_Kanitlari: String(parsed.Ogrenme_Kanitlari || "").trim(),
+            Ogrenme_Ogretme_Yasantilari: {
+              Temel_Kabuller: String(parsed.Temel_Kabuller || "").trim(),
+              On_Degerlendirme_Sureci: String(
+                parsed.On_Degerlendirme_Sureci || ""
+              ).trim(),
+              Kopru_Kurma: String(parsed.Kopru_Kurma || "").trim(),
+              Ogretme_Uygulamalari: Array.isArray(parsed.Ogretme_Uygulamalari)
+                ? parsed.Ogretme_Uygulamalari.map((s: unknown) =>
+                    String(s || "")
+                      .replace(/^\*\s*/, "")
+                      .trim()
+                  ).filter(Boolean)
+                : [],
+              Guduleme: Array.isArray(parsed.Guduleme)
+                ? parsed.Guduleme.map((s: unknown) =>
+                    String(s || "")
+                      .replace(/^\*\s*/, "")
+                      .trim()
+                  ).filter(Boolean)
+                : [],
+              Dikkat_Cekme: Array.isArray(parsed.Dikkat_Cekme)
+                ? parsed.Dikkat_Cekme.map((s: unknown) =>
+                    String(s || "")
+                      .replace(/^\*\s*/, "")
+                      .trim()
+                  ).filter(Boolean)
+                : [],
+              Ek_Ogretme_Uygulamalari: Array.isArray(
+                parsed.Ek_Ogretme_Uygulamalari
+              )
+                ? parsed.Ek_Ogretme_Uygulamalari.map((s: unknown) =>
+                    String(s || "")
+                      .replace(/^\*\s*/, "")
+                      .trim()
+                  ).filter(Boolean)
+                : [],
+            },
+            Farklilastirma: String(parsed.Farklilastirma || "").trim(),
+          };
+          usedSource = "ai";
         } catch (aiErr) {
           console.warn(
-            "AI week detail summary fallback to deterministic material extractor:",
+            "AI autocomplete fallback to Maarif deterministic engine:",
             aiErr
           );
         }
       }
 
+      // Merge AI partial with baselinePlan so every field has a rich value ready
+      const richCandidate = enforceAndMergeLessonPlan(
+        aiGeneratedPartial,
+        structuredDbf,
+        weekData,
+        materyalSlice,
+        {
+          dersIsmi,
+          sinifDuzeyi,
+        }
+      );
+
+      // Ensure Ogrenme_Ciktilari has a Maarif code and subcomponents (a, b, c) if missing
+      const coursePrefix =
+        dersIsmi
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((w) => w[0]?.toLocaleUpperCase("tr-TR") || "")
+          .join("")
+          .slice(0, 4) || "DRS";
+      const candidateOutcomes =
+        aiGeneratedPartial?.Ogrenme_Ciktilari_ve_Surec_Bilesenleri ||
+        richCandidate.Ogrenme_Ciktilari_ve_Surec_Bilesenleri ||
+        `${coursePrefix}.1.1. ${
+          icerikCercevesi || ogrenmeBirimi || dersIsmi
+        } konusuna ilişkin temel kavram ve uygulamaları açıklayabilme\na) Konuya ilişkin temel kavram ve ilkeleri belirler.\nb) Belirlenen ilkeler doğrultusunda işlem basamaklarını ilişkilendirir.\nc) Uygulama sürecini iş sağlığı ve güvenliği kurallarına uygun olarak değerlendirir.`;
+
+      const completedFields: string[] = [];
+      const updatedPlan: MaarifLessonPlan = {
+        Ders_Bilgisi: {
+          Sinif:
+            currentPlan.Ders_Bilgisi?.Sinif?.trim() ||
+            richCandidate.Ders_Bilgisi.Sinif,
+          Ders:
+            currentPlan.Ders_Bilgisi?.Ders?.trim() &&
+            currentPlan.Ders_Bilgisi.Ders.trim() !== "DERS"
+              ? currentPlan.Ders_Bilgisi.Ders
+              : richCandidate.Ders_Bilgisi.Ders,
+          Ogrenme_Birimi:
+            currentPlan.Ders_Bilgisi?.Ogrenme_Birimi?.trim() &&
+            !/^VE\s*SÜRE$/i.test(currentPlan.Ders_Bilgisi.Ogrenme_Birimi.trim()) &&
+            targetIssueId !== "bos-birim" &&
+            targetIssueId !== "supheli-birim"
+              ? currentPlan.Ders_Bilgisi.Ogrenme_Birimi
+              : (completedFields.push("Öğrenme Birimi"),
+                aiGeneratedPartial?.Ders_Bilgisi?.Ogrenme_Birimi ||
+                  richCandidate.Ders_Bilgisi.Ogrenme_Birimi),
+          Sure:
+            currentPlan.Ders_Bilgisi?.Sure?.trim() &&
+            targetIssueId !== "bos-sure"
+              ? currentPlan.Ders_Bilgisi.Sure
+              : (completedFields.push("Süre"),
+                richCandidate.Ders_Bilgisi.Sure || "2 Ders Saati"),
+          Alan_Becerileri:
+            currentPlan.Ders_Bilgisi?.Alan_Becerileri?.trim() &&
+            targetIssueId !== "bos-alan-becerileri"
+              ? currentPlan.Ders_Bilgisi.Alan_Becerileri
+              : (completedFields.push("Alan Becerileri"),
+                aiGeneratedPartial?.Ders_Bilgisi?.Alan_Becerileri ||
+                  richCandidate.Ders_Bilgisi.Alan_Becerileri),
+          Egilimler:
+            currentPlan.Ders_Bilgisi?.Egilimler?.trim() &&
+            targetIssueId !== "bos-egilimler"
+              ? currentPlan.Ders_Bilgisi.Egilimler
+              : (completedFields.push("Eğilimler"),
+                aiGeneratedPartial?.Ders_Bilgisi?.Egilimler ||
+                  richCandidate.Ders_Bilgisi.Egilimler),
+        },
+        Programlar_Arasi_Bilesenler: {
+          Sosyal_Duygusal_Ogrenme_Becerileri:
+            currentPlan.Programlar_Arasi_Bilesenler?.Sosyal_Duygusal_Ogrenme_Becerileri?.trim() &&
+            targetIssueId !== "bos-programlar-arasi"
+              ? currentPlan.Programlar_Arasi_Bilesenler
+                  .Sosyal_Duygusal_Ogrenme_Becerileri
+              : (completedFields.push("Sosyal-Duygusal Öğrenme Becerileri"),
+                aiGeneratedPartial?.Programlar_Arasi_Bilesenler
+                  ?.Sosyal_Duygusal_Ogrenme_Becerileri ||
+                  richCandidate.Programlar_Arasi_Bilesenler
+                    .Sosyal_Duygusal_Ogrenme_Becerileri),
+          Degerler:
+            currentPlan.Programlar_Arasi_Bilesenler?.Degerler?.trim() &&
+            targetIssueId !== "bos-programlar-arasi"
+              ? currentPlan.Programlar_Arasi_Bilesenler.Degerler
+              : (completedFields.push("Değerler"),
+                aiGeneratedPartial?.Programlar_Arasi_Bilesenler?.Degerler ||
+                  richCandidate.Programlar_Arasi_Bilesenler.Degerler),
+          Okuryazarlik_Becerileri:
+            currentPlan.Programlar_Arasi_Bilesenler?.Okuryazarlik_Becerileri?.trim() &&
+            targetIssueId !== "bos-programlar-arasi"
+              ? currentPlan.Programlar_Arasi_Bilesenler.Okuryazarlik_Becerileri
+              : (completedFields.push("Okuryazarlık Becerileri"),
+                aiGeneratedPartial?.Programlar_Arasi_Bilesenler
+                  ?.Okuryazarlik_Becerileri ||
+                  richCandidate.Programlar_Arasi_Bilesenler
+                    .Okuryazarlik_Becerileri),
+          Disiplinler_Arasi_Iliski:
+            currentPlan.Programlar_Arasi_Bilesenler?.Disiplinler_Arasi_Iliski?.trim() &&
+            targetIssueId !== "bos-programlar-arasi"
+              ? currentPlan.Programlar_Arasi_Bilesenler.Disiplinler_Arasi_Iliski
+              : aiGeneratedPartial?.Programlar_Arasi_Bilesenler
+                  ?.Disiplinler_Arasi_Iliski ||
+                richCandidate.Programlar_Arasi_Bilesenler
+                  .Disiplinler_Arasi_Iliski,
+          Beceriler_Arasi_Iliski:
+            currentPlan.Programlar_Arasi_Bilesenler?.Beceriler_Arasi_Iliski?.trim() &&
+            targetIssueId !== "bos-programlar-arasi"
+              ? currentPlan.Programlar_Arasi_Bilesenler.Beceriler_Arasi_Iliski
+              : aiGeneratedPartial?.Programlar_Arasi_Bilesenler
+                  ?.Beceriler_Arasi_Iliski ||
+                richCandidate.Programlar_Arasi_Bilesenler.Beceriler_Arasi_Iliski,
+        },
+        Ogrenme_Ciktilari_ve_Surec_Bilesenleri:
+          currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri?.trim() &&
+          /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}/.test(
+            currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+          ) &&
+          /\b[a-zçğıöşü]\)\s+/i.test(
+            currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+          ) &&
+          targetIssueId !== "cikti-bos" &&
+          targetIssueId !== "cikti-kod-eksik" &&
+          targetIssueId !== "cikti-alt-madde-eksik"
+            ? currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
+            : (completedFields.push("Öğrenme Çıktıları ve Süreç Bileşenleri"),
+              candidateOutcomes),
+        Icerik_Cercevesi:
+          currentPlan.Icerik_Cercevesi?.trim() &&
+          targetIssueId !== "bos-icerik-cercevesi"
+            ? currentPlan.Icerik_Cercevesi
+            : (completedFields.push("İçerik Çerçevesi"),
+              aiGeneratedPartial?.Icerik_Cercevesi ||
+                richCandidate.Icerik_Cercevesi),
+        Ogrenme_Kanitlari:
+          currentPlan.Ogrenme_Kanitlari?.trim() &&
+          targetIssueId !== "bos-ogrenme-kanitlari"
+            ? currentPlan.Ogrenme_Kanitlari
+            : (completedFields.push("Öğrenme Kanıtları"),
+              aiGeneratedPartial?.Ogrenme_Kanitlari ||
+                richCandidate.Ogrenme_Kanitlari),
+        Ogrenme_Ogretme_Yasantilari: {
+          Temel_Kabuller:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Temel_Kabuller?.trim() &&
+            targetIssueId !== "eksik-hazirlik-surecleri"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller
+              : (completedFields.push("Temel Kabuller"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari
+                  ?.Temel_Kabuller ||
+                  richCandidate.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller),
+          On_Degerlendirme_Sureci:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.On_Degerlendirme_Sureci?.trim() &&
+            targetIssueId !== "eksik-hazirlik-surecleri"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci
+              : (completedFields.push("Ön Değerlendirme Süreci"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari
+                  ?.On_Degerlendirme_Sureci ||
+                  richCandidate.Ogrenme_Ogretme_Yasantilari
+                    .On_Degerlendirme_Sureci),
+          Kopru_Kurma:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Kopru_Kurma?.trim() &&
+            targetIssueId !== "eksik-hazirlik-surecleri"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma
+              : (completedFields.push("Köprü Kurma"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari?.Kopru_Kurma ||
+                  richCandidate.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma),
+          Ogretme_Uygulamalari:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari &&
+            currentPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.length >
+              0 &&
+            targetIssueId !== "bos-ogretme-uygulamalari"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari
+              : (completedFields.push("Öğretme Uygulamaları"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari
+                  ?.Ogretme_Uygulamalari &&
+                aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari
+                  .Ogretme_Uygulamalari.length > 0
+                  ? aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari
+                      .Ogretme_Uygulamalari
+                  : richCandidate.Ogrenme_Ogretme_Yasantilari
+                      .Ogretme_Uygulamalari),
+          Guduleme:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Guduleme &&
+            currentPlan.Ogrenme_Ogretme_Yasantilari.Guduleme.length > 0 &&
+            targetIssueId !== "bos-dikkat-guduleme"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Guduleme
+              : (completedFields.push("Güdüleme"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari?.Guduleme &&
+                aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari.Guduleme.length >
+                  0
+                  ? aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari.Guduleme
+                  : richCandidate.Ogrenme_Ogretme_Yasantilari.Guduleme),
+          Dikkat_Cekme:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Dikkat_Cekme &&
+            currentPlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme.length > 0 &&
+            targetIssueId !== "bos-dikkat-guduleme"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme
+              : (completedFields.push("Dikkat Çekme"),
+                aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari?.Dikkat_Cekme &&
+                aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme
+                  .length > 0
+                  ? aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme
+                  : richCandidate.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme),
+          Ek_Ogretme_Uygulamalari:
+            currentPlan.Ogrenme_Ogretme_Yasantilari?.Ek_Ogretme_Uygulamalari &&
+            currentPlan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari
+              .length > 0 &&
+            targetIssueId !== "bos-dikkat-guduleme"
+              ? currentPlan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari
+              : aiGeneratedPartial?.Ogrenme_Ogretme_Yasantilari
+                  ?.Ek_Ogretme_Uygulamalari &&
+                aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari
+                  .Ek_Ogretme_Uygulamalari.length > 0
+              ? aiGeneratedPartial.Ogrenme_Ogretme_Yasantilari
+                  .Ek_Ogretme_Uygulamalari
+              : richCandidate.Ogrenme_Ogretme_Yasantilari
+                  .Ek_Ogretme_Uygulamalari,
+        },
+        Farklilastirma:
+          currentPlan.Farklilastirma?.trim() &&
+          targetIssueId !== "bos-farklilastirma"
+            ? currentPlan.Farklilastirma
+            : (completedFields.push("Farklılaştırma"),
+              aiGeneratedPartial?.Farklilastirma ||
+                richCandidate.Farklilastirma),
+      };
+
       res.json({
         success: true,
-        haftaOzeti: fallbackSummary,
-        ogrenciCalismaSorulari: fallbackQuestions,
-        source: "materyal-motoru",
+        updatedPlan,
+        completedFields: Array.from(new Set(completedFields)),
+        source: usedSource,
       });
     } catch (err: unknown) {
-      console.error("Error in /api/summarize-week-detail:", err);
+      console.error("Error in /api/autocomplete-plan-fields:", err);
       res.status(500).json({
-        error: "Hafta özeti ve çalışma soruları oluşturulurken hata oluştu.",
+        error: "Plan eksik alanları otomatik tamamlanırken bir hata oluştu.",
       });
     }
   });
