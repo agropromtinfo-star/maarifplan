@@ -163,8 +163,49 @@ export function normalizeForUnitMatching(text: string): string {
  * 4. Inserts clean line breaks (\n) before inline PDF section headings and Maarif component columns
  *    that `unpdf` glued onto the end of preceding sentences (even when preceding lines have no trailing punctuation).
  */
+const STRIP_FRONT_MATTER_CACHE = new Map<string, string>();
+
+function buildTextCacheKey(str: string): string {
+  if (!str) return "empty";
+  const len = str.length;
+  if (len <= 240) return `${len}:${str}`;
+  const mid = Math.floor(len / 2);
+  return `${len}:${str.slice(0, 80)}:${str.slice(mid, mid + 80)}:${str.slice(-80)}`;
+}
+
 export function stripFrontMatter(rawText: string): string {
   if (!rawText) return "";
+
+  const cacheKey = buildTextCacheKey(rawText);
+  const cached = STRIP_FRONT_MATTER_CACHE.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // For very large documents (e.g. 100+ page textbook PDFs > 60,000 chars),
+  // front matter (imprint, İstiklal Marşı, Gençliğe Hitabe, TTKB decrees) is always in the first 25,000 chars.
+  // Avoid running 25 heavy regexes + line-by-line density analysis on 500,000+ chars!
+  if (rawText.length > 60000) {
+    const headRaw = rawText.slice(0, 25000);
+    const tailRaw = rawText.slice(25000);
+    const cleanedHead = stripFrontMatter(headRaw);
+    const cleanedTail = normalizeTurkishUnicode(tailRaw)
+      .replace(/ú/g, "ş")
+      .replace(/Ú/g, "Ş")
+      .replace(/þ/g, "ş")
+      .replace(/Þ/g, "Ş")
+      .replace(/ý/g, "ı")
+      .replace(/Ý/g, "İ")
+      .replace(/ð/g, "ğ")
+      .replace(/Ð/g, "Ğ");
+    const combinedResult = `${cleanedHead}\n${cleanedTail}`.trim();
+    if (STRIP_FRONT_MATTER_CACHE.size > 40) {
+      const firstKey = STRIP_FRONT_MATTER_CACHE.keys().next().value;
+      if (firstKey) STRIP_FRONT_MATTER_CACHE.delete(firstKey);
+    }
+    STRIP_FRONT_MATTER_CACHE.set(cacheKey, combinedResult);
+    return combinedResult;
+  }
 
   const normalized = normalizeTurkishUnicode(rawText)
     // Remove standalone or glued MEB annex markers ("EK-3", "EK-1", "EK - 3") cleanly BEFORE heading splitting
@@ -315,7 +356,7 @@ export function stripFrontMatter(rawText: string): string {
     }
     return true;
   });
-  return applyBlacklistAndDensityFilter(
+  const finalCleaned = applyBlacklistAndDensityFilter(
     cleanedLines
       .join("\n")
       .replace(
@@ -328,6 +369,12 @@ export function stripFrontMatter(rawText: string): string {
       )
       .trim()
   );
+  if (STRIP_FRONT_MATTER_CACHE.size > 40) {
+    const firstKey = STRIP_FRONT_MATTER_CACHE.keys().next().value;
+    if (firstKey) STRIP_FRONT_MATTER_CACHE.delete(firstKey);
+  }
+  STRIP_FRONT_MATTER_CACHE.set(cacheKey, finalCleaned);
+  return finalCleaned;
 }
 
 /**
@@ -460,14 +507,19 @@ export function analyzeBlacklistAndTextDensity(
   const digitAndPunctDensity =
     nonAlphaMatches.length / Math.max(1, normalized.length);
 
+  const hasDigit = /\d/.test(normalized);
+
   // Detect valid MEB annual plan & curriculum structural tokens (weeks 1..42, dates, hours, Maarif codes, sub-bullets)
   const hasCurriculumStructureToken =
-    /\b\d{1,2}\s*\.\s*hafta\b|\bhafta\s*[:|-]?\s*\d{1,2}\b/i.test(normalized) ||
-    Boolean(extractDateRangeFromText(normalized)) ||
-    /\b\d{1,2}\s*(?:ders\s*)?saat[i]?\b/i.test(normalized) ||
-    /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}|(?:SDB|KB|OB|AB|E|D)\d{1,2})\b/i.test(
-      normalized
-    ) ||
+    (hasDigit &&
+      (/\b\d{1,2}\s*\.\s*hafta\b|\bhafta\s*[:|-]?\s*\d{1,2}\b/i.test(
+        normalized
+      ) ||
+        /\b\d{1,2}\s*(?:ders\s*)?saat[i]?\b/i.test(normalized) ||
+        /\b(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}|(?:SDB|KB|OB|AB|E|D)\d{1,2})\b/i.test(
+          normalized
+        ) ||
+        Boolean(extractDateRangeFromText(normalized)))) ||
     /(?:^|\s)[a-zçğıöşü]\)\s/i.test(normalized) ||
     /\b(?:ünite|öğrenme\s*birimi|alan\s*becerileri|kavramsal\s*beceriler|eğilimler)\b/i.test(
       lower
@@ -1325,8 +1377,12 @@ export function parseMateryalChapterTree(
     return { unitsByNumber, sectionsByUnitAndOutcome };
   }
 
-  // Scan the first 45,000 chars (covers Table of Contents + Unit introductions) plus heading lines across the book
-  const lines = rawDersMateryaliText.split(/\r?\n/);
+  // Scan the first 120,000 chars (covers Table of Contents + Unit introductions + chapter headings without splitting multi-MB strings)
+  const boundedText =
+    rawDersMateryaliText.length > 120000
+      ? rawDersMateryaliText.slice(0, 120000)
+      : rawDersMateryaliText;
+  const lines = boundedText.split(/\r?\n/);
 
   const unitRegex =
     /(?:^|\s)(\d{1,2})\s*\.\s*ÖĞRENME\s*BİRİMİ\s*[:|-]?\s*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s-]{2,50}?)(?=\s*\.{2,}|\s+\d{1,3}\s*$|$)/i;
@@ -1852,13 +1908,22 @@ export function splitOgretmeUygulamalariIntoBullets(
 /**
  * Full structured parser for MEB Türkiye Yüzyılı Maarif Modeli "Ders Bilgi Formu", "Yıllık Plan", and "Ders Materyali"
  */
+const STRUCTURED_DBF_CACHE = new Map<string, StructuredDersBilgiFormu>();
+
 export function parseDersBilgiFormuStructured(
   dersBilgiFormuText: string,
   yillikPlanText = "",
   dersMateryaliText = ""
 ): StructuredDersBilgiFormu {
-  const cleanDbf = stripFrontMatter(dersBilgiFormuText || "");
-  const cleanYillik = stripFrontMatter(yillikPlanText || "");
+  const dbfCacheKey = `${buildTextCacheKey(dersBilgiFormuText)}||${buildTextCacheKey(yillikPlanText)}||${buildTextCacheKey(dersMateryaliText)}`;
+  const cachedDbf = STRUCTURED_DBF_CACHE.get(dbfCacheKey);
+  if (cachedDbf) {
+    return cachedDbf;
+  }
+
+  // Cap large textbook/DBF strings if accidentally uploaded into DBF/Yillik slots so regex parsing stays <15ms
+  const cleanDbf = stripFrontMatter((dersBilgiFormuText || "").slice(0, 180000));
+  const cleanYillik = stripFrontMatter((yillikPlanText || "").slice(0, 150000));
 
   const combined = `${cleanDbf}\n\n${cleanYillik}`;
   const dbfLines = cleanDbf
@@ -2930,7 +2995,7 @@ export function parseDersBilgiFormuStructured(
     combined.match(/\b(?:SDB|KB|OB|E|D)\d{1,2}(?:\.\d{1,2})*\b/g) || [];
   const rawActivityCodes = Array.from(new Set(rawCodeMatches));
 
-  return {
+  const result: StructuredDersBilgiFormu = {
     sinif: meta.sinifDuzeyi || "9. SINIF",
     ders: meta.dersIsmi || "MESLEK DERSİ",
     sure: meta.sure || "2 Ders Saati",
@@ -2958,6 +3023,12 @@ export function parseDersBilgiFormuStructured(
     rawDbfText: cleanDbf,
     rawYillikPlanText: cleanYillik,
   };
+  if (STRUCTURED_DBF_CACHE.size > 15) {
+    const firstKey = STRUCTURED_DBF_CACHE.keys().next().value;
+    if (firstKey) STRUCTURED_DBF_CACHE.delete(firstKey);
+  }
+  STRUCTURED_DBF_CACHE.set(dbfCacheKey, result);
+  return result;
 }
 
 export interface WeekSpecificExtraction {
@@ -2977,6 +3048,8 @@ export interface WeekSpecificExtraction {
   searchKeywords: string[];
 }
 
+const WEEK_PLAN_STRUCTURED_CACHE = new Map<string, WeekSpecificExtraction>();
+
 export function extractWeekPlanStructured(
   yillikPlanText: string,
   haftaEtiketi: string,
@@ -2984,7 +3057,13 @@ export function extractWeekPlanStructured(
   structuredDbf: StructuredDersBilgiFormu,
   selectedWeekObj?: YillikPlanWeekItem | null
 ): WeekSpecificExtraction {
-  const cleanYillik = stripFrontMatter(yillikPlanText || "");
+  const weekCacheKey = `${buildTextCacheKey(yillikPlanText)}||${haftaEtiketi}||${tarihAraligi}||${structuredDbf.ders}||${selectedWeekObj?.haftaNo || ""}||${selectedWeekObj?.ogrenmeBirimi || ""}||${selectedWeekObj?.konuVeCiktiOzeti || ""}`;
+  const cachedWeek = WEEK_PLAN_STRUCTURED_CACHE.get(weekCacheKey);
+  if (cachedWeek) {
+    return cachedWeek;
+  }
+
+  const cleanYillik = stripFrontMatter((yillikPlanText || "").slice(0, 150000));
   const lines = cleanYillik
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -4062,7 +4141,7 @@ export function extractWeekPlanStructured(
     }
   }
 
-  return {
+  const weekResult: WeekSpecificExtraction = {
     haftaNo: targetWeekNo,
     haftaEtiketi: haftaEtiketi || `${targetWeekNo}. HAFTA`,
     tarihAraligi: detectedTarihAraligi || tarihAraligi,
@@ -4078,6 +4157,12 @@ export function extractWeekPlanStructured(
     rawWeekWindowText,
     searchKeywords: Array.from(searchKeywords),
   };
+  if (WEEK_PLAN_STRUCTURED_CACHE.size > 160) {
+    const firstKey = WEEK_PLAN_STRUCTURED_CACHE.keys().next().value;
+    if (firstKey) WEEK_PLAN_STRUCTURED_CACHE.delete(firstKey);
+  }
+  WEEK_PLAN_STRUCTURED_CACHE.set(weekCacheKey, weekResult);
+  return weekResult;
 }
 
 export function extractWeekMateryalSlice(

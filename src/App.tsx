@@ -325,6 +325,20 @@ export default function App() {
     ders_bilgi_formu: null,
   });
 
+  const [uploadProgressText, setUploadProgressText] = useState<
+    Record<UploadFieldKey, string | null>
+  >({
+    yillik_plan: null,
+    ders_materyali: null,
+    ders_bilgi_formu: null,
+  });
+
+  const MAX_TEXTAREA_DISPLAY_CHARS = 25000;
+  const getSafeTextareaDisplayValue = (rawText: string): string => {
+    if (rawText.length <= MAX_TEXTAREA_DISPLAY_CHARS) return rawText;
+    return `${rawText.slice(0, MAX_TEXTAREA_DISPLAY_CHARS)}\n\n... [Büyük Doküman Koruma Modu: Tarayıcının donmaması için ilk ${MAX_TEXTAREA_DISPLAY_CHARS.toLocaleString("tr-TR")} karakter önizleniyor. Toplam ${rawText.length.toLocaleString("tr-TR")} karakterin tamamı bellekte yüklüdür ve plan üretiminde eksiksiz kullanılır.]`;
+  };
+
   const isAnyUploading =
     uploadingFields.yillik_plan ||
     uploadingFields.ders_materyali ||
@@ -752,7 +766,11 @@ export default function App() {
   // and unit/topic-filtered 'Öğrenme Kanıtları' & 'Öğretme Uygulamaları' from dersBilgiFormu
   const analyzeWeeksFromYillikPlan = async (
     planText: string,
-    overrides?: { dbfText?: string; materyalText?: string }
+    overrides?: {
+      dbfText?: string;
+      materyalText?: string;
+      skipAiFetch?: boolean;
+    }
   ) => {
     const cleanText = (planText || "").trim();
     const requestId = ++weekParseRequestIdRef.current;
@@ -810,13 +828,22 @@ export default function App() {
       }));
     }
 
+    // Skip slow network AI week parsing if local deterministic engine already extracted >= 12 weeks or if skipAiFetch is set
+    if (overrides?.skipAiFetch || localDeterministicWeeks.length >= 12) {
+      return;
+    }
+
     setIsParsingWeeks(true);
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 12000);
     try {
       const response = await fetch("/api/parse-weeks", {
         method: "POST",
         headers: { "Content-Type": "text/plain; charset=utf-8" },
         body: `<yillik_plan>${cleanText.slice(0, 45000)}</yillik_plan>`,
+        signal: abortController.signal,
       });
+      clearTimeout(timeoutId);
       const parsed = await safeReadJsonResponse<{
         okulAdi?: string;
         dersIsmi?: string;
@@ -999,9 +1026,21 @@ export default function App() {
     }
 
     setUploadingFields((prev) => ({ ...prev, [fieldKey]: true }));
+    setUploadProgressText((prev) => ({
+      ...prev,
+      [fieldKey]: "Dosya hazırlanıyor...",
+    }));
 
     try {
-      const result = await extractFileContentHybrid(file);
+      const result = await extractFileContentHybrid(file, {
+        fieldKey,
+        onProgress: (progressMsg) => {
+          setUploadProgressText((prev) => ({
+            ...prev,
+            [fieldKey]: progressMsg,
+          }));
+        },
+      });
       const extractedText = result.text || "";
 
       setter(extractedText);
@@ -1009,6 +1048,13 @@ export default function App() {
         ...prev,
         [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
       }));
+
+      // Release upload spinner immediately after text extraction so the button never stays stuck
+      setUploadingFields((prev) => ({ ...prev, [fieldKey]: false }));
+      setUploadProgressText((prev) => ({ ...prev, [fieldKey]: null }));
+
+      // Yield a frame so the browser paints the uploaded badge before running any secondary sync
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       // Never auto-overwrite user's manual Ders İsmi; only fill empty Okul Adı / Sınıf Düzeyi if unlocked
       if (result.detectedMeta) {
@@ -1068,7 +1114,7 @@ export default function App() {
           effectiveMateryal = "";
         }
 
-        await analyzeWeeksFromYillikPlan(extractedText, {
+        void analyzeWeeksFromYillikPlan(extractedText, {
           dbfText: effectiveDbf,
           materyalText: effectiveMateryal,
         });
@@ -1118,11 +1164,12 @@ export default function App() {
           });
         }
         if (yillikPlan.trim()) {
-          await analyzeWeeksFromYillikPlan(yillikPlan, {
+          void analyzeWeeksFromYillikPlan(yillikPlan, {
             dbfText:
               fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu,
             materyalText:
               fieldKey === "ders_materyali" ? extractedText : dersMateryali,
+            skipAiFetch: true,
           });
         }
       }
@@ -1135,6 +1182,7 @@ export default function App() {
       setErrorMessage(msg);
     } finally {
       setUploadingFields((prev) => ({ ...prev, [fieldKey]: false }));
+      setUploadProgressText((prev) => ({ ...prev, [fieldKey]: null }));
       if (inputElement) {
         inputElement.value = "";
       }
@@ -2497,7 +2545,10 @@ export default function App() {
                             {uploadingFields.yillik_plan ? (
                               <>
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>Dosya Okunuyor...</span>
+                                <span>
+                                  {uploadProgressText.yillik_plan ||
+                                    "Dosya Okunuyor..."}
+                                </span>
                               </>
                             ) : (
                               <>
@@ -2554,8 +2605,16 @@ export default function App() {
                       <textarea
                         id="input-yillik-plan"
                         rows={4}
-                        value={yillikPlan}
-                        onChange={(e) => setYillikPlan(e.target.value)}
+                        value={getSafeTextareaDisplayValue(yillikPlan)}
+                        onChange={(e) => {
+                          if (yillikPlan.length > MAX_TEXTAREA_DISPLAY_CHARS) {
+                            setUploadedFileNames((prev) => ({
+                              ...prev,
+                              yillik_plan: null,
+                            }));
+                          }
+                          setYillikPlan(e.target.value);
+                        }}
                         placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya yıllık plan metnini yapıştırın..."
                         className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-indigo-600 focus:outline-none"
                       />
@@ -2601,7 +2660,10 @@ export default function App() {
                             {uploadingFields.ders_materyali ? (
                               <>
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>Dosya Okunuyor...</span>
+                                <span>
+                                  {uploadProgressText.ders_materyali ||
+                                    "Dosya Okunuyor..."}
+                                </span>
                               </>
                             ) : (
                               <>
@@ -2658,8 +2720,16 @@ export default function App() {
                       <textarea
                         id="input-ders-materyali"
                         rows={4}
-                        value={dersMateryali}
-                        onChange={(e) => setDersMateryali(e.target.value)}
+                        value={getSafeTextareaDisplayValue(dersMateryali)}
+                        onChange={(e) => {
+                          if (dersMateryali.length > MAX_TEXTAREA_DISPLAY_CHARS) {
+                            setUploadedFileNames((prev) => ({
+                              ...prev,
+                              ders_materyali: null,
+                            }));
+                          }
+                          setDersMateryali(e.target.value);
+                        }}
                         placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya ders materyali metnini yapıştırın..."
                         className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-teal-600 focus:outline-none"
                       />
@@ -2709,7 +2779,10 @@ export default function App() {
                             {uploadingFields.ders_bilgi_formu ? (
                               <>
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>Dosya Okunuyor...</span>
+                                <span>
+                                  {uploadProgressText.ders_bilgi_formu ||
+                                    "Dosya Okunuyor..."}
+                                </span>
                               </>
                             ) : (
                               <>
@@ -2766,8 +2839,16 @@ export default function App() {
                       <textarea
                         id="input-ders-bilgi-formu"
                         rows={4}
-                        value={dersBilgiFormu}
-                        onChange={(e) => setDersBilgiFormu(e.target.value)}
+                        value={getSafeTextareaDisplayValue(dersBilgiFormu)}
+                        onChange={(e) => {
+                          if (dersBilgiFormu.length > MAX_TEXTAREA_DISPLAY_CHARS) {
+                            setUploadedFileNames((prev) => ({
+                              ...prev,
+                              ders_bilgi_formu: null,
+                            }));
+                          }
+                          setDersBilgiFormu(e.target.value);
+                        }}
                         placeholder="Dosya Yükle butonuna tıklayın, dosyayı buraya sürükleyin veya ders bilgi formu metnini yapıştırın..."
                         className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 leading-relaxed focus:border-sky-600 focus:outline-none"
                       />

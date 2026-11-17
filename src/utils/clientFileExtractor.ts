@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import mammoth from "mammoth";
-import { extractText } from "unpdf";
+import { getDocumentProxy } from "unpdf";
 import {
   MaarifLessonPlan,
   YillikPlanWeekItem,
@@ -76,7 +76,9 @@ export function extractDocumentMetadataClient(text: string): {
   dersIsmi: string;
   sinifDuzeyi: string;
 } {
-  const meta = extractCleanDocumentMetadata(text);
+  // Course metadata (school, course name, grade level) is always in the document header / first pages
+  const headerSlice = (text || "").slice(0, 18000);
+  const meta = extractCleanDocumentMetadata(headerSlice);
   return {
     okulAdi: meta.okulAdi,
     dersIsmi: meta.dersIsmi,
@@ -84,12 +86,21 @@ export function extractDocumentMetadataClient(text: string): {
   };
 }
 
+const QUICK_WEEKS_CACHE = new Map<string, YillikPlanWeekItem[]>();
+
 export function parseQuickWeeksClient(
   text: string,
   dersBilgiFormuText = "",
   dersMateryaliText = ""
 ): YillikPlanWeekItem[] {
-  const cleanYillik = stripFrontMatter(text || "");
+  if (!text || !text.trim()) return [];
+  const cacheKey = `${text.length}:${text.slice(0, 120)}:${dersBilgiFormuText.length}:${dersMateryaliText.length}`;
+  const cached = QUICK_WEEKS_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const cleanYillik = stripFrontMatter((text || "").slice(0, 150000));
   const lines = cleanYillik
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -194,7 +205,13 @@ export function parseQuickWeeksClient(
     });
   }
 
-  return weeks.sort((a, b) => a.haftaNo - b.haftaNo);
+  const sorted = weeks.sort((a, b) => a.haftaNo - b.haftaNo);
+  if (QUICK_WEEKS_CACHE.size > 15) {
+    const firstKey = QUICK_WEEKS_CACHE.keys().next().value;
+    if (firstKey) QUICK_WEEKS_CACHE.delete(firstKey);
+  }
+  QUICK_WEEKS_CACHE.set(cacheKey, sorted);
+  return sorted;
 }
 
 function extractLegacyDocText(buffer: ArrayBuffer): string {
@@ -235,27 +252,151 @@ export interface ClientExtractionResult {
     sinifDuzeyi: string;
   };
   method: "client" | "server";
+  totalPages?: number;
+}
+
+export interface ExtractFileOptions {
+  fieldKey?: "yillik_plan" | "ders_bilgi_formu" | "ders_materyali";
+  onProgress?: (statusText: string) => void;
+}
+
+/**
+ * Non-blocking chunked PDF text extractor.
+ * Processes pages in small async batches, cleans up page proxies immediately to keep memory flat,
+ * enforces a per-page timeout so complex vector diagram pages never hang PDF.js,
+ * and yields to the browser UI thread after every batch so the tab never freezes ("Sayfa Yanıt Vermiyor").
+ */
+async function extractPdfTextChunkedNonBlocking(
+  uint8: Uint8Array,
+  onProgress?: (statusText: string) => void
+): Promise<{ text: string; totalPages: number }> {
+  onProgress?.("PDF yapısı hazırlanıyor...");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const pdf = await getDocumentProxy(uint8);
+  const totalPages = pdf.numPages || 0;
+  const pageTexts: string[] = [];
+  const BATCH_SIZE = 4;
+  const MAX_TOTAL_CHARS = 450000;
+  const PER_PAGE_TIMEOUT_MS = 1800;
+  let accumulatedChars = 0;
+
+  try {
+    onProgress?.(`PDF açıldı (${totalPages} sayfa), metin çıkarılıyor...`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const extractSinglePageWithTimeout = async (
+      pageNo: number
+    ): Promise<string> => {
+      let pageProxy: Awaited<ReturnType<typeof pdf.getPage>> | undefined;
+      try {
+        const pagePromise = (async () => {
+          const loadedPage = await pdf.getPage(pageNo);
+          pageProxy = loadedPage;
+          const content = await loadedPage.getTextContent();
+          const pageStr = content.items
+            .map((item) => {
+              if (item && "str" in item && typeof item.str === "string") {
+                return item.str + (item.hasEOL ? "\n" : " ");
+              }
+              return "";
+            })
+            .join("")
+            .replace(/[^\S\n]+/g, " ")
+            .replace(/ ?\n ?/g, "\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+          return pageStr;
+        })();
+
+        const timeoutPromise = new Promise<string>((resolve) => {
+          setTimeout(() => resolve(""), PER_PAGE_TIMEOUT_MS);
+        });
+
+        return await Promise.race([pagePromise, timeoutPromise]);
+      } catch {
+        return "";
+      } finally {
+        try {
+          if (pageProxy && typeof pageProxy.cleanup === "function") {
+            pageProxy.cleanup();
+          }
+        } catch {
+          // ignore cleanup warnings
+        }
+      }
+    };
+
+    for (let startPage = 1; startPage <= totalPages; startPage += BATCH_SIZE) {
+      const endPage = Math.min(totalPages, startPage + BATCH_SIZE - 1);
+      const batchNumbers: number[] = [];
+      for (let p = startPage; p <= endPage; p++) {
+        batchNumbers.push(p);
+      }
+
+      const batchResults = await Promise.all(
+        batchNumbers.map((pNo) => extractSinglePageWithTimeout(pNo))
+      );
+
+      for (const pText of batchResults) {
+        if (pText) {
+          pageTexts.push(pText);
+          accumulatedChars += pText.length;
+        }
+      }
+
+      const pct = Math.min(100, Math.round((endPage / Math.max(1, totalPages)) * 100));
+      onProgress?.(
+        `PDF okunuyor: ${endPage} / ${totalPages} sayfa (%${pct})`
+      );
+
+      // Yield to browser UI event loop so React renders progress and browser never freezes
+      await new Promise((resolve) => setTimeout(resolve, 8));
+
+      if (accumulatedChars >= MAX_TOTAL_CHARS) {
+        break;
+      }
+    }
+  } finally {
+    try {
+      await pdf.loadingTask?.destroy?.();
+    } catch {
+      // ignore destroy warnings
+    }
+  }
+
+  return {
+    text: pageTexts.join("\n\n").trim(),
+    totalPages,
+  };
 }
 
 export async function extractFileContentHybrid(
-  file: File
+  file: File,
+  options?: ExtractFileOptions
 ): Promise<ClientExtractionResult> {
   const lowerName = file.name.toLowerCase();
+  const fieldKey = options?.fieldKey;
+  const onProgress = options?.onProgress;
+
+  onProgress?.("Dosya belleğe alınıyor...");
   const arrayBuffer = await file.arrayBuffer();
   let extractedText = "";
+  let totalPages: number | undefined;
 
   try {
     if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
       const uint8 = new Uint8Array(arrayBuffer);
-      const { text } = await extractText(uint8, { mergePages: true });
-      extractedText = (
-        Array.isArray(text) ? text.join("\n\n") : text || ""
-      ).trim();
+      const pdfRes = await extractPdfTextChunkedNonBlocking(uint8, onProgress);
+      extractedText = pdfRes.text;
+      totalPages = pdfRes.totalPages;
     } else if (
       lowerName.endsWith(".docx") ||
       file.type ===
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ) {
+      onProgress?.("Word (.docx) belgesi okunuyor...");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const result = await mammoth.extractRawText({ arrayBuffer });
       extractedText = (result.value || "").trim();
     } else if (
@@ -265,6 +406,8 @@ export async function extractFileContentHybrid(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
       file.type === "application/vnd.ms-excel"
     ) {
+      onProgress?.("Excel tablosu okunuyor...");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const workbook = XLSX.read(arrayBuffer, { type: "array" });
       const sheetTexts: string[] = [];
 
@@ -292,6 +435,8 @@ export async function extractFileContentHybrid(
       }
       extractedText = sheetTexts.join("\n\n").trim();
     } else if (lowerName.endsWith(".doc") || lowerName.endsWith(".rtf")) {
+      onProgress?.("Belge metni ayrıştırılıyor...");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       extractedText = extractLegacyDocText(arrayBuffer);
     } else if (
       lowerName.endsWith(".txt") ||
@@ -310,16 +455,22 @@ export async function extractFileContentHybrid(
   }
 
   if (extractedText.length >= 25) {
+    onProgress?.("İçerik yapılandırılıyor...");
+    await new Promise((resolve) => setTimeout(resolve, 0));
     return {
       text: extractedText,
-      quickWeeks: parseQuickWeeksClient(extractedText),
+      // Only parse 36-week rows if this file is Yıllık Plan!
+      quickWeeks:
+        fieldKey === "yillik_plan" ? parseQuickWeeksClient(extractedText) : [],
       detectedMeta: extractDocumentMetadataClient(extractedText),
       method: "client",
+      totalPages,
     };
   }
 
-  if (file.size <= 10 * 1024 * 1024) {
+  if (file.size <= 35 * 1024 * 1024) {
     try {
+      onProgress?.("Sunucu tabanlı metin çözümleyici çalışıyor...");
       const formData = new FormData();
       formData.append("file", file);
 
@@ -335,11 +486,15 @@ export async function extractFileContentHybrid(
           const clean = data.text.trim();
           return {
             text: clean,
-            quickWeeks: Array.isArray(data.quickWeeks)
-              ? data.quickWeeks
-              : parseQuickWeeksClient(clean),
+            quickWeeks:
+              fieldKey === "yillik_plan"
+                ? Array.isArray(data.quickWeeks) && data.quickWeeks.length > 0
+                  ? data.quickWeeks
+                  : parseQuickWeeksClient(clean)
+                : [],
             detectedMeta: extractDocumentMetadataClient(clean),
             method: "server",
+            totalPages,
           };
         }
       } catch {
@@ -356,9 +511,11 @@ export async function extractFileContentHybrid(
 
   return {
     text: fallbackText,
-    quickWeeks: parseQuickWeeksClient(fallbackText),
+    quickWeeks:
+      fieldKey === "yillik_plan" ? parseQuickWeeksClient(fallbackText) : [],
     detectedMeta: extractDocumentMetadataClient(fallbackText),
     method: "client",
+    totalPages,
   };
 }
 
