@@ -31,14 +31,19 @@ function formatOgrenmeCiktilariHtml(text: string): string {
   return lines
     .map((line, idx) => {
       const cleaned = line.replace(/^[•*-]\s*/, "");
-      if (idx === 0 || /^[A-ZÇĞİÖŞÜ]{2,6}\.\d+/.test(cleaned)) {
-        return `<div><strong>${escapeHtml(cleaned)}</strong></div>`;
-      }
       const subMatch = cleaned.match(/^([a-zçğıöşü]\))\s*(.*)$/i);
       if (subMatch) {
         return `<div><strong>${escapeHtml(subMatch[1])}</strong> ${escapeHtml(
           subMatch[2]
         )}</div>`;
+      }
+      if (
+        idx === 0 ||
+        /^(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d+|\d{1,2}(?:\.\d{1,2})?\.\s+[A-ZÇĞİÖŞÜ])/.test(
+          cleaned
+        )
+      ) {
+        return `<div><strong>${escapeHtml(cleaned)}</strong></div>`;
       }
       return `<div>${escapeHtml(cleaned)}</div>`;
     })

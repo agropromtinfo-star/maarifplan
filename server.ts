@@ -1260,7 +1260,8 @@ DERS NOTUNUN YAPISI VE KURALLARI:
         String(currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || "").trim();
 
       const structuredDbf = parseDersBilgiFormuStructured(
-        ders_bilgi_formu
+        ders_bilgi_formu,
+        yillik_plan
       );
 
       const weekData = extractWeekPlanStructured(
@@ -1524,11 +1525,15 @@ ${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000
             currentPlan.Ders_Bilgisi?.Ogrenme_Birimi?.trim() &&
             !/^VE\s*SÜRE$/i.test(currentPlan.Ders_Bilgisi.Ogrenme_Birimi.trim()) &&
             targetIssueId !== "bos-birim" &&
-            targetIssueId !== "supheli-birim"
+            targetIssueId !== "supheli-birim" &&
+            targetIssueId !== "tutarlilik-unite-yillik-plan" &&
+            targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+            targetIssueId !== "tutarlilik-all"
               ? currentPlan.Ders_Bilgisi.Ogrenme_Birimi
               : (completedFields.push("Öğrenme Birimi"),
-                aiGeneratedPartial?.Ders_Bilgisi?.Ogrenme_Birimi ||
-                  richCandidate.Ders_Bilgisi.Ogrenme_Birimi),
+                richCandidate.Ders_Bilgisi.Ogrenme_Birimi ||
+                  aiGeneratedPartial?.Ders_Bilgisi?.Ogrenme_Birimi ||
+                  ""),
           Sure:
             currentPlan.Ders_Bilgisi?.Sure?.trim() &&
             targetIssueId !== "bos-sure"
@@ -1595,7 +1600,7 @@ ${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000
         },
         Ogrenme_Ciktilari_ve_Surec_Bilesenleri:
           currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri?.trim() &&
-          /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}/.test(
+          /(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}|^\d{1,2}\.\s+[A-ZÇĞİÖŞÜ])/m.test(
             currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
           ) &&
           /\b[a-zçğıöşü]\)\s+/i.test(
@@ -1603,17 +1608,25 @@ ${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000
           ) &&
           targetIssueId !== "cikti-bos" &&
           targetIssueId !== "cikti-kod-eksik" &&
-          targetIssueId !== "cikti-alt-madde-eksik"
+          targetIssueId !== "cikti-alt-madde-eksik" &&
+          targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+          targetIssueId !== "tutarlilik-all"
             ? currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
             : (completedFields.push("Öğrenme Çıktıları ve Süreç Bileşenleri"),
               candidateOutcomes),
         Icerik_Cercevesi:
           currentPlan.Icerik_Cercevesi?.trim() &&
-          targetIssueId !== "bos-icerik-cercevesi"
+          targetIssueId !== "bos-icerik-cercevesi" &&
+          targetIssueId !== "tutarlilik-icerik-yillik-plan" &&
+          targetIssueId !== "tutarlilik-unite-icerik-celiskisi" &&
+          targetIssueId !== "tutarlilik-icerik-cumle-formati" &&
+          targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+          targetIssueId !== "tutarlilik-all"
             ? currentPlan.Icerik_Cercevesi
             : (completedFields.push("İçerik Çerçevesi"),
-              aiGeneratedPartial?.Icerik_Cercevesi ||
-                richCandidate.Icerik_Cercevesi),
+              richCandidate.Icerik_Cercevesi ||
+                aiGeneratedPartial?.Icerik_Cercevesi ||
+                ""),
         Ogrenme_Kanitlari:
           currentPlan.Ogrenme_Kanitlari?.trim() &&
           targetIssueId !== "bos-ogrenme-kanitlari"

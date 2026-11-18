@@ -56,19 +56,24 @@ function renderOgrenmeCiktilari(text: string): React.ReactNode {
     <div className="space-y-0.5">
       {lines.map((line, idx) => {
         const cleaned = line.replace(/^[•*-]\s*/, "");
-        if (idx === 0 || /^[A-ZÇĞİÖŞÜ]{2,6}\.\d+/.test(cleaned)) {
-          return (
-            <div key={idx} className="font-bold text-black">
-              {cleaned}
-            </div>
-          );
-        }
         const subMatch = cleaned.match(/^([a-zçğıöşü]\))\s*(.*)$/i);
         if (subMatch) {
           return (
             <div key={idx}>
               <strong className="font-bold text-black">{subMatch[1]}</strong>{" "}
               <span>{subMatch[2]}</span>
+            </div>
+          );
+        }
+        if (
+          idx === 0 ||
+          /^(?:[A-ZÇĞİÖŞÜ]{2,8}\.\d+|\d{1,2}(?:\.\d{1,2})?\.\s+[A-ZÇĞİÖŞÜ])/.test(
+            cleaned
+          )
+        ) {
+          return (
+            <div key={idx} className="font-bold text-black">
+              {cleaned}
             </div>
           );
         }

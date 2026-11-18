@@ -9,6 +9,10 @@ import {
   synthesizePlanClientSide,
 } from "../utils/clientFileExtractor";
 import {
+  analyzePlanWeekConsistency,
+  ConsistencyMismatchItem,
+} from "../shared/maarifPlanEngine";
+import {
   ShieldAlert,
   ShieldCheck,
   AlertTriangle,
@@ -25,10 +29,14 @@ import {
   Sparkles,
   ArrowRight,
   Loader2,
+  GitCompareArrows,
+  Layers,
+  BookOpen,
 } from "lucide-react";
 
 export type ValidationSeverity = "error" | "warning" | "success";
 export type ValidationCategory =
+  | "tutarlilik_analizi"
   | "ogrenme_ciktilari"
   | "tarih_ve_hafta"
   | "bos_alanlar"
@@ -112,8 +120,10 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(isOpenInitially);
   const [selectedFilter, setSelectedFilter] = useState<
-    "all" | "errors" | "warnings" | "success"
+    "all" | "errors" | "warnings" | "consistency" | "success"
   >("all");
+  const [isConsistencyPanelOpen, setIsConsistencyPanelOpen] =
+    useState<boolean>(true);
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [editingTextValue, setEditingTextValue] = useState<string>("");
   const [exportWarningModalOpen, setExportWarningModalOpen] =
@@ -124,11 +134,95 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
   const [aiCompletingId, setAiCompletingId] = useState<string | null>(null);
   const [aiStatusBanner, setAiStatusBanner] = useState<string | null>(null);
 
+  // Run Tutarlılık Analizi (Logical Consistency Analysis between Yıllık Plan Unit/Topic and Selected Week's Content Framework)
+  const consistencyReport = useMemo(() => {
+    return analyzePlanWeekConsistency({
+      plan,
+      meta,
+      availableWeeks,
+      yillikPlanText: yillikPlan,
+      dersBilgiFormuText: dersBilgiFormu,
+    });
+  }, [plan, meta, availableWeeks, yillikPlan, dersBilgiFormu]);
+
+  const applyConsistencyPatch = (
+    patch: ConsistencyMismatchItem["suggestedPatch"],
+    feedbackMessage?: string
+  ) => {
+    const updatedPlan: MaarifLessonPlan = {
+      ...plan,
+      Ders_Bilgisi: {
+        ...plan.Ders_Bilgisi,
+        ...(patch.ogrenmeBirimi
+          ? { Ogrenme_Birimi: patch.ogrenmeBirimi }
+          : {}),
+      },
+      ...(patch.icerikCercevesi
+        ? { Icerik_Cercevesi: patch.icerikCercevesi }
+        : {}),
+      ...(patch.ogrenmeCiktilari
+        ? {
+            Ogrenme_Ciktilari_ve_Surec_Bilesenleri: patch.ogrenmeCiktilari,
+          }
+        : {}),
+    };
+    onUpdatePlan(updatedPlan);
+    if (feedbackMessage) {
+      setAiStatusBanner(feedbackMessage);
+    }
+  };
+
   // Run comprehensive validation scan over plan & meta
   const { issues, passedChecks, scorePercent, errorCount, warningCount } =
     useMemo(() => {
       const issuesList: ValidationIssue[] = [];
       const passedList: PassedCheck[] = [];
+
+      // ------------------------------------------------------------------
+      // 0. KONTROL GRUBU: TUTARLILIK ANALİZİ (Yıllık Plan Ünite/Konu ↔ İçerik Çerçevesi)
+      // ------------------------------------------------------------------
+      if (consistencyReport.mismatches.length > 0) {
+        for (const mismatch of consistencyReport.mismatches) {
+          issuesList.push({
+            id: mismatch.id,
+            category: "tutarlilik_analizi",
+            severity: mismatch.severity,
+            title: `[Tutarlılık Analizi] ${mismatch.title}`,
+            description: `${mismatch.reason} ${mismatch.suggestionExplanation}`,
+            fieldLabel: mismatch.fieldLabel,
+            currentValue: mismatch.currentValue,
+            suggestedValue: mismatch.expectedValue,
+            canAutoFix: true,
+            autoFixLabel: `Önerilen Düzeltmeyi Uygula`,
+            autoFixAction: () => {
+              applyConsistencyPatch(
+                mismatch.suggestedPatch,
+                `Tutarlılık Analizi düzeltmesi uygulandı: "${mismatch.expectedValue}" plana aktarıldı.`
+              );
+            },
+            canAiAutoComplete: true,
+            aiAutoCompleteLabel: "AI ile Hizala",
+            editableKey:
+              mismatch.field === "Ogrenme_Birimi"
+                ? "Ogrenme_Birimi"
+                : mismatch.field === "Icerik_Cercevesi"
+                ? "Icerik_Cercevesi"
+                : mismatch.field === "Ogrenme_Ciktilari_ve_Surec_Bilesenleri"
+                ? "Ogrenme_Ciktilari_ve_Surec_Bilesenleri"
+                : "Icerik_Cercevesi",
+            editableType:
+              mismatch.field === "Ogrenme_Birimi" ? "plan_db" : "plan_root",
+          });
+        }
+      } else {
+        passedList.push({
+          id: "tutarlilik-tamam",
+          category: "tutarlilik_analizi",
+          title:
+            "Yıllık Plan Ünite/Konu Bilgisi ile İçerik Çerçevesi Tutarlı",
+          description: consistencyReport.summaryText,
+        });
+      }
 
       // ------------------------------------------------------------------
       // 1. KONTROL GRUBU: ÖĞRENME ÇIKTILARI VE SÜREÇ BİLEŞENLERİ (Kritik)
@@ -152,17 +246,20 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           editableType: "plan_root",
         });
       } else {
-        const hasCode = /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}(?:\.\d{1,2})*\b/.test(
-          ciktilar
-        );
-        if (!hasCode) {
+        const hasCodeOrNumberedHeader =
+          /\b[A-ZÇĞİÖŞÜ]{2,8}\.\d{1,2}(?:\.\d{1,2})*\b/.test(ciktilar) ||
+          /^(?:\d{1,2}(?:\.\d{1,2})?\.\s+)?[A-ZÇĞİÖŞÜ][^.!?\n]{12,185}?\s+(?:açıklar|uygular|analiz\s+eder|değerlendirir|tasarlar|sorgular|karşılaştırır|hazırlar|yapar|belirler|sınıflandırır|yorumlar|üretir)\./im.test(
+            ciktilar
+          ) ||
+          consistencyReport.isSpecialWeek;
+        if (!hasCodeOrNumberedHeader) {
           issuesList.push({
             id: "cikti-kod-eksik",
             category: "ogrenme_ciktilari",
             severity: "error",
-            title: "Öğrenme Çıktısı Kodu Bulunamadı",
+            title: "Öğrenme Çıktısı Kodu veya Ana Kazanım Başlığı Bulunamadı",
             description:
-              "Çıktı metninde maarif kodu (örn: 'ST.1.2.', 'TDE.9.2.1.') tespit edilemedi. Kodsuz metin resmî teftiş standartlarına uymayabilir.",
+              "Çıktı metninde maarif kodu (örn: 'ST.1.2.', 'MG.1.1.') veya ana kazanım cümlesi tespit edilemedi. Kodsuz metin resmî teftiş standartlarına uymayabilir.",
             fieldLabel: "Öğrenme Çıktıları",
             currentValue:
               ciktilar.slice(0, 80) + (ciktilar.length > 80 ? "..." : ""),
@@ -653,7 +750,19 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         errorCount: errors,
         warningCount: warnings,
       };
-    }, [plan, meta, availableWeeks, onUpdateMeta, onUpdatePlan]);
+    }, [
+      plan,
+      meta,
+      availableWeeks,
+      onUpdateMeta,
+      onUpdatePlan,
+      consistencyReport,
+    ]);
+
+  const consistencyIssuesCount = useMemo(
+    () => issues.filter((i) => i.category === "tutarlilik_analizi").length,
+    [issues]
+  );
 
   const aiCompletableIssues = useMemo(
     () => issues.filter((i) => i.canAiAutoComplete),
@@ -725,9 +834,13 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         ...plan.Ders_Bilgisi,
         Ogrenme_Birimi:
           plan.Ders_Bilgisi.Ogrenme_Birimi?.trim() &&
-          targetIssueId !== "bos-birim"
+          targetIssueId !== "bos-birim" &&
+          targetIssueId !== "tutarlilik-unite-yillik-plan" &&
+          targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+          targetIssueId !== "tutarlilik-all"
             ? plan.Ders_Bilgisi.Ogrenme_Birimi
-            : fallbackPlan.Ders_Bilgisi.Ogrenme_Birimi,
+            : consistencyReport.recommendedFullFix.ogrenmeBirimi ||
+              fallbackPlan.Ders_Bilgisi.Ogrenme_Birimi,
         Sure: plan.Ders_Bilgisi.Sure?.trim() || "2 Ders Saati",
         Alan_Becerileri:
           plan.Ders_Bilgisi.Alan_Becerileri?.trim() &&
@@ -762,14 +875,23 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
         plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri?.trim() &&
         targetIssueId !== "cikti-bos" &&
         targetIssueId !== "cikti-kod-eksik" &&
-        targetIssueId !== "cikti-alt-madde-eksik"
+        targetIssueId !== "cikti-alt-madde-eksik" &&
+        targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+        targetIssueId !== "tutarlilik-all"
           ? plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri
-          : fallbackPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+          : consistencyReport.recommendedFullFix.ogrenmeCiktilari ||
+            fallbackPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
       Icerik_Cercevesi:
         plan.Icerik_Cercevesi?.trim() &&
-        targetIssueId !== "bos-icerik-cercevesi"
+        targetIssueId !== "bos-icerik-cercevesi" &&
+        targetIssueId !== "tutarlilik-icerik-yillik-plan" &&
+        targetIssueId !== "tutarlilik-unite-icerik-celiskisi" &&
+        targetIssueId !== "tutarlilik-icerik-cumle-formati" &&
+        targetIssueId !== "tutarlilik-kazanim-icerik-celiskisi" &&
+        targetIssueId !== "tutarlilik-all"
           ? plan.Icerik_Cercevesi
-          : fallbackPlan.Icerik_Cercevesi,
+          : consistencyReport.recommendedFullFix.icerikCercevesi ||
+            fallbackPlan.Icerik_Cercevesi,
       Ogrenme_Kanitlari:
         plan.Ogrenme_Kanitlari?.trim() &&
         targetIssueId !== "bos-ogrenme-kanitlari"
@@ -812,7 +934,7 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
 
     onUpdatePlan(mergedPlan);
     setAiStatusBanner(
-      "Eksik plan alanları (Öğretme Uygulamaları, Öğrenme Kanıtları vb.) otomatik tamamlandı."
+      "Eksik ve tutarsız plan alanları (Öğrenme Birimi, İçerik Çerçevesi, Öğretme Uygulamaları vb.) otomatik tamamlandı."
     );
     setAiCompletingId(null);
   };
@@ -824,6 +946,9 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
     }
     if (selectedFilter === "warnings") {
       return issues.filter((i) => i.severity === "warning");
+    }
+    if (selectedFilter === "consistency") {
+      return issues.filter((i) => i.category === "tutarlilik_analizi");
     }
     return issues;
   }, [issues, selectedFilter]);
@@ -925,7 +1050,7 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
           </div>
 
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Plan Doğrulama Motoru (MEB Maarif Standartları)
               </span>
@@ -939,6 +1064,19 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                 }`}
               >
                 %{scorePercent} Uyumlu
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  consistencyReport.status === "consistent"
+                    ? "bg-indigo-100 text-indigo-800"
+                    : consistencyReport.status === "warning"
+                    ? "bg-amber-100 text-amber-900"
+                    : "bg-rose-100 text-rose-900"
+                }`}
+                title="Yıllık plandaki ünite/konu bilgisi ile seçilen haftanın içerik çerçevesi arasındaki mantıksal tutarlılık skoru"
+              >
+                <GitCompareArrows className="w-3 h-3" />
+                Tutarlılık Analizi: %{consistencyReport.overallConsistencyScore}
               </span>
             </div>
             <h3 className="text-base font-bold text-slate-900 mt-0.5">
@@ -1041,6 +1179,329 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
       {/* Expanded Validator Details Body */}
       {isExpanded && (
         <div className="p-5 space-y-5 bg-white">
+          {/* ===================================================================== */}
+          {/* TUTARLILIK ANALİZİ MODÜLÜ (Yıllık Plan Ünite/Konu ↔ İçerik Çerçevesi) */}
+          {/* ===================================================================== */}
+          <div
+            className={`rounded-xl border transition-all overflow-hidden ${
+              consistencyReport.status === "inconsistent"
+                ? "border-rose-300 bg-rose-50/40"
+                : consistencyReport.status === "warning"
+                ? "border-amber-300 bg-amber-50/40"
+                : "border-indigo-200 bg-indigo-50/30"
+            }`}
+          >
+            <div className="px-4 py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3 bg-white/70">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    consistencyReport.status === "inconsistent"
+                      ? "bg-rose-600 text-white"
+                      : consistencyReport.status === "warning"
+                      ? "bg-amber-500 text-white"
+                      : "bg-indigo-700 text-white"
+                  }`}
+                >
+                  <GitCompareArrows className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
+                      Tutarlılık Analizi Modülü
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-500">
+                      ({consistencyReport.weekLabel}
+                      {meta.tarihAraligi ? ` • ${meta.tarihAraligi}` : ""})
+                    </span>
+                    <span
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                        consistencyReport.status === "consistent"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : consistencyReport.status === "warning"
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-rose-100 text-rose-900"
+                      }`}
+                    >
+                      {consistencyReport.status === "consistent"
+                        ? `✓ Mantıksal Tutarlılık Tam (%${consistencyReport.overallConsistencyScore})`
+                        : `⚠ ${consistencyReport.mismatches.length} Mantıksal Tutarsızlık (%${consistencyReport.overallConsistencyScore} Uyum)`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {consistencyReport.summaryText}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {consistencyReport.mismatches.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyConsistencyPatch(
+                        consistencyReport.recommendedFullFix,
+                        `Tutarlılık Analizi: Seçilen haftanın Öğrenme Birimi ve İçerik Çerçevesi yıllık plan referansıyla eşitlendi.`
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-indigo-700 hover:bg-indigo-800 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    Tüm Tutarsızlıkları Yıllık Planla Eşitle
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsConsistencyPanelOpen((prev) => !prev)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  {isConsistencyPanelOpen ? (
+                    <>
+                      Detayı Gizle <ChevronUp className="w-3.5 h-3.5" />
+                    </>
+                  ) : (
+                    <>
+                      Karşılaştırma Tablosu{" "}
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {isConsistencyPanelOpen && (
+              <div className="p-4 space-y-4">
+                {/* 3-Column Comparison Matrix: Öğrenme Birimi vs İçerik Çerçevesi vs Öğrenme Çıktısı */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Column 1: Öğrenme Birimi (Ünite) */}
+                  <div className="p-3 rounded-lg bg-white border border-slate-200/90 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                        <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                        1. Öğrenme Birimi (Ünite)
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                          consistencyReport.unitSimilarity >= 70
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-rose-100 text-rose-800"
+                        }`}
+                      >
+                        %{consistencyReport.unitSimilarity} Uyum
+                      </span>
+                    </div>
+                    <div className="text-xs space-y-1">
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">
+                          Seçilen Haftadaki Mevcut Değer:
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          {consistencyReport.currentUnit}
+                        </span>
+                      </div>
+                      <div className="pt-1 border-t border-slate-100">
+                        <span className="text-[11px] text-indigo-600 font-medium block">
+                          Yıllık Plan / Program Referansı:
+                        </span>
+                        <span className="font-semibold text-indigo-950">
+                          {consistencyReport.expectedUnit}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Column 2: İçerik Çerçevesi (Konu) */}
+                  <div className="p-3 rounded-lg bg-white border border-slate-200/90 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                        <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                        2. İçerik Çerçevesi (Konu)
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                          consistencyReport.topicSimilarity >= 70
+                            ? "bg-emerald-100 text-emerald-800"
+                            : consistencyReport.topicSimilarity >= 40
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-rose-100 text-rose-800"
+                        }`}
+                      >
+                        %{consistencyReport.topicSimilarity} Uyum
+                      </span>
+                    </div>
+                    <div className="text-xs space-y-1">
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">
+                          Seçilen Haftadaki Mevcut Değer:
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          {consistencyReport.currentTopic}
+                        </span>
+                      </div>
+                      <div className="pt-1 border-t border-slate-100">
+                        <span className="text-[11px] text-indigo-600 font-medium block">
+                          Yıllık Plan / Program Referansı:
+                        </span>
+                        <span className="font-semibold text-indigo-950">
+                          {consistencyReport.expectedTopic}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Column 3: Öğrenme Çıktısı / Kazanım Bağlamı */}
+                  <div className="p-3 rounded-lg bg-white border border-slate-200/90 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
+                        3. Öğrenme Çıktısı Bağlamı
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                          consistencyReport.outcomeSimilarity >= 70
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        %{consistencyReport.outcomeSimilarity} Uyum
+                      </span>
+                    </div>
+                    <div className="text-xs space-y-1">
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">
+                          Plandaki Ana Kazanım:
+                        </span>
+                        <span className="font-semibold text-slate-900 line-clamp-2">
+                          {consistencyReport.currentOutcomeHeader}
+                        </span>
+                      </div>
+                      <div className="pt-1 border-t border-slate-100">
+                        <span className="text-[11px] text-indigo-600 font-medium block">
+                          Yıllık Plan Kazanım Referansı:
+                        </span>
+                        <span className="font-semibold text-indigo-950 line-clamp-2">
+                          {consistencyReport.expectedOutcomeHeader}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detected Mismatches & Recommended Fixes inside Consistency Module */}
+                {consistencyReport.mismatches.length > 0 && (
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-bold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                      Tespit Edilen Mantıksal Tutarsızlıklar ve Düzeltme
+                      Önerileri ({consistencyReport.mismatches.length})
+                    </div>
+                    {consistencyReport.mismatches.map((mm) => (
+                      <div
+                        key={mm.id}
+                        className={`p-3.5 rounded-lg border bg-white flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                          mm.severity === "error"
+                            ? "border-rose-300"
+                            : "border-amber-300"
+                        }`}
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                mm.severity === "error"
+                                  ? "bg-rose-100 text-rose-900"
+                                  : "bg-amber-100 text-amber-900"
+                              }`}
+                            >
+                              {mm.fieldLabel}
+                            </span>
+                            <h5 className="text-xs font-bold text-slate-900">
+                              {mm.title}
+                            </h5>
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            {mm.reason}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] pt-0.5">
+                            <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200 line-through">
+                              Mevcut: {mm.currentValue}
+                            </span>
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold">
+                              Önerilen Düzeltme: {mm.expectedValue}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              applyConsistencyPatch(
+                                mm.suggestedPatch,
+                                `Tutarlılık Analizi düzeltmesi uygulandı: "${mm.expectedValue}" plana aktarıldı.`
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Önerilen Düzeltmeyi Uygula
+                          </button>
+                          <button
+                            type="button"
+                            disabled={aiCompletingId !== null}
+                            onClick={() => handleAiAutoComplete(mm.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-indigo-950 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-700" />
+                            AI ile Hizala
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Official Unit Topics Quick-Select Chips from Curriculum (if available) */}
+                {consistencyReport.detectedUnitTopicsInCurriculum.length >
+                  0 && (
+                  <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 mr-1">
+                      Bu Ünitenin Programdaki Konu Başlıkları (Tıklayarak İçerik
+                      Çerçevesine Uygula):
+                    </span>
+                    {consistencyReport.detectedUnitTopicsInCurriculum.map(
+                      (uTopic, idx) => {
+                        const isSelected =
+                          plan.Icerik_Cercevesi?.trim().toLocaleLowerCase(
+                            "tr-TR"
+                          ) === uTopic.trim().toLocaleLowerCase("tr-TR");
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() =>
+                              applyConsistencyPatch(
+                                { icerikCercevesi: uTopic },
+                                `İçerik Çerçevesi "${uTopic}" olarak güncellendi.`
+                              )
+                            }
+                            className={`text-[11px] px-2.5 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                              isSelected
+                                ? "bg-indigo-700 text-white border-indigo-700 font-semibold"
+                                : "bg-white text-slate-700 border-slate-300 hover:bg-indigo-50 hover:border-indigo-300"
+                            }`}
+                          >
+                            {uTopic}
+                          </button>
+                        );
+                      }
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Quick Overview Badges & Filter Tabs */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
@@ -1054,6 +1515,20 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                 }`}
               >
                 Tüm Maddeler ({issues.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedFilter("consistency")}
+                className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg transition-colors ${
+                  selectedFilter === "consistency"
+                    ? "bg-indigo-700 text-white font-semibold"
+                    : consistencyIssuesCount > 0
+                    ? "bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 font-semibold"
+                    : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+                }`}
+              >
+                <GitCompareArrows className="w-3.5 h-3.5" />
+                Tutarlılık Analizi ({consistencyIssuesCount})
               </button>
               <button
                 type="button"
@@ -1128,7 +1603,7 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg transition-colors"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
-                  Tarih / Süre Uyuşmazlıklarını Düzelt
+                  Tutarsızlıkları &amp; Tarihleri Düzelt
                 </button>
               )}
             </div>
@@ -1185,15 +1660,25 @@ export const PlanValidator: React.FC<PlanValidatorProps> = ({
                           {issue.description}
                         </p>
 
-                        {/* Current Value Preview */}
-                        {issue.currentValue && (
-                          <div className="text-[11px] font-mono text-slate-600 bg-white/80 border border-slate-200 rounded px-2 py-1 inline-block max-w-full truncate">
-                            Mevcut Değer:{" "}
-                            <span className="font-semibold text-slate-800">
-                              {issue.currentValue}
-                            </span>
-                          </div>
-                        )}
+                        {/* Current & Suggested Value Previews */}
+                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                          {issue.currentValue && (
+                            <div className="text-[11px] font-mono text-slate-600 bg-white/80 border border-slate-200 rounded px-2 py-1 inline-block max-w-full truncate">
+                              Mevcut Değer:{" "}
+                              <span className="font-semibold text-slate-800">
+                                {issue.currentValue}
+                              </span>
+                            </div>
+                          )}
+                          {issue.suggestedValue && (
+                            <div className="text-[11px] font-mono text-emerald-900 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 inline-block max-w-full truncate">
+                              Önerilen Düzeltme:{" "}
+                              <span className="font-bold">
+                                {issue.suggestedValue}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Action Zone: AI Auto-Complete, Auto-Fix, or Quick Inline Edit */}
