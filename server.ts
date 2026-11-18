@@ -22,6 +22,8 @@ import {
   applyBlacklistAndDensityFilter,
   cleanPdfHeaderFooterNoiseFromField,
   sanitizePlanOutputBeforeDelivery,
+  analyzeAndRepairFarklilastirmaField,
+  repairActivitySentenceArtifacts,
   WeekSpecificExtraction,
 } from "./src/shared/maarifPlanEngine";
 import { MaarifLessonPlan } from "./src/types/lessonPlan";
@@ -1800,6 +1802,7 @@ GÖREVİN:
 1. Mevcut metinde veya kaynak dokümanda PDF sayfa geçişlerinden sızmış olan okul adı / başlık ("2026-2027 EĞİTİM-ÖĞRETİM YILI ... YILLIK PLANI (TYMM)"), sayfa numaraları ("9 / 25"), tablo sütun başlıkları ("TARİH HAFTA SAAT ÜNİTE İÇERİK ÇERÇEVESİ ÖĞRENME ÇIKTILARI SÜREÇ BİLEŞENLERİ ÖĞRENME BECERİLERİ DEĞERLER OKURYAZARLIK BECERİLERİ ÖLÇME DEĞERLENDİRME BELİRLİ GÜN VE HAFT.") veya hafta sonu tarih kalıntılarını ("14- 18 Aralık" vb.) KESİNLİKLE SİL!
 2. Bu haftanın aktif Öğrenme Birimi "${weekData.ogrenmeBirimi || currentPlan.Ders_Bilgisi?.Ogrenme_Birimi || ""}", İçerik Çerçevesi (Konu) "${weekData.icerikCercevesi || currentPlan.Icerik_Cercevesi || ""}" ve Öğrenme Çıktısı "${weekData.outcomeCode || ""} - ${weekData.formattedOutcomeAndProcessBlock || currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""}" bilgisidir.
 3. Başka bir üniteye (örneğin 1. Ünite Mesleki İletişim işlenirken 2. Ünite Meslek Etiği / "kural, ahlak, etik" vb.) veya başka bir öğrenme çıktısına ait cümleler karışmışsa bunları çıkar; YALNIZCA bu haftanın öğrenme çıktısına (${weekData.outcomeCode || "ilgili kazanım"}) ve Ders Bilgi Formu verilerine uygun, resmi MEB Maarif Modeli dilinde temiz ve eksiksiz metni üret.
+4. Eğer hedef alan "Farklilastirma" veya "section_farklilastirma" ise, kesinlikle yarım cümle ("kapsamındaki tüm uygulamalar..." gibi) yazma; kaynak dokümandaki bu üniteye ait Zenginleştirme ve Destekleme uygulamalarını veya bu haftanın konusuna uygun "* Zenginleştirme: ...\n* Destekleme: ..." maddelerini eksiksiz ve anlamlı şekilde oluştur.
 </gorev>
 
 <hedef_alan>${fieldKey}</hedef_alan>
@@ -1840,13 +1843,17 @@ ${materyalSlice.slice(0, 4500)}
             fixSchema
           );
           const parsed = JSON.parse(rawJson);
-          fixedText = cleanPdfHeaderFooterNoiseFromField(
+          const rawFixedText = cleanPdfHeaderFooterNoiseFromField(
             String(parsed.fixedText || "").trim()
           );
+          fixedText =
+            fieldKey === "Farklilastirma" || fieldKey === "section_farklilastirma"
+              ? analyzeAndRepairFarklilastirmaField(rawFixedText, deterministicPlan)
+              : rawFixedText;
           fixedItems = Array.isArray(parsed.fixedItems)
             ? parsed.fixedItems
                 .map((s: unknown) =>
-                  cleanPdfHeaderFooterNoiseFromField(
+                  repairActivitySentenceArtifacts(
                     String(s || "")
                       .replace(/^\*\s*/, "")
                       .trim()

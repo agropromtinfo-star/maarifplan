@@ -1612,8 +1612,167 @@ export function cleanPdfHeaderFooterNoiseFromField(rawText: string): string {
 
 /**
  * Final pre-delivery analyzer & sanitizer for MaarifLessonPlan.
+/**
+ * Converts a process component sentence (e.g. "a) Öğrenme performansını etkileyen özelliklerine yönelik varsayımda bulunur. ·"
+ * or "b) Öğrenciler ... gelişim örüntülerini listeler.") into a clean noun phrase suitable for embedding into
+ * Güdüleme, Dikkat Çekme, and Ek Öğretme Uygulamaları templates.
+ */
+export function convertSubComponentToCleanTopicPhrase(
+  rawSub: string,
+  fallbackTopic = ""
+): string {
+  if (!rawSub) return fallbackTopic;
+  let cleaned = normalizeTurkishUnicode(rawSub)
+    .replace(/^[a-zçğıöşü]\)\s*/i, "")
+    .replace(/^[*•·\-–\s]+/, "")
+    .replace(/[\s·•*.;,]+$/g, "")
+    .replace(/\s*·\s*/g, " ")
+    .replace(/^Öğrenciler\s+/i, "")
+    .trim();
+
+  // Strip multi-word and single-word Turkish curriculum finite verb endings
+  const verbEndingsRegex =
+    /\s+(?:yönelik\s+varsayımda\s+bulunur|varsayımda\s+bulunur|çıkarımda\s+bulunur|tahminde\s+bulunur|öneride\s+bulunur|değerlendirmede\s+bulunur|çıkarım\s+yapar|tahmin\s+eder|analiz\s+eder|चözüm\s+üretir|çözüm\s+üretir|fark\s+eder|ifade\s+eder|ayırt\s+eder|तसpit\s+eder|tespit\s+eder|kontrol\s+eder|تطبيق\s+eder|uygulama\s+yapar|karşılaştırma\s+yapar|sınıflandırma\s+yapar|açıklanır|sıralanır|uygulanır|incelenir|belirlenir|tartışılır|değerlendirilir|karşılaştırılır|ilişkilendirilir|sınıflandırılır|özetlenir|yorumlanır|açıklar|sıralar|belirler|listeler|karşılaştırır|ilişkilendirir|değerlendirir|sorgular|özetler|yorumlar|sınıflandırır|tartışır|çözümler|örneklendirir|uygular|inceler|bulunur|gösterir|tanımlar|yapar|oluşturur|tasarlar|planlar|seçer|kullanır|yönetir|sunar|raporlar)[\s·•*.;,]*$/i;
+
+  let prev = "";
+  while (cleaned && cleaned !== prev) {
+    prev = cleaned;
+    cleaned = cleaned.replace(verbEndingsRegex, "").replace(/[\s·•*.;,]+$/g, "").trim();
+  }
+
+  // Also clean residual dative/accusative suffix before stripped verb if it leaves "-a/-e yönelik" dangling
+  cleaned = cleaned
+    .replace(/\s+(?:yönelik|ilişkin|dair|hakkında)$/i, "")
+    .replace(
+      /\b(özellikleri|ilkeleri|yöntemleri|süreçleri|basamakları|faktörleri|etkileri|faydaları|örüntüleri|kavramları|araçları|teknikleri|uygulamaları)(?:ne|na|nı|ni|nu|nü)$/i,
+      "$1"
+    )
+    .replace(
+      /\b(unsurları|koşulları|standartları|kriterleri|ölçütleri|aşamaları|modelleri|türleri|çeşitleri|alanları|hedefleri)(?:nı|ni|na|ne)$/i,
+      "$1"
+    )
+    .trim();
+
+  if (cleaned.length < 6) {
+    return fallbackTopic || rawSub.replace(/^[a-zçğıöşü]\)\s*/i, "").replace(/[\s·•*.;,]+$/g, "").trim();
+  }
+  return cleaned;
+}
+
+/**
+ * Repairs any mid-sentence verb+template stitching artifacts (e.g., "...varsayımda bulunur. · konusunun...",
+ * "...listeler. kapsamındaki...", "...bulunur. · sürecinde...") and removes stray middle dots ("·").
+ */
+export function repairActivitySentenceArtifacts(sentence: string): string {
+  if (!sentence) return "";
+  let s = cleanPdfHeaderFooterNoiseFromField(sentence)
+    .replace(/\s*·\s*/g, " ")
+    .replace(/^\*\s*/, "")
+    .trim();
+
+  // Fix mid-sentence finite verb + period before template continuation words
+  s = s.replace(
+    /\s+(?:yönelik\s+varsayımda\s+bulunur|varsayımda\s+bulunur|çıkarımda\s+bulunur|tahminde\s+bulunur|çıkarım\s+yapar|tahmin\s+eder|analiz\s+eder|fark\s+eder|ifade\s+eder|ayırt\s+eder|tespit\s+eder|açıklanır|sıralanır|uygulanır|incelenir|belirlenir|açıklar|sıralar|belirler|listeler|karşılaştırır|ilişkilendirir|değerlendirir|sorgular|özetler|yorumlar|sınıflandırır|tartışır|çözümler|örneklendirir|uygular|inceler|bulunur)\.?\s+(?=konusunun\b|kapsamındaki\b|sürecinde\b|süreçlerinin\b|ilkelerini\b|aşamalarında\b|uygulamalarının\b|hakkında\b)/gi,
+    " "
+  );
+
+  // Clean up leading "Öğrenciler ... listeler/belirler" when followed by "kapsamındaki"
+  s = s.replace(
+    /^Öğrenciler\s+Öğrenciler\s+/i,
+    "Öğrenciler "
+  );
+
+  // Fix any leftover ". konusunun", ". kapsamındaki", ". sürecinde", ". süreçlerinin", ". ilkelerini", ". aşamalarında"
+  s = s.replace(
+    /\.\s+(konusunun|kapsamındaki|sürecinde|süreçlerinin|ilkelerini|aşamalarında)\b/gi,
+    " $1"
+  );
+
+  // Fix dative/accusative suffix before "konusunun" / "kapsamındaki" / "sürecinde"
+  s = s.replace(
+    /\b(özellikleri|ilkeleri|yöntemleri|süreçleri|basamakları|faktörleri|etkileri|faydaları|örüntüleri|kavramları|araçları|teknikleri|uygulamaları)(?:ne|na|nı|ni|nu|nü)\s+(konusunun|kapsamındaki|sürecinde|süreçlerinin|ilkelerini|aşamalarında)\b/gi,
+    "$1 $2"
+  );
+
+  return s.replace(/\s{2,}/g, " ").trim();
+}
+
+/**
+ * Analyzes and repairs the Farklılaştırma field before delivery.
+ * - Restores missing "Farklılaştırma" prefix if a headless sentence ("kapsamındaki tüm uygulamalar...") leaked.
+ * - Preserves and formats genuine Zenginleştirme and Destekleme blocks from the Öğretim Programı / Ders Bilgi Formu.
+ * - If the extracted text is empty, broken, or consists solely of generic 1-sentence boilerplate without concrete
+ *   Zenginleştirme / Destekleme guidance, synthesizes unit- and topic-aligned Zenginleştirme & Destekleme applications.
+ */
+export function analyzeAndRepairFarklilastirmaField(
+  rawFarklilastirma: string,
+  plan: MaarifLessonPlan
+): string {
+  let cleaned = cleanPdfHeaderFooterNoiseFromField(rawFarklilastirma || "").trim();
+
+  // Fix headless sentence where "Farklılaştırma" was stripped from "Farklılaştırma kapsamındaki tüm uygulamalar..."
+  if (/^kapsamındaki\s+tüm\s+uygulamalar/i.test(cleaned)) {
+    cleaned = `Farklılaştırma ${cleaned}`;
+  }
+
+  // Format Zenginleştirme and Destekleme subheadings cleanly onto separate lines
+  cleaned = cleaned
+    .replace(
+      /(?:^|\n|\s+)\*?\s*(Zenginleştirme(?:\s+Uygulamaları)?)\s*[:|-]?\s*(?=[A-ZÇĞİÖŞÜa-zçğıöşü])/g,
+      "\n* Zenginleştirme: "
+    )
+    .replace(
+      /(?:^|\n|\s+)\*?\s*(Destekleme(?:\s+Uygulamaları)?)\s*[:|-]?\s*(?=[A-ZÇĞİÖŞÜa-zçğıöşü])/g,
+      "\n* Destekleme: "
+    )
+    .trim();
+
+  const hasConcreteZenginlestirmeOrDestekleme =
+    /\b(?:zenginleştirme|destekleme)\b/i.test(cleaned) && cleaned.length >= 65;
+
+  const isOnlyGenericBoilerplate =
+    !cleaned ||
+    cleaned.length < 35 ||
+    (/^(?:Farklılaştırma\s+)?kapsamındaki\s+tüm\s+uygulamalar\s*;?\s*öğrencilerin\s+ilgi\s+ve\s+ihtiyaçları\s+göz\s+önünde\s+bulundurularak\s+öğretmenler\s+tarafından\s+planlanmalı\s+ve\s+uygulanmalıdır\.?$/i.test(
+      cleaned.replace(/\s+/g, " ").trim()
+    ) &&
+      !hasConcreteZenginlestirmeOrDestekleme);
+
+  if (hasConcreteZenginlestirmeOrDestekleme && !isOnlyGenericBoilerplate) {
+    // Strip the generic 1-sentence preamble if concrete Zenginleştirme/Destekleme also exists in the same block
+    const withoutGenericIntro = cleaned
+      .replace(
+        /^(?:Farklılaştırma\s+)?kapsamındaki\s+tüm\s+uygulamalar\s*;?\s*öğrencilerin\s+ilgi\s+ve\s+ihtiyaçları\s+göz\s+önünde\s+bulundurularak\s+öğretmenler\s+tarafından\s+planlanmalı\s+ve\s+uygulanmalıdır\.?\s*/i,
+        ""
+      )
+      .trim();
+    return withoutGenericIntro.length >= 45 ? withoutGenericIntro : cleaned;
+  }
+
+  // If the document has another substantive unit-specific Farklılaştırma text (> 90 chars and not headless/boilerplate), keep it
+  if (cleaned.length >= 90 && !isOnlyGenericBoilerplate && !/^[a-zçğıöşü]/.test(cleaned)) {
+    return cleaned;
+  }
+
+  // Otherwise synthesize concrete, unit- and topic-specific Zenginleştirme & Destekleme applications
+  const unitName =
+    cleanPdfHeaderFooterNoiseFromField(plan.Ders_Bilgisi?.Ogrenme_Birimi || "") ||
+    "ilgili öğrenme birimi";
+  const topicName =
+    cleanPdfHeaderFooterNoiseFromField(plan.Icerik_Cercevesi || "") ||
+    unitName;
+
+  const zenginlestirmeLine = `* Zenginleştirme: ${topicName} konusu kapsamında ileri düzey ilgi ve hazırbulunuşluk gösteren öğrencilerin; ${unitName.toLocaleLowerCase("tr-TR")} alanındaki güncel sektörel gelişmeleri, yenilikçi uygulamaları veya örnek vaka analizlerini araştırarak özgün bir proje, infografik ya da çözüm önerisi raporu hazırlamaları ve sınıfta paylaşmaları sağlanır.`;
+  const desteklemeLine = `* Destekleme: ${topicName} konusunun öğrenilmesinde desteğe ihtiyaç duyan öğrenciler için temel kavramlar görsel şemalar, kavram haritaları ve somut örneklerle adım adım açıklanır; uygulama aşamalarında kontrol listeleri, çalışma yaprakları, akran desteği ve gerektiğinde ek süre verilerek sürece aktif katılımları desteklenir.`;
+
+  return `${zenginlestirmeLine}\n${desteklemeLine}`;
+}
+
+/**
+ * Final pre-delivery output analysis and sanitization layer for MaarifLessonPlan.
  * Ensures NO field in the plan returned to the user ever contains leaked school names,
- * Yıllık Plan table headers, page fractions ("9 / 25"), or trailing date rows.
+ * Yıllık Plan table headers, page fractions ("9 / 25"), trailing date rows, headless
+ * Farklılaştırma fragments, or broken verb+template sentence collisions.
  */
 export function sanitizePlanOutputBeforeDelivery(
   plan: MaarifLessonPlan
@@ -1625,10 +1784,10 @@ export function sanitizePlanOutputBeforeDelivery(
 
   const cleanArr = (arr: string[] | undefined): string[] =>
     (arr || [])
-      .map((item) => cleanPdfHeaderFooterNoiseFromField(item))
+      .map((item) => repairActivitySentenceArtifacts(item))
       .filter((item) => item.length >= 4 && !isDbfSectionPageArtifactOrSubHeader(item));
 
-  return {
+  const cleanedPlan: MaarifLessonPlan = {
     ...plan,
     Ders_Bilgisi: {
       ...plan.Ders_Bilgisi,
@@ -1677,8 +1836,15 @@ export function sanitizePlanOutputBeforeDelivery(
         plan.Ogrenme_Ogretme_Yasantilari?.Ek_Ogretme_Uygulamalari
       ),
     },
-    Farklilastirma: cleanStr(plan.Farklilastirma),
+    Farklilastirma: "",
   };
+
+  cleanedPlan.Farklilastirma = analyzeAndRepairFarklilastirmaField(
+    plan.Farklilastirma,
+    cleanedPlan
+  );
+
+  return cleanedPlan;
 }
 
 /**
@@ -1725,7 +1891,7 @@ export function cleanTrailingSectionHeadings(text: string): string {
   if (!text) return "";
   return text
     .replace(
-      /\s*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA|ZENG[İI]NLEŞT[İI]RME|DESTEKLEME)\s*[:|\-–]?\s*$/i,
+      /\s*(?:(?:ÖĞRENME\s*[-–]?\s*ÖĞRETME|ÖĞRENMEÖĞRETME|ÖĞRETME\s*[-–]?\s*ÖĞRENME|ÖĞRETMEÖĞRENME)\s*(?:YAŞANT[Iİ]LAR[Iİ]|UYGULAMALAR[Iİ]|SÜREC[İI]|ETK[İI]NL[İI]KLER[İI])|ÖĞRETME\s*UYGULAMALAR[Iİ]|ÖĞRENME\s*UYGULAMALAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME(?:\s*SÜREC[İI])?|KÖPRÜ\s*KURMA|FARKLILAŞTIRMA)\s*[:|\-–]?\s*$/i,
       ""
     )
     .replace(
@@ -2029,6 +2195,289 @@ function extractOgrenmeKanitlariFromDbf(
   ).defaultText;
 }
 
+/**
+ * Dedicated multi-unit extractor for "FARKLILAŞTIRMA" ("Zenginleştirme" & "Destekleme")
+ * from MEB TYMM Öğretim Programı / Ders Bilgi Formu.
+ * - Never matches inline prose sentences starting with "Farklılaştırma kapsamındaki..." as headings.
+ * - Extracts both explicit "FARKLILAŞTIRMA" blocks and unit-level "Zenginleştirme" / "Destekleme" blocks.
+ * - Prefers concrete Zenginleştirme/Destekleme guidance over generic 1-sentence front-matter boilerplate.
+ */
+function extractFarklilastirmaFromDbfWithContext(
+  dbfLines: string[],
+  fallbackCombinedLines: string[]
+): {
+  best: string;
+  byUnit: Record<number, string>;
+  byOutcome: Record<string, string>;
+} {
+  const targetLines = dbfLines.length > 0 ? dbfLines : fallbackCombinedLines;
+  const byUnit: Record<number, string> = {};
+  const byOutcome: Record<string, string> = {};
+
+  if (targetLines.length === 0) {
+    return { best: "", byUnit, byOutcome };
+  }
+
+  const stopRegex =
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:UYGUNDUR|ÖĞRETMEN\s*YANSITMALAR[Iİ]|ÖĞRETMEN\s*YANSITMASI|DERS\s*ÖĞRETMEN[İI]|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*(?:HAFTA|ÜN[İI]TE|ÖĞRENME\s*B[İI]R[İI]M[İI]|TEMA|MODÜL)|(?:ÜN[İI]TE|ÖĞRENME\s*B[İI]R[İI]M[İI]|TEMA|MODÜL)\s*[:|-]?\s*\d{1,2}|DERS\s*B[İI]LG[İI]\s*FORMU|ÖĞRENME\s*ÇIKTILAR[Iİ]|İÇER[İI]K\s*ÇERÇEVES[İI]|ÖĞRENME\s*KAN[Iİ]TLAR[Iİ]|TEMEL\s*KABULLER|ÖN\s*DEĞERLEND[İI]RME|KÖPRÜ\s*KURMA)(?=$|\s|[:|()\-–])/i;
+
+  const explicitUnitNumRegex =
+    /(?:^|\s|\|)(\d{1,2})\s*\.\s*(?:ÜNİTE|ÖĞRENME\s*BİRİMİ|TEMA|MODÜL)\b|(?:ÜNİTE|ÖĞRENME\s*BİRİMİ|TEMA|MODÜL)\s*[:|-]?\s*(\d{1,2})\b/i;
+  const outcomeCodeScanRegex =
+    /\b([A-ZÇĞİÖŞÜ]{2,8})\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b/g;
+
+  const isGenericBoilerplateOnly = (txt: string): boolean => {
+    const norm = txt.replace(/\s+/g, " ").trim();
+    if (norm.length < 35) return true;
+    const isBoilerplateSentence =
+      /^(?:Farklılaştırma\s+)?kapsamındaki\s+tüm\s+uygulamalar\s*;?\s*öğrencilerin\s+ilgi\s+ve\s+ihtiyaçları\s+göz\s+önünde\s+bulundurularak\s+öğretmenler\s+tarafından\s+planlanmalı\s+ve\s+uygulanmalıdır\.?$/i.test(
+        norm
+      );
+    return isBoilerplateSentence;
+  };
+
+  const formatFarklilastirmaBlock = (raw: string): string => {
+    let cleaned = cleanPdfHeaderFooterNoiseFromField(raw || "").trim();
+    if (/^kapsamındaki\s+tüm\s+uygulamalar/i.test(cleaned)) {
+      cleaned = `Farklılaştırma ${cleaned}`;
+    }
+    cleaned = cleaned
+      .replace(
+        /(?:^|\n|\s+)\*?\s*(Zenginleştirme(?:\s+Uygulamaları)?)\s*[:|-]?\s*(?=[A-ZÇĞİÖŞÜa-zçğıöşü])/gi,
+        "\n* Zenginleştirme: "
+      )
+      .replace(
+        /(?:^|\n|\s+)\*?\s*(Destekleme(?:\s+Uygulamaları)?)\s*[:|-]?\s*(?=[A-ZÇĞİÖŞÜa-zçğıöşü])/gi,
+        "\n* Destekleme: "
+      )
+      .trim();
+    if (
+      /\b(?:zenginleştirme|destekleme)\b/i.test(cleaned) &&
+      cleaned.length >= 80
+    ) {
+      const strippedBoilerplate = cleaned
+        .replace(
+          /^(?:Farklılaştırma\s+)?kapsamındaki\s+tüm\s+uygulamalar\s*;?\s*öğrencilerin\s+ilgi\s+ve\s+ihtiyaçları\s+göz\s+önünde\s+bulundurularak\s+öğretmenler\s+tarafından\s+planlanmalı\s+ve\s+uygulanmalıdır\.?\s*/i,
+          ""
+        )
+        .trim();
+      if (strippedBoilerplate.length >= 45) {
+        cleaned = strippedBoilerplate;
+      }
+    }
+    return cleaned;
+  };
+
+  const inferUnitAndOutcomesAtLine = (
+    lineIdx: number,
+    fallbackUnitIndex: number
+  ): { unitNo: number; outcomeCodes: string[] } => {
+    const lookbackStart = Math.max(0, lineIdx - 240);
+    const outcomeCodes: string[] = [];
+    let inferredUnitNo = 0;
+
+    for (let k = lookbackStart; k <= lineIdx; k++) {
+      const ctxLine = targetLines[k];
+      const uMatch = ctxLine.match(explicitUnitNumRegex);
+      if (uMatch) {
+        const uNum = Number(uMatch[1] || uMatch[2]);
+        if (uNum >= 1 && uNum <= 15) {
+          inferredUnitNo = uNum;
+        }
+      }
+      outcomeCodeScanRegex.lastIndex = 0;
+      let cm: RegExpExecArray | null;
+      while ((cm = outcomeCodeScanRegex.exec(ctxLine)) !== null) {
+        const prefix = cm[1];
+        if (!/^(?:SDB|KB|OB|AB|E|D)$/i.test(prefix)) {
+          const code = cm[0];
+          if (!outcomeCodes.includes(code)) {
+            outcomeCodes.push(code);
+          }
+          if (!inferredUnitNo) {
+            inferredUnitNo = cm[4] ? Number(cm[3]) : Number(cm[2]);
+          }
+        }
+      }
+    }
+
+    return {
+      unitNo: inferredUnitNo >= 1 ? inferredUnitNo : fallbackUnitIndex,
+      outcomeCodes,
+    };
+  };
+
+  const registerCandidate = (
+    text: string,
+    unitNo: number,
+    outcomeCodes: string[]
+  ) => {
+    const formatted = formatFarklilastirmaBlock(text);
+    if (formatted.length < 25) return;
+
+    const existingUnitText = byUnit[unitNo] || "";
+    const existingIsBoilerplate = isGenericBoilerplateOnly(existingUnitText);
+    const newIsBoilerplate = isGenericBoilerplateOnly(formatted);
+    const newHasZengDest = /\b(?:zenginleştirme|destekleme)\b/i.test(formatted);
+    const existingHasZengDest = /\b(?:zenginleştirme|destekleme)\b/i.test(
+      existingUnitText
+    );
+
+    if (
+      !existingUnitText ||
+      (existingIsBoilerplate && !newIsBoilerplate) ||
+      (!existingHasZengDest && newHasZengDest)
+    ) {
+      byUnit[unitNo] = formatted;
+    }
+
+    for (const code of outcomeCodes) {
+      const existingOutText = byOutcome[code] || "";
+      const existingOutBoilerplate = isGenericBoilerplateOnly(existingOutText);
+      const existingOutHasZengDest = /\b(?:zenginleştirme|destekleme)\b/i.test(
+        existingOutText
+      );
+      if (
+        !existingOutText ||
+        (existingOutBoilerplate && !newIsBoilerplate) ||
+        (!existingOutHasZengDest && newHasZengDest)
+      ) {
+        byOutcome[code] = formatted;
+      }
+    }
+  };
+
+  // Pass 1: Scan for true FARKLILAŞTIRMA headings OR Zenginleştirme/Destekleme sub-headings
+  const headingOrSubheadingRegex =
+    /^(?:[\s|*•\-–#]+|\d{1,2}(?:\.\d{1,2})*[.)\-–\s]+|[IVXLCDM]+[.)\-–\s]+)*(?:(FARKLILAŞTIRMA(?:\s*UYGULAMALAR[Iİ])?|ZENG[İI]NLEŞT[İI]RME\s*VE\s*DESTEKLEME)|(ZENG[İI]NLEŞT[İI]RME(?:\s*UYGULAMALAR[Iİ])?|DESTEKLEME(?:\s*UYGULAMALAR[Iİ])?))(?=$|\s|[:|-])/i;
+
+  // Reject prose lines where "Farklılaştırma" or "Zenginleştirme" is just the first word of a normal sentence
+  // unless it is followed by ":" or "-" or is a standalone heading line.
+  const proseContinuationAfterHeadingRegex =
+    /^(?:kapsamındaki|kapsamında|sürecinde|süreçlerinde|uygulamalarında|uygulamaları\s*;|çerçevesinde|yapılırken|planlanırken|etkinliklerinde|çalışmalarında|ise\b|için\b|ile\b|ve\b|veya\b|olarak\b)/i;
+
+  let unitBlockCounter = 0;
+
+  for (let i = 0; i < targetLines.length; i++) {
+    const rawLine = normalizeTurkishUnicode(targetLines[i]).trim();
+    if (!rawLine) continue;
+
+    const match = rawLine.match(headingOrSubheadingRegex);
+    if (!match) continue;
+
+    const isMainFarkHeading = Boolean(match[1]);
+    const matchedSubHeading = match[2] || "";
+    const afterHeading = rawLine
+      .slice((match.index || 0) + match[0].length)
+      .replace(/^[:|\-–\s]+/, "")
+      .trim();
+
+    // If there is no colon/dash after the heading word on the same line and the remainder starts with a lowercase prose continuation word,
+    // check whether it's the generic intro sentence ("Farklılaştırma kapsamındaki tüm uygulamalar...")
+    const hasExplicitDelimiter = /[:|-]/.test(
+      rawLine.slice((match.index || 0) + match[0].length, (match.index || 0) + match[0].length + 4)
+    );
+
+    if (
+      !hasExplicitDelimiter &&
+      afterHeading &&
+      proseContinuationAfterHeadingRegex.test(afterHeading)
+    ) {
+      // Do NOT strip the first word! If it's a Zenginleştirme/Destekleme sentence ("Zenginleştirme kapsamında öğrencilere..."), keep the whole line
+      if (!isMainFarkHeading && matchedSubHeading) {
+        // Keep the full sentence with its subheading label
+      } else {
+        // It's a prose sentence starting with "Farklılaştırma kapsamındaki...", skip treating it as a section header
+        continue;
+      }
+    }
+
+    const collected: string[] = [];
+    if (isMainFarkHeading) {
+      if (afterHeading && !isDbfSectionPageArtifactOrSubHeader(afterHeading)) {
+        collected.push(afterHeading);
+      }
+    } else if (matchedSubHeading) {
+      const label = /zengin/i.test(matchedSubHeading)
+        ? "* Zenginleştirme:"
+        : "* Destekleme:";
+      if (afterHeading) {
+        collected.push(
+          !hasExplicitDelimiter &&
+            proseContinuationAfterHeadingRegex.test(afterHeading)
+            ? `${ label } ${matchedSubHeading} ${afterHeading}`
+            : `${label} ${afterHeading}`
+        );
+      } else {
+        collected.push(label);
+      }
+    }
+
+    let endIdx = i;
+    for (let j = i + 1; j < Math.min(targetLines.length, i + 75); j++) {
+      const nextRaw = normalizeTurkishUnicode(targetLines[j]).trim();
+      if (!nextRaw) continue;
+      if (isDbfSectionPageArtifactOrSubHeader(nextRaw)) continue;
+      if (stopRegex.test(nextRaw)) {
+        break;
+      }
+
+      // Check if next line is a Zenginleştirme or Destekleme sub-heading inside this same block
+      const subMatch = nextRaw.match(headingOrSubheadingRegex);
+      if (subMatch) {
+        if (subMatch[1]) {
+          // Another main FARKLILAŞTIRMA heading started -> stop current block
+          break;
+        }
+        if (subMatch[2]) {
+          const subLabel = /zengin/i.test(subMatch[2])
+            ? "* Zenginleştirme:"
+            : "* Destekleme:";
+          const subRem = nextRaw
+            .slice((subMatch.index || 0) + subMatch[0].length)
+            .replace(/^[:|\-–\s]+/, "")
+            .trim();
+          collected.push(subRem ? `${subLabel} ${subRem}` : subLabel);
+          endIdx = j;
+          continue;
+        }
+      }
+
+      const cleanedNext = cleanPdfHeaderFooterNoiseFromField(nextRaw);
+      if (!cleanedNext) continue;
+      if (stopRegex.test(cleanedNext)) break;
+
+      collected.push(cleanedNext);
+      endIdx = j;
+      if (collected.join(" ").length >= 2200) break;
+    }
+
+    const blockText = joinWrappedPdfLinesToParagraphs(collected);
+    if (blockText.length >= 25) {
+      unitBlockCounter++;
+      const { unitNo, outcomeCodes } = inferUnitAndOutcomesAtLine(
+        i,
+        unitBlockCounter
+      );
+      registerCandidate(blockText, unitNo, outcomeCodes);
+      i = endIdx;
+    }
+  }
+
+  // Pick the best overall Farklılaştırma (prefer one with Zenginleştirme/Destekleme)
+  const allCandidates = Object.values(byUnit);
+  const bestWithZengDest = allCandidates.find(
+    (c) => /\b(?:zenginleştirme|destekleme)\b/i.test(c) && !isGenericBoilerplateOnly(c)
+  );
+  const bestNonBoilerplate = allCandidates.find(
+    (c) => !isGenericBoilerplateOnly(c)
+  );
+  const best =
+    bestWithZengDest || bestNonBoilerplate || byUnit[1] || allCandidates[0] || "";
+
+  return { best, byUnit, byOutcome };
+}
+
 function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
   if (lines.length === 0) return "";
   const paragraphs: string[] = [];
@@ -2050,10 +2499,12 @@ function joinWrappedPdfLinesToParagraphs(lines: string[]): string {
     }
 
     const upperLine = toTrUpper(line);
-    const isBulletLine = /^(?:[*•\-–▪➢]|\d{1,2}[.)])\s+/.test(line);
+    const isBulletLine =
+      /^(?:[*•\-–▪➢]|\d{1,2}[.)])\s+/.test(line) ||
+      /^(?:\*\s*)?(?:ZENGİNLEŞTİRME|DESTEKLEME)\s*[:|-]/i.test(line);
     const isParagraphStarterAfterDot =
       /[.!?]$/.test(current) &&
-      (/^(?:AYRICA|ÖRNEĞİN|BUNUN\s+YANINDA|BUNUNLA\s+BİRLİKTE|DİĞER\s+TARAFTAN|BU\s+SÜREÇTE|BU\s+KAPSAMDA|BU\s+BAĞLAMDA|ÖĞRETİM\s+SÜRECİNDE|DEĞERLENDİRME\s+SÜRECİNDE|PERFORMANS\s+GÖREV|ÖĞRENCİ\s+PERFORMANSINI|ÖĞRENCİLERİN\s+PERFORMANS)(?=$|\s|[,:])/.test(
+      (/^(?:AYRICA|ÖRNEĞİN|BUNUN\s+YANINDA|BUNUNLA\s+BİRLİKTE|DİĞER\s+TARAFTAN|BU\s+SÜREÇTE|BU\s+KAPSAMDA|BU\s+BAĞLAMDA|ÖĞRETİM\s+SÜRECİNDE|DEĞERLENDİRME\s+SÜRECİNDE|PERFORMANS\s+GÖREV|ÖĞRENCİ\s+PERFORMANSINI|ÖĞRENCİLERİN\s+PERFORMANS|ZENGİNLEŞTİRME|DESTEKLEME)(?=$|\s|[,:])/.test(
         upperLine
       ) ||
         (current.length >= 110 &&
@@ -3295,31 +3746,17 @@ export function parseDersBilgiFormuStructured(
     })
     .join("\n\n");
 
-  // 8. Extract Farklılaştırma (indexed per unit & outcome)
-  const farklilastirmaStartRegex =
-    /^(?:FARKLILAŞTIRMA|ZENGİNLEŞTİRME\s*VE\s*DESTEKLEME)(?=$|\s|[:|-])/i;
-  const farklilastirmaStopRegex =
-    /^(?:UYGUNDUR|ÖĞRETMEN|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i;
-  const farklilastirmaCtx = extractAllSectionOccurrencesWithContext(
-    dbfLines.length > 0 ? dbfLines : combinedLines,
-    farklilastirmaStartRegex,
-    farklilastirmaStopRegex,
-    50,
-    2000
+  // 8. Extract Farklılaştırma (Zenginleştirme & Destekleme) indexed per unit & outcome
+  const farklilastirmaCtx = extractFarklilastirmaFromDbfWithContext(
+    dbfLines,
+    combinedLines
   );
-  const rawFarklilastirma =
-    farklilastirmaCtx.best ||
-    extractSectionBetweenHeadings(
-      dbfLines.length > 0 ? dbfLines : combinedLines,
-      farklilastirmaStartRegex,
-      farklilastirmaStopRegex,
-      50,
-      2000
-    );
   const farklilastirma = cleanPdfHeaderFooterNoiseFromField(
-    rawFarklilastirma &&
-      !/^(?:UYGUNDUR|Ders\s*Öğretmeni|Okul\s*Müdürü)/i.test(rawFarklilastirma)
-      ? rawFarklilastirma
+    farklilastirmaCtx.best &&
+      !/^(?:UYGUNDUR|Ders\s*Öğretmeni|Okul\s*Müdürü)/i.test(
+        farklilastirmaCtx.best
+      )
+      ? farklilastirmaCtx.best
       : ""
   );
 
@@ -4689,22 +5126,19 @@ export function buildWeekSpecificActivitiesFallback(
   Ek_Ogretme_Uygulamalari: string[];
   Ogretme_Uygulamalari: string[];
 } {
-  const cleanSubTopics = weekData.weekSubComponents.map((s) =>
-    s
-      .replace(/^[a-zçğıöşü]\)\s*/i, "")
-      .replace(
-        /\s+(?:açıklanır|sıralanır|uygulanır|incelenir|belirlenir|açıklar|sıralar)\.?$/i,
-        ""
-      )
-      .trim()
-  );
+  const fallbackTopic =
+    weekData.icerikCercevesi || weekData.ogrenmeBirimi || "ilgili konu";
+  const cleanSubTopics = weekData.weekSubComponents
+    .map((s) => convertSubComponentToCleanTopicPhrase(s, fallbackTopic))
+    .filter((s) => s.length >= 4);
 
   const primaryFocus =
     cleanSubTopics[0] || weekData.icerikCercevesi || weekData.ogrenmeBirimi;
   const secondaryFocus =
     cleanSubTopics[1] ||
-    cleanSubTopics[0] ||
-    `${weekData.ogrenmeBirimi} uygulamaları`;
+    (weekData.icerikCercevesi && weekData.icerikCercevesi !== primaryFocus
+      ? weekData.icerikCercevesi
+      : `${weekData.ogrenmeBirimi} uygulamaları`);
 
   const Guduleme: string[] = [
     `Bu derste ${primaryFocus.toLocaleLowerCase("tr-TR")} konusunun temel ilkelerini ve ${weekData.ogrenmeBirimi.toLocaleLowerCase("tr-TR")} içerisindeki yerini kapsamlı biçimde öğreneceksiniz.`,
@@ -5129,21 +5563,23 @@ const SECTION_SEARCH_PROFILES: Record<DocumentSectionKey, SectionSearchProfile> 
   },
   Farklilastirma: {
     headerRegex:
-      /^(?:FARKLILAŞTIRMA|Farklılaştırma|ZENGİNLEŞTİRME\s*VE\s*DESTEKLEME)(?=$|\s|[:|-])/i,
+      /^(?:FARKLILAŞTIRMA(?:\s*UYGULAMALARI)?|ZENGİNLEŞTİRME\s*VE\s*DESTEKLEME)(?=$|\s*[:|-]|\s+(?:Zenginleştirme|Destekleme|\*))/i,
     stopRegex:
-      /^(?:UYGUNDUR|ÖĞRETMEN|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*HAFTA)(?=$|\s|[:|-])/i,
+      /^(?:UYGUNDUR|ÖĞRETMEN\s*YANSITMALARI|ÖĞRETMEN|OKUL\s*MÜDÜRÜ|\d{1,2}\s*\.\s*(?:HAFTA|ÜNİTE|ÖĞRENME\s*BİRİMİ|TEMA)|(?:ÜNİTE|ÖĞRENME\s*BİRİMİ|TEMA)\s*[:|-]?\s*\d{1,2}|DERS\s*BİLGİ\s*FORMU)(?=$|\s|[:|-])/i,
     semanticKeywords: [
       "zenginleştirme",
       "destekleme",
       "bireysel farklılıklar",
       "ek süre",
       "ileri düzey",
+      "akran desteği",
     ],
     characteristicPhrases: [
-      /(?:Zenginleştirme|Destekleme)\s*[:|-][\s\S]{20,600}/i,
+      /(?:\*\s*)?Zenginleştirme\s*[:|-]?[\s\S]{20,1400}?(?:\*\s*)?Destekleme\s*[:|-]?[\s\S]{20,1000}/i,
+      /(?:Zenginleştirme|Destekleme)\s*[:|-][\s\S]{25,900}/i,
     ],
-    minChars: 20,
-    maxChars: 1200,
+    minChars: 35,
+    maxChars: 2200,
   },
   Alan_Becerileri: {
     headerRegex: /^(?:ALAN\s*BECERİLERİ|Alan\s*Becerileri)(?=$|\s|[:|-])/i,
@@ -5218,6 +5654,41 @@ export function autoSearchDocumentSectionFallback(
     const dedicatedKanitlar = extractOgrenmeKanitlariFromDbf(dbfLines, []);
     if (dedicatedKanitlar && dedicatedKanitlar.length >= profile.minChars) {
       return dedicatedKanitlar;
+    }
+  }
+
+  // If searching for Farklilastirma, run our dedicated multi-unit Farklılaştırma (Zenginleştirme & Destekleme) extractor first
+  if (sectionKey === "Farklilastirma") {
+    const fallbackCombinedLines = [rawDbfText || "", rawYillikPlanText || ""]
+      .filter(Boolean)
+      .join("\n")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const farkCtx = extractFarklilastirmaFromDbfWithContext(
+      dbfLines,
+      fallbackCombinedLines
+    );
+    const byOut =
+      weekData.outcomeCode && farkCtx.byOutcome[weekData.outcomeCode]
+        ? farkCtx.byOutcome[weekData.outcomeCode]
+        : "";
+    const outMatch = (weekData.outcomeCode || "").match(
+      /\b[A-ZÇĞİÖŞÜ]{2,8}\.(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\b/
+    );
+    const derivedUnitNo = outMatch
+      ? outMatch[3]
+        ? Number(outMatch[2])
+        : Number(outMatch[1])
+      : 0;
+    const byUn =
+      derivedUnitNo >= 1 && farkCtx.byUnit[derivedUnitNo]
+        ? farkCtx.byUnit[derivedUnitNo]
+        : "";
+    const chosenFark =
+      weekData.unitFarklilastirma || byOut || byUn || farkCtx.best;
+    if (chosenFark && chosenFark.length >= profile.minChars) {
+      return chosenFark;
     }
   }
 
@@ -5774,7 +6245,7 @@ export function enforceAndMergeLessonPlan(
     structuredDbf,
     weekData,
     materyalSlice,
-    ""
+    `* Zenginleştirme: ${weekData.icerikCercevesi || weekData.ogrenmeBirimi} konusu kapsamında ileri düzey ilgi ve hazırbulunuşluk gösteren öğrencilerin; ${(weekData.ogrenmeBirimi || cleanDers).toLocaleLowerCase("tr-TR")} alanındaki güncel sektörel gelişmeleri, yenilikçi uygulamaları veya örnek vaka analizlerini araştırarak özgün bir proje, infografik ya da çözüm önerisi raporu hazırlamaları ve sınıfta paylaşmaları sağlanır.\n* Destekleme: ${weekData.icerikCercevesi || weekData.ogrenmeBirimi} konusunun öğrenilmesinde desteğe ihtiyaç duyan öğrenciler için temel kavramlar görsel şemalar, kavram haritaları ve somut örneklerle adım adım açıklanır; uygulama aşamalarında kontrol listeleri, çalışma yaprakları, akran desteği ve gerektiğinde ek süre verilerek sürece aktif katılımları desteklenir.`
   );
 
   // 4. Cross-Verify & Complete Öğrenme Çıktıları ve Süreç Bileşenleri + İçerik Çerçevesi
