@@ -15,6 +15,8 @@ import {
   enforceAndMergeLessonPlan,
   extractDateRangeFromText,
   resolveValidDateRange,
+  cleanPdfHeaderFooterNoiseFromField,
+  sanitizePlanOutputBeforeDelivery,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -655,18 +657,18 @@ ${structuredDbf.rawOutcomesCatalogText || ""}
 ${weekData.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari}
   </ogrenme_kanitlari_tam_metin>
   <temel_kabuller_tam_metin>
-${structuredDbf.temelKabuller}
+${weekData.unitTemelKabuller || structuredDbf.temelKabuller}
   </temel_kabuller_tam_metin>
   <on_degerlendirme_sureci_tam_metin>
-${structuredDbf.onDegerlendirmeSureci}
+${weekData.unitOnDegerlendirmeSureci || structuredDbf.onDegerlendirmeSureci}
   </on_degerlendirme_sureci_tam_metin>
   <kopru_kurma_tam_metin>
-${structuredDbf.kopruKurma}
+${weekData.unitKopruKurma || structuredDbf.kopruKurma}
   </kopru_kurma_tam_metin>
   <ogretme_uygulamalari_secilen_birim>
 ${weekData.unitOgretmeUygulamalari.join("\n")}
   </ogretme_uygulamalari_secilen_birim>
-  <farklilastirma_tam_metin>${structuredDbf.farklilastirma}</farklilastirma_tam_metin>
+  <farklilastirma_tam_metin>${weekData.unitFarklilastirma || structuredDbf.farklilastirma}</farklilastirma_tam_metin>
   <aktif_maarif_kodlari>${structuredDbf.rawActivityCodes.join(", ")}</aktif_maarif_kodlari>
   <ders_bilgi_formu_ham_metin>
 ${cleanDbfSlice}
@@ -801,23 +803,27 @@ export function synthesizeAllWeeksClientSide(params: {
     );
 
     if (weekItem.ogrenmeKanitlari) {
-      plan.Ogrenme_Kanitlari = weekItem.ogrenmeKanitlari;
+      plan.Ogrenme_Kanitlari = cleanPdfHeaderFooterNoiseFromField(
+        weekItem.ogrenmeKanitlari
+      );
     }
     if (
       weekItem.ogretmeUygulamalari &&
       weekItem.ogretmeUygulamalari.length > 0
     ) {
       plan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
-        weekItem.ogretmeUygulamalari.map((b) =>
-          b.replace(/^\*\s*/, "").trim()
-        );
+        weekItem.ogretmeUygulamalari
+          .map((b) => cleanPdfHeaderFooterNoiseFromField(b.replace(/^\*\s*/, "").trim()))
+          .filter(Boolean);
     }
+
+    const sanitizedPlan = sanitizePlanOutputBeforeDelivery(plan);
 
     const weekMeta: DocumentHeaderFooterMeta = {
       ...baseMeta,
       okulAdi: effectiveOkulAdi || baseMeta.okulAdi,
-      dersIsmi: effectiveDersIsmi || plan.Ders_Bilgisi.Ders,
-      sinifDuzeyi: effectiveSinifDuzeyi || plan.Ders_Bilgisi.Sinif,
+      dersIsmi: effectiveDersIsmi || sanitizedPlan.Ders_Bilgisi.Ders,
+      sinifDuzeyi: effectiveSinifDuzeyi || sanitizedPlan.Ders_Bilgisi.Sinif,
       haftaEtiketi: weekItem.haftaEtiketi,
       tarihAraligi: validDate,
       onayTarihi:
@@ -826,7 +832,7 @@ export function synthesizeAllWeeksClientSide(params: {
         baseMeta.onayTarihi,
     };
 
-    return { plan, meta: weekMeta };
+    return { plan: sanitizedPlan, meta: weekMeta };
   });
 }
 

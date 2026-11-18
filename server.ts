@@ -20,6 +20,8 @@ import {
   deriveUnitNameFromOutcome,
   extractWeeklyMaterialSummaryBox,
   applyBlacklistAndDensityFilter,
+  cleanPdfHeaderFooterNoiseFromField,
+  sanitizePlanOutputBeforeDelivery,
   WeekSpecificExtraction,
 } from "./src/shared/maarifPlanEngine";
 import { MaarifLessonPlan } from "./src/types/lessonPlan";
@@ -745,47 +747,45 @@ async function startServer() {
         ders_materyali
       );
 
-      if (isXmlString) {
-        const preKanitlar = extractXmlTag(body, "ogrenme_kanitlari_tam_metin");
-        if (
-          preKanitlar &&
-          preKanitlar.length > structuredDbf.ogrenmeKanitlari.length
-        ) {
-          structuredDbf.ogrenmeKanitlari = preKanitlar;
-        }
-        const preKabuller = extractXmlTag(body, "temel_kabuller_tam_metin");
-        if (
-          preKabuller &&
-          preKabuller.length > structuredDbf.temelKabuller.length
-        ) {
-          structuredDbf.temelKabuller = preKabuller;
-        }
-        const preOnDeg = extractXmlTag(
-          body,
-          "on_degerlendirme_sureci_tam_metin"
-        );
-        if (
-          preOnDeg &&
-          preOnDeg.length > structuredDbf.onDegerlendirmeSureci.length
-        ) {
-          structuredDbf.onDegerlendirmeSureci = preOnDeg;
-        }
-        const preKopru = extractXmlTag(body, "kopru_kurma_tam_metin");
-        if (preKopru && preKopru.length > structuredDbf.kopruKurma.length) {
-          structuredDbf.kopruKurma = preKopru;
-        }
-        const preFark = extractXmlTag(body, "farklilastirma_tam_metin");
-        if (preFark && preFark.length > structuredDbf.farklilastirma.length) {
-          structuredDbf.farklilastirma = preFark;
-        }
-      }
-
       const weekData = extractWeekPlanStructured(
         rawYillikTableFromXml,
         hafta_etiketi,
         tarih_araligi,
         structuredDbf
       );
+
+      if (isXmlString) {
+        const preKanitlar = cleanPdfHeaderFooterNoiseFromField(
+          extractXmlTag(body, "ogrenme_kanitlari_tam_metin")
+        );
+        if (preKanitlar && !weekData.unitOgrenmeKanitlari) {
+          weekData.unitOgrenmeKanitlari = preKanitlar;
+        }
+        const preKabuller = cleanPdfHeaderFooterNoiseFromField(
+          extractXmlTag(body, "temel_kabuller_tam_metin")
+        );
+        if (preKabuller && !weekData.unitTemelKabuller) {
+          weekData.unitTemelKabuller = preKabuller;
+        }
+        const preOnDeg = cleanPdfHeaderFooterNoiseFromField(
+          extractXmlTag(body, "on_degerlendirme_sureci_tam_metin")
+        );
+        if (preOnDeg && !weekData.unitOnDegerlendirmeSureci) {
+          weekData.unitOnDegerlendirmeSureci = preOnDeg;
+        }
+        const preKopru = cleanPdfHeaderFooterNoiseFromField(
+          extractXmlTag(body, "kopru_kurma_tam_metin")
+        );
+        if (preKopru && !weekData.unitKopruKurma) {
+          weekData.unitKopruKurma = preKopru;
+        }
+        const preFark = cleanPdfHeaderFooterNoiseFromField(
+          extractXmlTag(body, "farklilastirma_tam_metin")
+        );
+        if (preFark && !weekData.unitFarklilastirma) {
+          weekData.unitFarklilastirma = preFark;
+        }
+      }
 
       if (isXmlString) {
         const preOutcomeBlock = extractXmlTag(
@@ -895,21 +895,21 @@ ${rawYillikTableFromXml.slice(0, 12000)}
 ${outcomesCatalogText}
   </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
   <ogrenme_kanitlari_tam_metin>
-${structuredDbf.ogrenmeKanitlari}
+${weekData.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari}
   </ogrenme_kanitlari_tam_metin>
   <temel_kabuller_tam_metin>
-${structuredDbf.temelKabuller}
+${weekData.unitTemelKabuller || structuredDbf.temelKabuller}
   </temel_kabuller_tam_metin>
   <on_degerlendirme_sureci_tam_metin>
-${structuredDbf.onDegerlendirmeSureci}
+${weekData.unitOnDegerlendirmeSureci || structuredDbf.onDegerlendirmeSureci}
   </on_degerlendirme_sureci_tam_metin>
   <kopru_kurma_tam_metin>
-${structuredDbf.kopruKurma}
+${weekData.unitKopruKurma || structuredDbf.kopruKurma}
   </kopru_kurma_tam_metin>
   <ogretme_uygulamalari_secilen_birim>
 ${weekData.unitOgretmeUygulamalari.join("\n")}
   </ogretme_uygulamalari_secilen_birim>
-  <farklilastirma_tam_metin>${structuredDbf.farklilastirma}</farklilastirma_tam_metin>
+  <farklilastirma_tam_metin>${weekData.unitFarklilastirma || structuredDbf.farklilastirma}</farklilastirma_tam_metin>
   <aktif_maarif_kodlari>${
     structuredDbf.rawActivityCodes.join(", ") ||
     "OB1, OB2, KB2.2, KB3.2, E1.4, E2.2, SDB2.2, SDB3.3, D3.2, D16.3"
@@ -1705,9 +1705,11 @@ ${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000
                 richCandidate.Farklilastirma),
       };
 
+      const sanitizedUpdatedPlan = sanitizePlanOutputBeforeDelivery(updatedPlan);
+
       res.json({
         success: true,
-        updatedPlan,
+        updatedPlan: sanitizedUpdatedPlan,
         completedFields: Array.from(new Set(completedFields)),
         source: usedSource,
       });
@@ -1715,6 +1717,166 @@ ${(materyalSlice || ders_bilgi_formu.slice(0, 4000) || yillik_plan.slice(0, 4000
       console.error("Error in /api/autocomplete-plan-fields:", err);
       res.status(500).json({
         error: "Plan eksik alanları otomatik tamamlanırken bir hata oluştu.",
+      });
+    }
+  });
+
+  // Endpoint for WeekDetailPanel "AI ile Düzelt": Cleans artifacts and strictly aligns a specific field or section with the active week's outcome & Ders Bilgi Formu
+  app.post("/api/fix-plan-field", async (req, res) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const fieldKey = String(body.fieldKey || "").trim();
+      const currentValue = String(body.currentValue || "").trim();
+      const currentPlan = (body.plan || {}) as Partial<MaarifLessonPlan>;
+      const meta = (body.meta || {}) as Record<string, string>;
+      const yillik_plan = String(body.yillik_plan || "");
+      const ders_bilgi_formu = String(body.ders_bilgi_formu || "");
+      const ders_materyali = String(body.ders_materyali || "");
+
+      const dersIsmi =
+        String(meta.dersIsmi || currentPlan.Ders_Bilgisi?.Ders || "").trim() ||
+        "Meslek Dersi";
+      const sinifDuzeyi =
+        String(meta.sinifDuzeyi || currentPlan.Ders_Bilgisi?.Sinif || "").trim() ||
+        "9. Sınıf";
+      const haftaEtiketi = String(meta.haftaEtiketi || "1. HAFTA").trim();
+      const tarihAraligi = String(meta.tarihAraligi || "").trim();
+
+      const structuredDbf = parseDersBilgiFormuStructured(
+        ders_bilgi_formu,
+        yillik_plan,
+        ders_materyali
+      );
+      const weekData = extractWeekPlanStructured(
+        yillik_plan,
+        haftaEtiketi,
+        tarihAraligi,
+        structuredDbf
+      );
+      const cleanMateryal = stripFrontMatter(ders_materyali);
+      const materyalSlice = extractWeekMateryalSlice(
+        cleanMateryal,
+        weekData,
+        8000
+      );
+
+      const deterministicPlan = enforceAndMergeLessonPlan(
+        null,
+        structuredDbf,
+        weekData,
+        materyalSlice,
+        { dersIsmi, sinifDuzeyi }
+      );
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      let fixedText = "";
+      let fixedItems: string[] = [];
+      let fixedPlanPatch: Partial<MaarifLessonPlan> | null = null;
+      let usedSource: "ai" | "maarif-motoru" = "maarif-motoru";
+
+      if (apiKey) {
+        try {
+          const fixSchema = {
+            type: Type.OBJECT,
+            properties: {
+              fixedText: {
+                type: Type.STRING,
+                description:
+                  "Sayfa üstbilgisi, tablo sütun başlıkları (TARİH HAFTA SAAT ÜNİTE...), sayfa numaraları (9 / 25) ve başka ünite/kazanımlara ait alakasız cümlelerden tamamen arındırılmış, yalnızca bu haftanın kazanımı ve konusuyla birebir uyumlu düzeltilmiş metin.",
+              },
+              fixedItems: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description:
+                  "Eğer hedef alan liste/madde alanıysa (Öğretme Uygulamaları, Güdüleme, Dikkat Çekme, Ek Öğretme Uygulamaları), temizlenmiş ve bu haftanın kazanımına uyarlanmış maddeler dizisi.",
+              },
+            },
+            required: ["fixedText", "fixedItems"],
+          };
+
+          const prompt = `<gorev>
+Kullanıcı Hafta Detay Panelinde "${fieldKey}" alanı için "AI ile Düzelt" butonuna tıkladı.
+GÖREVİN:
+1. Mevcut metinde veya kaynak dokümanda PDF sayfa geçişlerinden sızmış olan okul adı / başlık ("2026-2027 EĞİTİM-ÖĞRETİM YILI ... YILLIK PLANI (TYMM)"), sayfa numaraları ("9 / 25"), tablo sütun başlıkları ("TARİH HAFTA SAAT ÜNİTE İÇERİK ÇERÇEVESİ ÖĞRENME ÇIKTILARI SÜREÇ BİLEŞENLERİ ÖĞRENME BECERİLERİ DEĞERLER OKURYAZARLIK BECERİLERİ ÖLÇME DEĞERLENDİRME BELİRLİ GÜN VE HAFT.") veya hafta sonu tarih kalıntılarını ("14- 18 Aralık" vb.) KESİNLİKLE SİL!
+2. Bu haftanın aktif Öğrenme Birimi "${weekData.ogrenmeBirimi || currentPlan.Ders_Bilgisi?.Ogrenme_Birimi || ""}", İçerik Çerçevesi (Konu) "${weekData.icerikCercevesi || currentPlan.Icerik_Cercevesi || ""}" ve Öğrenme Çıktısı "${weekData.outcomeCode || ""} - ${weekData.formattedOutcomeAndProcessBlock || currentPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""}" bilgisidir.
+3. Başka bir üniteye (örneğin 1. Ünite Mesleki İletişim işlenirken 2. Ünite Meslek Etiği / "kural, ahlak, etik" vb.) veya başka bir öğrenme çıktısına ait cümleler karışmışsa bunları çıkar; YALNIZCA bu haftanın öğrenme çıktısına (${weekData.outcomeCode || "ilgili kazanım"}) ve Ders Bilgi Formu verilerine uygun, resmi MEB Maarif Modeli dilinde temiz ve eksiksiz metni üret.
+</gorev>
+
+<hedef_alan>${fieldKey}</hedef_alan>
+<mevcut_deger>
+${currentValue}
+</mevcut_deger>
+<kaynak_referans_degeri>
+${JSON.stringify(
+  {
+    ogrenmeBirimi: deterministicPlan.Ders_Bilgisi.Ogrenme_Birimi,
+    icerikCercevesi: deterministicPlan.Icerik_Cercevesi,
+    ogrenmeCiktilari: deterministicPlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+    ogrenmeKanitlari: deterministicPlan.Ogrenme_Kanitlari,
+    temelKabuller: deterministicPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller,
+    onDegerlendirme:
+      deterministicPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci,
+    kopruKurma: deterministicPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma,
+    ogretmeUygulamalari:
+      deterministicPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+    guduleme: deterministicPlan.Ogrenme_Ogretme_Yasantilari.Guduleme,
+    dikkatCekme: deterministicPlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme,
+    ekUygulamalar:
+      deterministicPlan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari,
+    farklilastirma: deterministicPlan.Farklilastirma,
+  },
+  null,
+  2
+)}
+</kaynak_referans_degeri>
+<ders_materyali_kesiti>
+${materyalSlice.slice(0, 4500)}
+</ders_materyali_kesiti>`;
+
+          const rawJson = await generateWithFallback(
+            apiKey,
+            prompt,
+            "Sen MEB Türkiye Yüzyılı Maarif Modeli Ders Planı Kalite Denetçisi ve Editörüsün. PDF tablo/başlık kalıntılarını ve farklı ünite/kazanım sızıntılarını temizleyerek ilgili alanı seçilen haftanın öğrenme çıktısına ve Ders Bilgi Formuna %100 uyumlu hale getirirsin.",
+            fixSchema
+          );
+          const parsed = JSON.parse(rawJson);
+          fixedText = cleanPdfHeaderFooterNoiseFromField(
+            String(parsed.fixedText || "").trim()
+          );
+          fixedItems = Array.isArray(parsed.fixedItems)
+            ? parsed.fixedItems
+                .map((s: unknown) =>
+                  cleanPdfHeaderFooterNoiseFromField(
+                    String(s || "")
+                      .replace(/^\*\s*/, "")
+                      .trim()
+                  )
+                )
+                .filter(Boolean)
+            : [];
+          usedSource = "ai";
+        } catch (aiErr) {
+          console.warn(
+            "AI fix-plan-field fallback to deterministic Maarif engine:",
+            aiErr
+          );
+        }
+      }
+
+      fixedPlanPatch = sanitizePlanOutputBeforeDelivery(deterministicPlan);
+
+      res.json({
+        success: true,
+        fieldKey,
+        fixedText,
+        fixedItems,
+        deterministicPlan: fixedPlanPatch,
+        source: usedSource,
+      });
+    } catch (err: unknown) {
+      console.error("Error in /api/fix-plan-field:", err);
+      res.status(500).json({
+        error: "Alan AI ile düzeltilirken bir hata oluştu.",
       });
     }
   });

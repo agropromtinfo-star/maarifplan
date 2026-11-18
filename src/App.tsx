@@ -14,7 +14,10 @@ import { OfficialPlanTable } from "./components/OfficialPlanTable";
 import { PlanValidator } from "./components/PlanValidator";
 import { ExportConfigModal } from "./components/ExportConfigModal";
 import { TopicSummaryModal } from "./components/TopicSummaryModal";
-import { WeekDetailPanel } from "./components/WeekDetailPanel";
+import {
+  WeekDetailPanel,
+  WeekDetailFieldOrSectionKey,
+} from "./components/WeekDetailPanel";
 import {
   downloadWordDoc,
   downloadAllWeeksWordDoc,
@@ -39,6 +42,8 @@ import {
   parseDersBilgiFormuStructured,
   resolveValidDateRange,
   cleanOgrenmeKanitlariPrefix,
+  cleanPdfHeaderFooterNoiseFromField,
+  sanitizePlanOutputBeforeDelivery,
   validateCourseNameAgainstDbf,
 } from "./shared/maarifPlanEngine";
 import {
@@ -545,11 +550,12 @@ export default function App() {
           weekSpecific.ogrenmeBirimi || weekItem.ogrenmeBirimi || "",
         icerikCercevesi:
           weekSpecific.icerikCercevesi || weekItem.icerikCercevesi || "",
-        ogrenmeKanitlari:
+        ogrenmeKanitlari: cleanPdfHeaderFooterNoiseFromField(
           weekSpecific.unitOgrenmeKanitlari ||
-          structuredDbfMemo.ogrenmeKanitlari ||
-          weekItem.ogrenmeKanitlari ||
-          "",
+            structuredDbfMemo.ogrenmeKanitlari ||
+            weekItem.ogrenmeKanitlari ||
+            ""
+        ),
         ogretmeUygulamalari:
           weekSpecific.unitOgretmeUygulamalari.length > 0
             ? weekSpecific.unitOgretmeUygulamalari
@@ -583,7 +589,7 @@ export default function App() {
 
   const selectedWeekPreviewPlan = useMemo<MaarifLessonPlan>(() => {
     if (currentPlan) {
-      return currentPlan;
+      return sanitizePlanOutputBeforeDelivery(currentPlan);
     }
     const validDate = resolveValidDateRange(
       selectedWeekObj?.tarihAraligi || meta.tarihAraligi,
@@ -615,18 +621,22 @@ export default function App() {
       synthesized.Ders_Bilgisi.Ders = effectiveDersIsmi;
     }
     if (selectedWeekObj?.ogrenmeKanitlari) {
-      synthesized.Ogrenme_Kanitlari = selectedWeekObj.ogrenmeKanitlari;
+      synthesized.Ogrenme_Kanitlari = cleanPdfHeaderFooterNoiseFromField(
+        selectedWeekObj.ogrenmeKanitlari
+      );
     }
     if (
       selectedWeekObj?.ogretmeUygulamalari &&
       selectedWeekObj.ogretmeUygulamalari.length > 0
     ) {
       synthesized.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari =
-        selectedWeekObj.ogretmeUygulamalari.map((b) =>
-          b.replace(/^\*\s*/, "").trim()
-        );
+        selectedWeekObj.ogretmeUygulamalari
+          .map((b) =>
+            cleanPdfHeaderFooterNoiseFromField(b.replace(/^\*\s*/, "").trim())
+          )
+          .filter(Boolean);
     }
-    return synthesized;
+    return sanitizePlanOutputBeforeDelivery(synthesized);
   }, [
     currentPlan,
     selectedWeekObj,
@@ -638,6 +648,366 @@ export default function App() {
     dersMateryali,
     dersBilgiFormu,
   ]);
+
+  const applySourcePatchForTargetKey = (
+    basePlan: MaarifLessonPlan,
+    sourcePlan: MaarifLessonPlan,
+    targetKey: WeekDetailFieldOrSectionKey
+  ): MaarifLessonPlan => {
+    const cleanSource = sanitizePlanOutputBeforeDelivery(sourcePlan);
+    const next = sanitizePlanOutputBeforeDelivery({ ...basePlan });
+
+    switch (targetKey) {
+      case "section_hafta":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Ogrenme_Birimi: cleanSource.Ders_Bilgisi.Ogrenme_Birimi,
+          Sure: cleanSource.Ders_Bilgisi.Sure,
+        };
+        next.Icerik_Cercevesi = cleanSource.Icerik_Cercevesi;
+        break;
+      case "Ogrenme_Birimi":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Ogrenme_Birimi: cleanSource.Ders_Bilgisi.Ogrenme_Birimi,
+        };
+        break;
+      case "Icerik_Cercevesi":
+        next.Icerik_Cercevesi = cleanSource.Icerik_Cercevesi;
+        break;
+      case "Sure":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Sure: cleanSource.Ders_Bilgisi.Sure,
+        };
+        break;
+      case "section_ders":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Alan_Becerileri: cleanSource.Ders_Bilgisi.Alan_Becerileri,
+          Egilimler: cleanSource.Ders_Bilgisi.Egilimler,
+        };
+        next.Programlar_Arasi_Bilesenler = {
+          ...cleanSource.Programlar_Arasi_Bilesenler,
+        };
+        break;
+      case "Alan_Becerileri":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Alan_Becerileri: cleanSource.Ders_Bilgisi.Alan_Becerileri,
+        };
+        break;
+      case "Egilimler":
+        next.Ders_Bilgisi = {
+          ...next.Ders_Bilgisi,
+          Egilimler: cleanSource.Ders_Bilgisi.Egilimler,
+        };
+        break;
+      case "Programlar_Arasi_Bilesenler":
+        next.Programlar_Arasi_Bilesenler = {
+          ...cleanSource.Programlar_Arasi_Bilesenler,
+        };
+        break;
+      case "section_ciktilar":
+        next.Ogrenme_Ciktilari_ve_Surec_Bilesenleri =
+          cleanSource.Ogrenme_Ciktilari_ve_Surec_Bilesenleri;
+        next.Ogrenme_Kanitlari = cleanSource.Ogrenme_Kanitlari;
+        break;
+      case "Ogrenme_Ciktilari_ve_Surec_Bilesenleri":
+        next.Ogrenme_Ciktilari_ve_Surec_Bilesenleri =
+          cleanSource.Ogrenme_Ciktilari_ve_Surec_Bilesenleri;
+        break;
+      case "Ogrenme_Kanitlari":
+        next.Ogrenme_Kanitlari = cleanSource.Ogrenme_Kanitlari;
+        break;
+      case "section_yasantilar":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...cleanSource.Ogrenme_Ogretme_Yasantilari,
+        };
+        break;
+      case "Temel_Kabuller":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Temel_Kabuller: cleanSource.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller,
+        };
+        break;
+      case "On_Degerlendirme_Sureci":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          On_Degerlendirme_Sureci:
+            cleanSource.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci,
+        };
+        break;
+      case "Kopru_Kurma":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Kopru_Kurma: cleanSource.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma,
+        };
+        break;
+      case "Ogretme_Uygulamalari":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Ogretme_Uygulamalari:
+            cleanSource.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+        };
+        break;
+      case "Guduleme":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Guduleme: cleanSource.Ogrenme_Ogretme_Yasantilari.Guduleme,
+        };
+        break;
+      case "Dikkat_Cekme":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Dikkat_Cekme: cleanSource.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme,
+        };
+        break;
+      case "Ek_Ogretme_Uygulamalari":
+        next.Ogrenme_Ogretme_Yasantilari = {
+          ...next.Ogrenme_Ogretme_Yasantilari,
+          Ek_Ogretme_Uygulamalari:
+            cleanSource.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari,
+        };
+        break;
+      case "section_farklilastirma":
+      case "Farklilastirma":
+        next.Farklilastirma = cleanSource.Farklilastirma;
+        break;
+    }
+
+    return sanitizePlanOutputBeforeDelivery(next);
+  };
+
+  const handleReExtractFieldFromSource = (
+    targetKey: WeekDetailFieldOrSectionKey
+  ) => {
+    const validDate = resolveValidDateRange(
+      selectedWeekObj?.tarihAraligi || meta.tarihAraligi,
+      selectedWeekObj?.haftaNo || 1
+    );
+    const detectedDocMeta = extractDocumentMetadataClient(
+      `${dersBilgiFormu}\n${yillikPlan}\n${dersMateryali}`
+    );
+    const effectiveDersIsmi =
+      meta.dersIsmi.trim() || detectedDocMeta.dersIsmi;
+    const effectiveSinifDuzeyi =
+      meta.sinifDuzeyi.trim() || detectedDocMeta.sinifDuzeyi;
+
+    const freshSourcePlan = synthesizePlanClientSide({
+      yillik_plan: yillikPlan,
+      ders_materyali: dersMateryali,
+      ders_bilgi_formu: dersBilgiFormu,
+      hafta_etiketi: selectedWeekObj?.haftaEtiketi || meta.haftaEtiketi,
+      tarih_araligi: validDate,
+      ders_ismi: effectiveDersIsmi,
+      sinif_duzeyi: effectiveSinifDuzeyi,
+      secilen_hafta_verisi: selectedWeekObj
+        ? {
+            ...selectedWeekObj,
+            tarihAraligi: validDate,
+            ogrenmeKanitlari: undefined,
+            ogretmeUygulamalari: undefined,
+          }
+        : undefined,
+    });
+
+    const updated = applySourcePatchForTargetKey(
+      selectedWeekPreviewPlan,
+      freshSourcePlan,
+      targetKey
+    );
+    setCurrentPlan(updated);
+
+    if (selectedWeekObj) {
+      handleUpdateWeekItem(selectedWeekObj.id, {
+        ogrenmeBirimi: updated.Ders_Bilgisi.Ogrenme_Birimi,
+        icerikCercevesi: updated.Icerik_Cercevesi,
+        konuVeCiktiOzeti: updated.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+        ogrenmeKanitlari: updated.Ogrenme_Kanitlari,
+        ogretmeUygulamalari:
+          updated.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+      });
+    }
+  };
+
+  const handleAiFixField = async (targetKey: WeekDetailFieldOrSectionKey) => {
+    let currentValue = "";
+    const p = selectedWeekPreviewPlan;
+    switch (targetKey) {
+      case "Ogrenme_Birimi":
+      case "section_hafta":
+        currentValue = p.Ders_Bilgisi.Ogrenme_Birimi;
+        break;
+      case "Icerik_Cercevesi":
+        currentValue = p.Icerik_Cercevesi;
+        break;
+      case "Alan_Becerileri":
+      case "section_ders":
+        currentValue = p.Ders_Bilgisi.Alan_Becerileri;
+        break;
+      case "Egilimler":
+        currentValue = p.Ders_Bilgisi.Egilimler;
+        break;
+      case "Ogrenme_Ciktilari_ve_Surec_Bilesenleri":
+      case "section_ciktilar":
+        currentValue = `${p.Ogrenme_Ciktilari_ve_Surec_Bilesenleri}\n---\n${p.Ogrenme_Kanitlari}`;
+        break;
+      case "Ogrenme_Kanitlari":
+        currentValue = p.Ogrenme_Kanitlari;
+        break;
+      case "Temel_Kabuller":
+        currentValue = p.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller;
+        break;
+      case "On_Degerlendirme_Sureci":
+        currentValue = p.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci;
+        break;
+      case "Kopru_Kurma":
+        currentValue = p.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma;
+        break;
+      case "Ogretme_Uygulamalari":
+        currentValue =
+          p.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.join("\n");
+        break;
+      case "Guduleme":
+        currentValue = p.Ogrenme_Ogretme_Yasantilari.Guduleme.join("\n");
+        break;
+      case "Dikkat_Cekme":
+        currentValue = p.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme.join("\n");
+        break;
+      case "Ek_Ogretme_Uygulamalari":
+        currentValue =
+          p.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari.join("\n");
+        break;
+      case "Farklilastirma":
+      case "section_farklilastirma":
+        currentValue = p.Farklilastirma;
+        break;
+      default:
+        currentValue = JSON.stringify(p.Ogrenme_Ogretme_Yasantilari);
+    }
+
+    try {
+      const response = await fetch("/api/fix-plan-field", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fieldKey: targetKey,
+          currentValue,
+          plan: p,
+          meta,
+          yillik_plan: yillikPlan.slice(0, 45000),
+          ders_bilgi_formu: dersBilgiFormu.slice(0, 45000),
+          ders_materyali: dersMateryali.slice(0, 35000),
+        }),
+      });
+      const parsed = await safeReadJsonResponse<{
+        success?: boolean;
+        fixedText?: string;
+        fixedItems?: string[];
+        deterministicPlan?: MaarifLessonPlan;
+      }>(response);
+
+      if (parsed.ok && parsed.data) {
+        const { fixedText, fixedItems, deterministicPlan } = parsed.data;
+        const baseFallback = deterministicPlan
+          ? applySourcePatchForTargetKey(p, deterministicPlan, targetKey)
+          : p;
+        const next = sanitizePlanOutputBeforeDelivery({ ...baseFallback });
+
+        const cleanAiText = cleanPdfHeaderFooterNoiseFromField(fixedText || "");
+        const cleanAiItems = (fixedItems || [])
+          .map((item) => cleanPdfHeaderFooterNoiseFromField(item))
+          .filter(Boolean);
+
+        if (targetKey === "Ogrenme_Kanitlari" && cleanAiText.length >= 15) {
+          next.Ogrenme_Kanitlari = cleanAiText;
+        } else if (
+          targetKey === "Ogrenme_Ciktilari_ve_Surec_Bilesenleri" &&
+          cleanAiText.length >= 15
+        ) {
+          next.Ogrenme_Ciktilari_ve_Surec_Bilesenleri = cleanAiText;
+        } else if (targetKey === "Temel_Kabuller" && cleanAiText.length >= 15) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Temel_Kabuller: cleanAiText,
+          };
+        } else if (
+          targetKey === "On_Degerlendirme_Sureci" &&
+          cleanAiText.length >= 15
+        ) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            On_Degerlendirme_Sureci: cleanAiText,
+          };
+        } else if (targetKey === "Kopru_Kurma" && cleanAiText.length >= 15) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Kopru_Kurma: cleanAiText,
+          };
+        } else if (
+          targetKey === "Ogretme_Uygulamalari" &&
+          cleanAiItems.length > 0
+        ) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Ogretme_Uygulamalari: cleanAiItems,
+          };
+        } else if (targetKey === "Guduleme" && cleanAiItems.length > 0) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Guduleme: cleanAiItems,
+          };
+        } else if (targetKey === "Dikkat_Cekme" && cleanAiItems.length > 0) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Dikkat_Cekme: cleanAiItems,
+          };
+        } else if (
+          targetKey === "Ek_Ogretme_Uygulamalari" &&
+          cleanAiItems.length > 0
+        ) {
+          next.Ogrenme_Ogretme_Yasantilari = {
+            ...next.Ogrenme_Ogretme_Yasantilari,
+            Ek_Ogretme_Uygulamalari: cleanAiItems,
+          };
+        } else if (
+          (targetKey === "Farklilastirma" ||
+            targetKey === "section_farklilastirma") &&
+          cleanAiText.length >= 15
+        ) {
+          next.Farklilastirma = cleanAiText;
+        } else if (targetKey === "Ogrenme_Birimi" && cleanAiText.length >= 3) {
+          next.Ders_Bilgisi = {
+            ...next.Ders_Bilgisi,
+            Ogrenme_Birimi: cleanAiText,
+          };
+        } else if (targetKey === "Icerik_Cercevesi" && cleanAiText.length >= 3) {
+          next.Icerik_Cercevesi = cleanAiText;
+        }
+
+        const sanitizedFinal = sanitizePlanOutputBeforeDelivery(next);
+        setCurrentPlan(sanitizedFinal);
+
+        if (selectedWeekObj) {
+          handleUpdateWeekItem(selectedWeekObj.id, {
+            ogrenmeBirimi: sanitizedFinal.Ders_Bilgisi.Ogrenme_Birimi,
+            icerikCercevesi: sanitizedFinal.Icerik_Cercevesi,
+            konuVeCiktiOzeti:
+              sanitizedFinal.Ogrenme_Ciktilari_ve_Surec_Bilesenleri,
+            ogrenmeKanitlari: sanitizedFinal.Ogrenme_Kanitlari,
+            ogretmeUygulamalari:
+              sanitizedFinal.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
+          });
+        }
+        return;
+      }
+    } catch {
+      // Fallback to source re-extraction + sanitization below
+    }
+
+    handleReExtractFieldFromSource(targetKey);
+  };
 
   const handleSelectWeek = (weekId: string) => {
     setSelectedWeekId(weekId);
@@ -3268,12 +3638,23 @@ export default function App() {
         onUpdateWeekItem={handleUpdateWeekItem}
         activePlan={selectedWeekPreviewPlan}
         hasGeneratedPlan={Boolean(currentPlan)}
-        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+        onUpdatePlan={(updated) =>
+          setCurrentPlan(sanitizePlanOutputBeforeDelivery(updated))
+        }
         onGenerateOrApplyWeekPlan={() => {
-          setCurrentPlan(selectedWeekPreviewPlan);
+          setCurrentPlan(
+            sanitizePlanOutputBeforeDelivery(selectedWeekPreviewPlan)
+          );
           setIsWeekDetailPanelOpen(false);
         }}
-        onDownloadWord={() => downloadWordDoc(selectedWeekPreviewPlan, meta)}
+        onDownloadWord={() =>
+          downloadWordDoc(
+            sanitizePlanOutputBeforeDelivery(selectedWeekPreviewPlan),
+            meta
+          )
+        }
+        onReExtractFieldFromSource={handleReExtractFieldFromSource}
+        onAiFixField={handleAiFixField}
       />
 
       {/* Student Topic Summary & Study Note Modal */}

@@ -1,22 +1,48 @@
 import React, { useState } from "react";
 import {
+  MaarifLessonPlan,
+  DocumentHeaderFooterMeta,
+  YillikPlanWeekItem,
+} from "../types/lessonPlan";
+import {
   X,
-  Calendar,
   ChevronLeft,
   ChevronRight,
-  BookOpen,
-  Layers,
-  CheckCircle2,
-  Sparkles,
-  FileDown,
   SlidersHorizontal,
+  Calendar,
+  BookOpen,
   FileText,
+  CheckCircle2,
+  FileDown,
+  Layers,
+  Sparkles,
+  RotateCcw,
+  Loader2,
+  Check,
 } from "lucide-react";
-import {
-  MaarifLessonPlan,
-  YillikPlanWeekItem,
-  DocumentHeaderFooterMeta,
-} from "../types/lessonPlan";
+
+export type WeekDetailFieldOrSectionKey =
+  | "section_hafta"
+  | "section_ders"
+  | "section_ciktilar"
+  | "section_yasantilar"
+  | "section_farklilastirma"
+  | "Ogrenme_Birimi"
+  | "Icerik_Cercevesi"
+  | "Sure"
+  | "Alan_Becerileri"
+  | "Egilimler"
+  | "Programlar_Arasi_Bilesenler"
+  | "Ogrenme_Ciktilari_ve_Surec_Bilesenleri"
+  | "Ogrenme_Kanitlari"
+  | "Temel_Kabuller"
+  | "On_Degerlendirme_Sureci"
+  | "Kopru_Kurma"
+  | "Ogretme_Uygulamalari"
+  | "Guduleme"
+  | "Dikkat_Cekme"
+  | "Ek_Ogretme_Uygulamalari"
+  | "Farklilastirma";
 
 interface WeekDetailPanelProps {
   isOpen: boolean;
@@ -25,20 +51,24 @@ interface WeekDetailPanelProps {
   selectedWeek: YillikPlanWeekItem;
   onSelectWeek: (weekId: string) => void;
   meta: DocumentHeaderFooterMeta;
-  onUpdateMetaField: (
-    key: keyof DocumentHeaderFooterMeta,
-    value: string
-  ) => void;
-  onUpdateWeekItem: (
-    weekId: string,
-    patch: Partial<YillikPlanWeekItem>
-  ) => void;
+  onUpdateMetaField: (key: keyof DocumentHeaderFooterMeta, value: string) => void;
+  onUpdateWeekItem: (weekId: string, patch: Partial<YillikPlanWeekItem>) => void;
   activePlan: MaarifLessonPlan;
   hasGeneratedPlan: boolean;
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
   onGenerateOrApplyWeekPlan: () => void;
   onDownloadWord: () => void;
+  onReExtractFieldFromSource?: (targetKey: WeekDetailFieldOrSectionKey) => void;
+  onAiFixField?: (targetKey: WeekDetailFieldOrSectionKey) => Promise<void>;
 }
+
+type SectionFilter =
+  | "all"
+  | "hafta"
+  | "ders"
+  | "ciktilar"
+  | "yasantilar"
+  | "farklilastirma";
 
 export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
   isOpen,
@@ -54,96 +84,220 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
   onUpdatePlan,
   onGenerateOrApplyWeekPlan,
   onDownloadWord,
+  onReExtractFieldFromSource,
+  onAiFixField,
 }) => {
-  const [activeSection, setActiveSection] = useState<
-    "all" | "hafta" | "ders" | "cikti" | "yasantilar" | "farklilastirma"
-  >("all");
-  const [savedToast, setSavedToast] = useState(false);
+  const [activeSection, setActiveSection] = useState<SectionFilter>("all");
+  const [loadingFieldKey, setLoadingFieldKey] = useState<string | null>(null);
+  const [feedbackByKey, setFeedbackByKey] = useState<Record<string, string>>({});
 
   if (!isOpen) return null;
 
-  const currentIdx = weeks.findIndex((w) => w.id === selectedWeek.id);
-  const prevWeek = currentIdx > 0 ? weeks[currentIdx - 1] : null;
-  const nextWeek =
-    currentIdx >= 0 && currentIdx < weeks.length - 1
-      ? weeks[currentIdx + 1]
-      : null;
+  const currentIdx = weeks.findIndex((w) => w.id === selectedWeek?.id);
+  const hasPrev = currentIdx > 0;
+  const hasNext = currentIdx >= 0 && currentIdx < weeks.length - 1;
 
-  const triggerSavedIndicator = () => {
-    setSavedToast(true);
-    window.setTimeout(() => setSavedToast(false), 1400);
+  const showTimedFeedback = (key: string, msg: string) => {
+    setFeedbackByKey((prev) => ({ ...prev, [key]: msg }));
+    window.setTimeout(() => {
+      setFeedbackByKey((prev) => {
+        const copy = { ...prev };
+        delete copy[key];
+        return copy;
+      });
+    }, 2600);
   };
 
-  const handleArrayTextChange = (
-    field:
+  const handleTriggerReExtract = (key: WeekDetailFieldOrSectionKey) => {
+    if (!onReExtractFieldFromSource) return;
+    onReExtractFieldFromSource(key);
+    showTimedFeedback(key, "Kaynaktan çekildi");
+  };
+
+  const handleTriggerAiFix = async (key: WeekDetailFieldOrSectionKey) => {
+    if (!onAiFixField || loadingFieldKey) return;
+    setLoadingFieldKey(key);
+    try {
+      await onAiFixField(key);
+      showTimedFeedback(key, "AI ile düzeltildi");
+    } finally {
+      setLoadingFieldKey(null);
+    }
+  };
+
+  const renderActionButtons = (
+    targetKey: WeekDetailFieldOrSectionKey,
+    compact = false
+  ) => {
+    const isAiLoading = loadingFieldKey === targetKey;
+    const feedback = feedbackByKey[targetKey];
+
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+        {feedback && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <Check className="w-3 h-3 text-emerald-600" />
+            {feedback}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleTriggerAiFix(targetKey)}
+          disabled={Boolean(loadingFieldKey)}
+          title="Seçilen haftanın öğrenme çıktısına ve Ders Bilgi Formuna göre AI ile analiz et, yabancı başlık/tablo kalıntılarını temizle ve düzelt"
+          className={`inline-flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer border shadow-2xs disabled:opacity-50 ${
+            compact
+              ? "px-2 py-1 text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200"
+              : "px-2.5 py-1 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-700"
+          }`}
+        >
+          {isAiLoading ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Sparkles className="w-3 h-3 text-amber-300" />
+          )}
+          <span>AI ile Düzelt</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleTriggerReExtract(targetKey)}
+          disabled={Boolean(loadingFieldKey)}
+          title="Yüklenen Ders Bilgi Formu ve Yıllık Plan kaynağından bu haftanın kazanımına ait orijinal veriyi tekrar çek"
+          className={`inline-flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer border shadow-2xs disabled:opacity-50 ${
+            compact
+              ? "px-2 py-1 text-[10px] bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200"
+              : "px-2.5 py-1 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
+          }`}
+        >
+          <RotateCcw className="w-3 h-3 text-slate-600" />
+          <span>Veriyi Kaynaktan Tekrar Çek</span>
+        </button>
+      </div>
+    );
+  };
+
+  const handlePrevWeek = () => {
+    if (hasPrev) {
+      onSelectWeek(weeks[currentIdx - 1].id);
+    }
+  };
+
+  const handleNextWeek = () => {
+    if (hasNext) {
+      onSelectWeek(weeks[currentIdx + 1].id);
+    }
+  };
+
+  const updateDersBilgisi = (
+    key: keyof MaarifLessonPlan["Ders_Bilgisi"],
+    value: string
+  ) => {
+    onUpdatePlan({
+      ...activePlan,
+      Ders_Bilgisi: {
+        ...activePlan.Ders_Bilgisi,
+        [key]: value,
+      },
+    });
+    if (key === "Ogrenme_Birimi" && selectedWeek) {
+      onUpdateWeekItem(selectedWeek.id, { ogrenmeBirimi: value });
+    } else if (key === "Sure" && selectedWeek) {
+      onUpdateWeekItem(selectedWeek.id, { sure: value });
+    }
+  };
+
+  const updateProgramlarArasi = (
+    key: keyof MaarifLessonPlan["Programlar_Arasi_Bilesenler"],
+    value: string
+  ) => {
+    onUpdatePlan({
+      ...activePlan,
+      Programlar_Arasi_Bilesenler: {
+        ...activePlan.Programlar_Arasi_Bilesenler,
+        [key]: value,
+      },
+    });
+  };
+
+  const updateYasantilarString = (
+    key: "Temel_Kabuller" | "On_Degerlendirme_Sureci" | "Kopru_Kurma",
+    value: string
+  ) => {
+    onUpdatePlan({
+      ...activePlan,
+      Ogrenme_Ogretme_Yasantilari: {
+        ...activePlan.Ogrenme_Ogretme_Yasantilari,
+        [key]: value,
+      },
+    });
+  };
+
+  const updateYasantilarList = (
+    key:
       | "Ogretme_Uygulamalari"
       | "Guduleme"
       | "Dikkat_Cekme"
       | "Ek_Ogretme_Uygulamalari",
-    rawVal: string
+    rawText: string
   ) => {
-    const lines = rawVal
+    const items = rawText
       .split(/\r?\n/)
-      .map((l) => l.replace(/^\*\s*/, "").trim())
-      .filter(Boolean);
+      .map((line) => line.replace(/^\s*[*•-]\s*/, "").trim())
+      .filter((line) => line.length > 0);
 
-    const updated: MaarifLessonPlan = {
+    onUpdatePlan({
       ...activePlan,
       Ogrenme_Ogretme_Yasantilari: {
         ...activePlan.Ogrenme_Ogretme_Yasantilari,
-        [field]: lines,
+        [key]: items,
       },
-    };
-    onUpdatePlan(updated);
-    if (field === "Ogretme_Uygulamalari") {
-      onUpdateWeekItem(selectedWeek.id, { ogretmeUygulamalari: lines });
+    });
+
+    if (key === "Ogretme_Uygulamalari" && selectedWeek) {
+      onUpdateWeekItem(selectedWeek.id, { ogretmeUygulamalari: items });
     }
-    triggerSavedIndicator();
   };
 
-  const showSection = (
-    sec: "hafta" | "ders" | "cikti" | "yasantilar" | "farklilastirma"
-  ) => activeSection === "all" || activeSection === sec;
+  const showHafta = activeSection === "all" || activeSection === "hafta";
+  const showDers = activeSection === "all" || activeSection === "ders";
+  const showCiktilar = activeSection === "all" || activeSection === "ciktilar";
+  const showYasantilar =
+    activeSection === "all" || activeSection === "yasantilar";
+  const showFarklilastirma =
+    activeSection === "all" || activeSection === "farklilastirma";
 
   return (
     <div className="no-print fixed inset-0 z-50 flex justify-end pointer-events-none">
-      {/* Backdrop */}
+      {/* Subtle backdrop */}
       <div
+        className="fixed inset-0 bg-slate-900/35 backdrop-blur-[1px] pointer-events-auto transition-opacity"
         onClick={onClose}
-        className="fixed inset-0 bg-slate-950/35 backdrop-blur-[1px] pointer-events-auto transition-opacity"
       />
 
-      {/* Right Slide-Over Scrollable Panel */}
+      {/* Right-Side Slide-Over Drawer */}
       <aside
         aria-label="Hafta Detay Paneli"
-        className="relative z-10 w-full max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col pointer-events-auto"
+        className="relative z-10 w-full max-w-2xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col pointer-events-auto animate-in slide-in-from-right duration-200"
       >
-        {/* Top Header */}
-        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-sky-950 text-white px-5 py-4 border-b border-slate-800 shrink-0">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-lg bg-amber-400/15 border border-amber-300/30 flex items-center justify-center text-amber-300 shrink-0">
+        {/* Top Sticky Header */}
+        <div className="px-5 py-4 bg-slate-900 text-white border-b border-slate-800 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-amber-400/15 border border-amber-400/30 flex items-center justify-center text-amber-300 shrink-0">
                 <SlidersHorizontal className="w-4 h-4" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-bold tracking-tight text-white">
+                  <h2 className="font-display text-base font-bold tracking-tight text-white truncate">
                     Hafta Detay Paneli
                   </h2>
-                  <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-sky-500/20 text-sky-200 border border-sky-400/30 tabular-nums">
-                    {currentIdx >= 0
-                      ? `${currentIdx + 1} / ${weeks.length}`
-                      : `${weeks.length} Hafta`}
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-500/20 text-indigo-200 border border-indigo-400/30">
+                    {selectedWeek?.haftaNo || 1} / {weeks.length}
                   </span>
-                  {savedToast && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
-                      <CheckCircle2 className="w-3 h-3" />
-                      Güncellendi
-                    </span>
-                  )}
                 </div>
-                <p className="text-[11px] text-slate-300 mt-0.5">
-                  Seçilen haftanın plan içeriğini hızlıca inceleyin ve doğrudan düzenleyin
+                <p className="text-xs text-slate-300 truncate">
+                  Seçilen haftanın plan içeriğini inceleyin, AI ile düzeltin veya kaynaktan tekrar çekin
                 </p>
               </div>
             </div>
@@ -151,84 +305,82 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Paneli Kapat"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
-          {/* Week Switcher Bar */}
+          {/* Quick Week Switcher Bar */}
           <div className="mt-3.5 flex items-center gap-2">
             <button
               type="button"
-              disabled={!prevWeek}
-              onClick={() => prevWeek && onSelectWeek(prevWeek.id)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-35 disabled:pointer-events-none text-xs font-medium text-white transition-colors shrink-0"
+              onClick={handlePrevWeek}
+              disabled={!hasPrev}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer shrink-0"
               title="Önceki Hafta"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
-              <span>Önceki</span>
+              Önceki
             </button>
 
-            <select
-              aria-label="Hafta Seçimi"
-              value={selectedWeek.id}
-              onChange={(e) => onSelectWeek(e.target.value)}
-              className="flex-1 min-w-0 rounded-lg bg-slate-900/90 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-amber-200 focus:outline-none focus:border-amber-400"
-            >
-              {weeks.map((w) => (
-                <option
-                  key={w.id}
-                  value={w.id}
-                  className="text-slate-900 bg-white"
-                >
-                  {w.haftaEtiketi} ({w.tarihAraligi})
-                  {w.ogrenmeBirimi ? ` — ${w.ogrenmeBirimi}` : ""}
-                </option>
-              ))}
-            </select>
+            <div className="relative flex-1 min-w-0">
+              <select
+                value={selectedWeek?.id || ""}
+                onChange={(e) => onSelectWeek(e.target.value)}
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-amber-400 truncate cursor-pointer"
+              >
+                {weeks.map((w) => {
+                  const unitPart = w.ogrenmeBirimi
+                    ? ` [${w.ogrenmeBirimi.slice(0, 26)}]`
+                    : "";
+                  const topicPart =
+                    w.icerikCercevesi || w.konuVeCiktiOzeti
+                      ? ` — ${(w.icerikCercevesi || w.konuVeCiktiOzeti || "").slice(0, 42)}`
+                      : "";
+                  return (
+                    <option key={w.id} value={w.id}>
+                      {w.haftaEtiketi} ({w.tarihAraligi}){unitPart}
+                      {topicPart}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
             <button
               type="button"
-              disabled={!nextWeek}
-              onClick={() => nextWeek && onSelectWeek(nextWeek.id)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-35 disabled:pointer-events-none text-xs font-medium text-white transition-colors shrink-0"
+              onClick={handleNextWeek}
+              disabled={!hasNext}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer shrink-0"
               title="Sonraki Hafta"
             >
-              <span>Sonraki</span>
+              Sonraki
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          {/* Quick Section Filter Tabs */}
-          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-0.5 text-[11px]">
-            {[
-              { id: "all", label: "Tüm Bölümler" },
-              { id: "hafta", label: "Hafta & Ünite" },
-              { id: "ders", label: "Ders & Bileşenler" },
-              { id: "cikti", label: "Çıktı & Kanıtlar" },
-              { id: "yasantilar", label: "Öğrenme Yaşantıları" },
-              { id: "farklilastirma", label: "Farklılaştırma" },
-            ].map((tab) => (
+          {/* Section Filter Tabs */}
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+            {(
+              [
+                { id: "all", label: "Tüm Bölümler" },
+                { id: "hafta", label: "Hafta & Ünite" },
+                { id: "ders", label: "Ders & Bileşenler" },
+                { id: "ciktilar", label: "Çıktı & Kanıtlar" },
+                { id: "yasantilar", label: "Öğrenme Yaşantıları" },
+                { id: "farklilastirma", label: "Farklılaştırma" },
+              ] as const
+            ).map((tab) => (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() =>
-                  setActiveSection(
-                    tab.id as
-                      | "all"
-                      | "hafta"
-                      | "ders"
-                      | "cikti"
-                      | "yasantilar"
-                      | "farklilastirma"
-                  )
-                }
-                className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap transition-colors ${
+                onClick={() => setActiveSection(tab.id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeSection === tab.id
-                    ? "bg-amber-400 text-slate-950 font-semibold"
-                    : "bg-white/10 text-slate-200 hover:bg-white/15"
+                    ? "bg-amber-400 text-slate-950"
+                    : "bg-slate-800/90 text-slate-300 hover:bg-slate-800 hover:text-white"
                 }`}
               >
                 {tab.label}
@@ -237,671 +389,586 @@ export const WeekDetailPanel: React.FC<WeekDetailPanelProps> = ({
           </div>
         </div>
 
-        {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5 bg-slate-50/60">
-          {/* SECTION 1: Hafta, Tarih ve Ünite Bilgileri */}
-          {showSection("hafta") && (
-            <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5 bg-slate-50/70">
+          {/* 1. HAFTA, TARİH VE ÜNİTE BİLGİLERİ */}
+          {showHafta && (
+            <section className="rounded-xl bg-white border border-slate-200/90 p-4 shadow-xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
                 <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-sky-600" />
+                  <Calendar className="w-4 h-4 text-indigo-700" />
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                    1. Hafta, Tarih ve Ünite Bilgileri
+                    1. Hafta, Tarih ve Ünite Bilgisi
                   </h3>
                 </div>
-                <span className="text-[11px] font-medium text-sky-700">
-                  {meta.haftaEtiketi}
-                </span>
+                {renderActionButtons("section_hafta")}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Hafta Başlığı
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Hafta Etiketi
                   </label>
                   <input
                     type="text"
                     value={meta.haftaEtiketi}
                     onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateMetaField("haftaEtiketi", val);
-                      onUpdateWeekItem(selectedWeek.id, { haftaEtiketi: val });
-                      triggerSavedIndicator();
+                      onUpdateMetaField("haftaEtiketi", e.target.value);
+                      if (selectedWeek) {
+                        onUpdateWeekItem(selectedWeek.id, {
+                          haftaEtiketi: e.target.value,
+                        });
+                      }
                     }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-sky-600 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Tarih Aralığı
                   </label>
                   <input
                     type="text"
                     value={meta.tarihAraligi}
                     onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateMetaField("tarihAraligi", val);
-                      onUpdateWeekItem(selectedWeek.id, { tarihAraligi: val });
-                      triggerSavedIndicator();
+                      onUpdateMetaField("tarihAraligi", e.target.value);
+                      if (selectedWeek) {
+                        onUpdateWeekItem(selectedWeek.id, {
+                          tarihAraligi: e.target.value,
+                        });
+                      }
                     }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-sky-600 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Uygundur Tarihi
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Süre (Ders Saati)
                   </label>
                   <input
                     type="text"
-                    value={meta.onayTarihi}
+                    value={activePlan.Ders_Bilgisi.Sure}
+                    onChange={(e) => updateDersBilgisi("Sure", e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      Öğrenme Birimi (Ünite / Tema / Modül)
+                    </label>
+                    {renderActionButtons("Ogrenme_Birimi", true)}
+                  </div>
+                  <input
+                    type="text"
+                    value={activePlan.Ders_Bilgisi.Ogrenme_Birimi}
+                    onChange={(e) =>
+                      updateDersBilgisi("Ogrenme_Birimi", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      İçerik Çerçevesi (Haftanın Konusu)
+                    </label>
+                    {renderActionButtons("Icerik_Cercevesi", true)}
+                  </div>
+                  <input
+                    type="text"
+                    value={activePlan.Icerik_Cercevesi}
                     onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateMetaField("onayTarihi", val);
-                      onUpdateWeekItem(selectedWeek.id, { onayTarihi: val });
-                      triggerSavedIndicator();
+                      onUpdatePlan({
+                        ...activePlan,
+                        Icerik_Cercevesi: e.target.value,
+                      });
+                      if (selectedWeek) {
+                        onUpdateWeekItem(selectedWeek.id, {
+                          icerikCercevesi: e.target.value,
+                        });
+                      }
                     }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 tabular-nums focus:border-sky-600 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* 2. DERS BİLGİSİ VE PROGRAMLAR ARASI BİLEŞENLER */}
+          {showDers && (
+            <section className="rounded-xl bg-white border border-slate-200/90 p-4 shadow-xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-indigo-700" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    2. Ders Bilgisi ve Programlar Arası Bileşenler
+                  </h3>
+                </div>
+                {renderActionButtons("section_ders")}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Ders İsmi
+                  </label>
+                  <input
+                    type="text"
+                    value={activePlan.Ders_Bilgisi.Ders}
+                    onChange={(e) => {
+                      updateDersBilgisi("Ders", e.target.value);
+                      onUpdateMetaField("dersIsmi", e.target.value);
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Sınıf Düzeyi
+                  </label>
+                  <input
+                    type="text"
+                    value={activePlan.Ders_Bilgisi.Sinif}
+                    onChange={(e) => {
+                      updateDersBilgisi("Sinif", e.target.value);
+                      onUpdateMetaField("sinifDuzeyi", e.target.value);
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      Alan Becerileri
+                    </label>
+                    {renderActionButtons("Alan_Becerileri", true)}
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={activePlan.Ders_Bilgisi.Alan_Becerileri}
+                    onChange={(e) =>
+                      updateDersBilgisi("Alan_Becerileri", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      Eğilimler
+                    </label>
+                    {renderActionButtons("Egilimler", true)}
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={activePlan.Ders_Bilgisi.Egilimler}
+                    onChange={(e) =>
+                      updateDersBilgisi("Egilimler", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Sosyal-Duygusal Öğrenme Becerileri (SDB)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={
+                      activePlan.Programlar_Arasi_Bilesenler
+                        .Sosyal_Duygusal_Ogrenme_Becerileri
+                    }
+                    onChange={(e) =>
+                      updateProgramlarArasi(
+                        "Sosyal_Duygusal_Ogrenme_Becerileri",
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Değerler
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={activePlan.Programlar_Arasi_Bilesenler.Degerler}
+                    onChange={(e) =>
+                      updateProgramlarArasi("Degerler", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Öğrenme Birimi (Ünite / Modül)
-                  </label>
-                  <input
-                    type="text"
-                    value={
-                      activePlan.Ders_Bilgisi.Ogrenme_Birimi ||
-                      selectedWeek.ogrenmeBirimi ||
-                      ""
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateWeekItem(selectedWeek.id, { ogrenmeBirimi: val });
-                      onUpdatePlan({
-                        ...activePlan,
-                        Ders_Bilgisi: {
-                          ...activePlan.Ders_Bilgisi,
-                          Ogrenme_Birimi: val,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-sky-600 focus:outline-none"
-                  />
-                </div>
-
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Ders Süresi
-                  </label>
-                  <input
-                    type="text"
-                    value={
-                      activePlan.Ders_Bilgisi.Sure || selectedWeek.sure || ""
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateWeekItem(selectedWeek.id, { sure: val });
-                      onUpdatePlan({
-                        ...activePlan,
-                        Ders_Bilgisi: {
-                          ...activePlan.Ders_Bilgisi,
-                          Sure: val,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-sky-600 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  İçerik Çerçevesi (Haftalık Konu Başlığı)
-                </label>
-                <input
-                  type="text"
-                  value={
-                    activePlan.Icerik_Cercevesi ||
-                    selectedWeek.icerikCercevesi ||
-                    ""
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    onUpdateWeekItem(selectedWeek.id, { icerikCercevesi: val });
-                    onUpdatePlan({
-                      ...activePlan,
-                      Icerik_Cercevesi: val,
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-sky-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Yıllık Plan Konu ve Çıktı Özeti
-                </label>
-                <textarea
-                  rows={2}
-                  value={selectedWeek.konuVeCiktiOzeti || ""}
-                  onChange={(e) => {
-                    onUpdateWeekItem(selectedWeek.id, {
-                      konuVeCiktiOzeti: e.target.value,
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-sky-600 focus:outline-none"
-                />
-              </div>
-            </section>
-          )}
-
-          {/* SECTION 2: Ders Bilgisi & Programlar Arası Bileşenler */}
-          {showSection("ders") && (
-            <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-                <Layers className="w-4 h-4 text-indigo-600" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  2. Ders Bilgisi &amp; Programlar Arası Bileşenler
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Ders İsmi
-                  </label>
-                  <input
-                    type="text"
-                    value={meta.dersIsmi || activePlan.Ders_Bilgisi.Ders || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateMetaField("dersIsmi", val);
-                      onUpdatePlan({
-                        ...activePlan,
-                        Ders_Bilgisi: {
-                          ...activePlan.Ders_Bilgisi,
-                          Ders: val,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Sınıf Düzeyi
-                  </label>
-                  <input
-                    type="text"
-                    value={
-                      meta.sinifDuzeyi || activePlan.Ders_Bilgisi.Sinif || ""
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      onUpdateMetaField("sinifDuzeyi", val);
-                      onUpdatePlan({
-                        ...activePlan,
-                        Ders_Bilgisi: {
-                          ...activePlan.Ders_Bilgisi,
-                          Sinif: val,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Alan Becerileri
-                </label>
-                <textarea
-                  rows={2}
-                  value={activePlan.Ders_Bilgisi.Alan_Becerileri || ""}
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ders_Bilgisi: {
-                        ...activePlan.Ders_Bilgisi,
-                        Alan_Becerileri: e.target.value,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Eğilimler
-                </label>
-                <textarea
-                  rows={2}
-                  value={activePlan.Ders_Bilgisi.Egilimler || ""}
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ders_Bilgisi: {
-                        ...activePlan.Ders_Bilgisi,
-                        Egilimler: e.target.value,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Sosyal-Duygusal Öğrenme Becerileri
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Okuryazarlık Becerileri (OB)
                   </label>
                   <textarea
                     rows={2}
                     value={
                       activePlan.Programlar_Arasi_Bilesenler
-                        .Sosyal_Duygusal_Ogrenme_Becerileri || ""
+                        .Okuryazarlik_Becerileri
                     }
-                    onChange={(e) => {
-                      onUpdatePlan({
-                        ...activePlan,
-                        Programlar_Arasi_Bilesenler: {
-                          ...activePlan.Programlar_Arasi_Bilesenler,
-                          Sosyal_Duygusal_Ogrenme_Becerileri: e.target.value,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
+                    onChange={(e) =>
+                      updateProgramlarArasi(
+                        "Okuryazarlik_Becerileri",
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Değerler
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={
-                      activePlan.Programlar_Arasi_Bilesenler.Degerler || ""
-                    }
-                    onChange={(e) => {
-                      onUpdatePlan({
-                        ...activePlan,
-                        Programlar_Arasi_Bilesenler: {
-                          ...activePlan.Programlar_Arasi_Bilesenler,
-                          Degerler: e.target.value,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Okuryazarlık Becerileri
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Disiplinler Arası İlişki
                   </label>
                   <textarea
                     rows={2}
                     value={
                       activePlan.Programlar_Arasi_Bilesenler
-                        .Okuryazarlik_Becerileri || ""
+                        .Disiplinler_Arasi_Iliski
                     }
-                    onChange={(e) => {
-                      onUpdatePlan({
-                        ...activePlan,
-                        Programlar_Arasi_Bilesenler: {
-                          ...activePlan.Programlar_Arasi_Bilesenler,
-                          Okuryazarlik_Becerileri: e.target.value,
-                        },
-                      });
-                      triggerSavedIndicator();
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
+                    onChange={(e) =>
+                      updateProgramlarArasi(
+                        "Disiplinler_Arasi_Iliski",
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Disiplinler Arası İlişki
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={
-                        activePlan.Programlar_Arasi_Bilesenler
-                          .Disiplinler_Arasi_Iliski || ""
-                      }
-                      onChange={(e) => {
-                        onUpdatePlan({
-                          ...activePlan,
-                          Programlar_Arasi_Bilesenler: {
-                            ...activePlan.Programlar_Arasi_Bilesenler,
-                            Disiplinler_Arasi_Iliski: e.target.value,
-                          },
-                        });
-                        triggerSavedIndicator();
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Beceriler Arası İlişki
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={
-                        activePlan.Programlar_Arasi_Bilesenler
-                          .Beceriler_Arasi_Iliski || ""
-                      }
-                      onChange={(e) => {
-                        onUpdatePlan({
-                          ...activePlan,
-                          Programlar_Arasi_Bilesenler: {
-                            ...activePlan.Programlar_Arasi_Bilesenler,
-                            Beceriler_Arasi_Iliski: e.target.value,
-                          },
-                        });
-                        triggerSavedIndicator();
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-indigo-600 focus:outline-none"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Beceriler Arası İlişki (KB)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={
+                      activePlan.Programlar_Arasi_Bilesenler
+                        .Beceriler_Arasi_Iliski
+                    }
+                    onChange={(e) =>
+                      updateProgramlarArasi(
+                        "Beceriler_Arasi_Iliski",
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
                 </div>
               </div>
             </section>
           )}
 
-          {/* SECTION 3: Öğrenme Çıktıları & Öğrenme Kanıtları */}
-          {showSection("cikti") && (
-            <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-                <FileText className="w-4 h-4 text-teal-600" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  3. Öğrenme Çıktıları ve Öğrenme Kanıtları
-                </h3>
+          {/* 3. ÖĞRENME ÇIKTILARI VE ÖĞRENME KANITLARI */}
+          {showCiktilar && (
+            <section className="rounded-xl bg-white border border-slate-200/90 p-4 shadow-xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-indigo-700" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    3. Öğrenme Çıktıları ve Öğrenme Kanıtları
+                  </h3>
+                </div>
+                {renderActionButtons("section_ciktilar")}
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Öğrenme Çıktıları ve Süreç Bileşenleri (Kazanım ve a, b, c...)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Öğrenme Çıktıları ve Süreç Bileşenleri (Kazanım ve a, b, c...)
+                  </label>
+                  {renderActionButtons(
+                    "Ogrenme_Ciktilari_ve_Surec_Bilesenleri",
+                    true
+                  )}
+                </div>
                 <textarea
                   rows={4}
-                  value={
-                    activePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || ""
-                  }
+                  value={activePlan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri}
                   onChange={(e) => {
                     onUpdatePlan({
                       ...activePlan,
                       Ogrenme_Ciktilari_ve_Surec_Bilesenleri: e.target.value,
                     });
-                    triggerSavedIndicator();
+                    if (selectedWeek) {
+                      onUpdateWeekItem(selectedWeek.id, {
+                        konuVeCiktiOzeti: e.target.value,
+                      });
+                    }
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-teal-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs leading-relaxed text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Öğrenme Kanıtları (Ölçme ve Değerlendirme)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Öğrenme Kanıtları (Ölçme ve Değerlendirme)
+                  </label>
+                  {renderActionButtons("Ogrenme_Kanitlari", true)}
+                </div>
                 <textarea
-                  rows={3}
-                  value={
-                    activePlan.Ogrenme_Kanitlari ||
-                    selectedWeek.ogrenmeKanitlari ||
-                    ""
-                  }
+                  rows={4}
+                  value={activePlan.Ogrenme_Kanitlari}
                   onChange={(e) => {
-                    const val = e.target.value;
-                    onUpdateWeekItem(selectedWeek.id, {
-                      ogrenmeKanitlari: val,
-                    });
                     onUpdatePlan({
                       ...activePlan,
-                      Ogrenme_Kanitlari: val,
+                      Ogrenme_Kanitlari: e.target.value,
                     });
-                    triggerSavedIndicator();
+                    if (selectedWeek) {
+                      onUpdateWeekItem(selectedWeek.id, {
+                        ogrenmeKanitlari: e.target.value,
+                      });
+                    }
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-teal-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
             </section>
           )}
 
-          {/* SECTION 4: Öğrenme-Öğretme Yaşantıları */}
-          {showSection("yasantilar") && (
-            <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-                <BookOpen className="w-4 h-4 text-emerald-600" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  4. Öğrenme-Öğretme Yaşantıları
-                </h3>
+          {/* 4. ÖĞRENME-ÖĞRETME YAŞANTILARI */}
+          {showYasantilar && (
+            <section className="rounded-xl bg-white border border-slate-200/90 p-4 shadow-xs space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-emerald-700" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    4. Öğrenme-Öğretme Yaşantıları
+                  </h3>
+                </div>
+                {renderActionButtons("section_yasantilar")}
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Temel Kabuller
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Temel Kabuller
+                  </label>
+                  {renderActionButtons("Temel_Kabuller", true)}
+                </div>
                 <textarea
                   rows={2}
-                  value={
-                    activePlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller || ""
-                  }
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ogrenme_Ogretme_Yasantilari: {
-                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
-                        Temel_Kabuller: e.target.value,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Ön Değerlendirme Süreci
-                </label>
-                <textarea
-                  rows={2}
-                  value={
-                    activePlan.Ogrenme_Ogretme_Yasantilari
-                      .On_Degerlendirme_Sureci || ""
-                  }
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ogrenme_Ogretme_Yasantilari: {
-                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
-                        On_Degerlendirme_Sureci: e.target.value,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Köprü Kurma
-                </label>
-                <textarea
-                  rows={2}
-                  value={
-                    activePlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma || ""
-                  }
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Ogrenme_Ogretme_Yasantilari: {
-                        ...activePlan.Ogrenme_Ogretme_Yasantilari,
-                        Kopru_Kurma: e.target.value,
-                      },
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Öğretme-Öğrenme Uygulamaları (Her satır bir madde)
-                </label>
-                <textarea
-                  rows={5}
-                  value={(
-                    activePlan.Ogrenme_Ogretme_Yasantilari
-                      .Ogretme_Uygulamalari || []
-                  ).join("\n")}
+                  value={activePlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller}
                   onChange={(e) =>
-                    handleArrayTextChange(
-                      "Ogretme_Uygulamalari",
+                    updateYasantilarString("Temel_Kabuller", e.target.value)
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Ön Değerlendirme Süreci
+                  </label>
+                  {renderActionButtons("On_Degerlendirme_Sureci", true)}
+                </div>
+                <textarea
+                  rows={2}
+                  value={
+                    activePlan.Ogrenme_Ogretme_Yasantilari
+                      .On_Degerlendirme_Sureci
+                  }
+                  onChange={(e) =>
+                    updateYasantilarString(
+                      "On_Degerlendirme_Sureci",
                       e.target.value
                     )
                   }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Güdüleme (Her satır bir madde)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Köprü Kurma
+                  </label>
+                  {renderActionButtons("Kopru_Kurma", true)}
+                </div>
                 <textarea
                   rows={2}
-                  value={(
-                    activePlan.Ogrenme_Ogretme_Yasantilari.Guduleme || []
-                  ).join("\n")}
+                  value={activePlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma}
                   onChange={(e) =>
-                    handleArrayTextChange("Guduleme", e.target.value)
+                    updateYasantilarString("Kopru_Kurma", e.target.value)
                   }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Dikkat Çekme (Her satır bir madde)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Öğretme Uygulamaları (Her satır bir madde)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {
+                        activePlan.Ogrenme_Ogretme_Yasantilari
+                          .Ogretme_Uygulamalari.length
+                      }{" "}
+                      madde
+                    </span>
+                    {renderActionButtons("Ogretme_Uygulamalari", true)}
+                  </div>
+                </div>
                 <textarea
-                  rows={2}
-                  value={(
-                    activePlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme || []
-                  ).join("\n")}
+                  rows={6}
+                  value={activePlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari.join(
+                    "\n"
+                  )}
                   onChange={(e) =>
-                    handleArrayTextChange("Dikkat_Cekme", e.target.value)
+                    updateYasantilarList("Ogretme_Uygulamalari", e.target.value)
                   }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs leading-relaxed text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Güdüleme (Her satır bir madde)
+                    </label>
+                    {renderActionButtons("Guduleme", true)}
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={activePlan.Ogrenme_Ogretme_Yasantilari.Guduleme.join(
+                      "\n"
+                    )}
+                    onChange={(e) =>
+                      updateYasantilarList("Guduleme", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Dikkat Çekme (Her satır bir soru)
+                    </label>
+                    {renderActionButtons("Dikkat_Cekme", true)}
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={activePlan.Ogrenme_Ogretme_Yasantilari.Dikkat_Cekme.join(
+                      "\n"
+                    )}
+                    onChange={(e) =>
+                      updateYasantilarList("Dikkat_Cekme", e.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Ek Öğretme Uygulamaları (Her satır bir madde)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Ek Öğretme Uygulamaları (Her satır bir madde)
+                  </label>
+                  {renderActionButtons("Ek_Ogretme_Uygulamalari", true)}
+                </div>
                 <textarea
-                  rows={3}
-                  value={(
-                    activePlan.Ogrenme_Ogretme_Yasantilari
-                      .Ek_Ogretme_Uygulamalari || []
-                  ).join("\n")}
+                  rows={5}
+                  value={activePlan.Ogrenme_Ogretme_Yasantilari.Ek_Ogretme_Uygulamalari.join(
+                    "\n"
+                  )}
                   onChange={(e) =>
-                    handleArrayTextChange(
+                    updateYasantilarList(
                       "Ek_Ogretme_Uygulamalari",
                       e.target.value
                     )
                   }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-emerald-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
             </section>
           )}
 
-          {/* SECTION 5: Farklılaştırma */}
-          {showSection("farklilastirma") && (
-            <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3.5">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  5. Farklılaştırma (Zenginleştirme &amp; Destekleme)
-                </h3>
+          {/* 5. FARKLILAŞTIRMA */}
+          {showFarklilastirma && (
+            <section className="rounded-xl bg-white border border-slate-200/90 p-4 shadow-xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-amber-600" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    5. Farklılaştırma (Zenginleştirme / Destekleme)
+                  </h3>
+                </div>
+                {renderActionButtons("Farklilastirma")}
               </div>
 
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Farklılaştırma Uygulamaları
-                </label>
-                <textarea
-                  rows={4}
-                  value={activePlan.Farklilastirma || ""}
-                  onChange={(e) => {
-                    onUpdatePlan({
-                      ...activePlan,
-                      Farklilastirma: e.target.value,
-                    });
-                    triggerSavedIndicator();
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 leading-relaxed focus:border-amber-600 focus:outline-none"
-                />
-              </div>
+              <textarea
+                rows={4}
+                value={activePlan.Farklilastirma}
+                onChange={(e) =>
+                  onUpdatePlan({
+                    ...activePlan,
+                    Farklilastirma: e.target.value,
+                  })
+                }
+                className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+              />
             </section>
           )}
         </div>
 
         {/* Sticky Footer Actions */}
-        <div className="border-t border-slate-200 bg-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onGenerateOrApplyWeekPlan}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-white text-xs font-semibold transition-colors shadow-2xs"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
-            <span>
+        <div className="px-5 py-3.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onGenerateOrApplyWeekPlan}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-950 hover:bg-indigo-900 text-white shadow-xs transition-colors cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
               {hasGeneratedPlan
                 ? "Değişiklikleri Tabloya Uygula"
-                : "Bu Haftanın Planını Tabloda Aç"}
-            </span>
-          </button>
+                : "Bu Haftayı Ana Tabloya Aktar"}
+            </button>
+          </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onDownloadWord}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-xs transition-colors cursor-pointer"
             >
               <FileDown className="w-3.5 h-3.5" />
-              <span>Haftayı Word İndir</span>
+              Haftayı Word İndir
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-2 rounded-lg border border-slate-300 bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
+              className="px-3 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
             >
               Kapat
             </button>
