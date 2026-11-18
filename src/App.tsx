@@ -32,12 +32,14 @@ import {
   buildXmlContextPayloadWithAnalysis,
   inferApprovalDateClient,
   parseQuickWeeksClient,
+  clearQuickWeeksCache,
   synthesizePlanClientSide,
   synthesizeAllWeeksClientSide,
 } from "./utils/clientFileExtractor";
 import {
   enforceAndMergeLessonPlan,
   extractWeekPlanStructured,
+  extractWeekMateryalSlice,
   formatFullWeekAndDateRange,
   parseDersBilgiFormuStructured,
   resolveValidDateRange,
@@ -45,6 +47,7 @@ import {
   cleanPdfHeaderFooterNoiseFromField,
   sanitizePlanOutputBeforeDelivery,
   validateCourseNameAgainstDbf,
+  clearMaarifParserCaches,
 } from "./shared/maarifPlanEngine";
 import {
   Upload,
@@ -145,7 +148,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("workspace");
   const [isExportConfigOpen, setIsExportConfigOpen] = useState<boolean>(false);
 
-  // Header & Footer Document Metadata Fields (persisted across sessions)
+  // Header & Footer Document Metadata Fields (ONLY explicitly locked fields persist across sessions)
   const [meta, setMeta] = useState<DocumentHeaderFooterMeta>(() => {
     const defaults: DocumentHeaderFooterMeta = {
       okulAdi: "",
@@ -160,32 +163,42 @@ export default function App() {
       okulMuduruAdSoyad: "",
     };
     try {
+      const rawLocks = localStorage.getItem(LOCKED_FIELDS_STORAGE_KEY);
+      const savedLocks: Partial<Record<LockableMetaKey, boolean>> = rawLocks
+        ? JSON.parse(rawLocks) || {}
+        : {};
       const raw = localStorage.getItem(META_VALUES_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
-          const rawSavedDers = String(parsed.dersIsmi ?? defaults.dersIsmi).trim();
+          const rawSavedDers = savedLocks.dersIsmi
+            ? String(parsed.dersIsmi ?? defaults.dersIsmi).trim()
+            : defaults.dersIsmi;
           const cleanedSavedDers = rawSavedDers.replace(
             /^[A-ZÇĞİÖŞÜ\s]+\(\s*([^)]+)\s*\)$/,
             "$1"
           );
           return {
             ...defaults,
-            okulAdi: String(parsed.okulAdi ?? defaults.okulAdi),
-            egitimOgretimYili: String(
-              parsed.egitimOgretimYili ?? defaults.egitimOgretimYili
-            ),
+            okulAdi: savedLocks.okulAdi
+              ? String(parsed.okulAdi ?? defaults.okulAdi)
+              : defaults.okulAdi,
+            egitimOgretimYili: savedLocks.egitimOgretimYili
+              ? String(parsed.egitimOgretimYili ?? defaults.egitimOgretimYili)
+              : defaults.egitimOgretimYili,
             dersIsmi: cleanedSavedDers,
-            sinifDuzeyi: String(parsed.sinifDuzeyi ?? defaults.sinifDuzeyi),
-            ogretmenAdSoyad: String(
-              parsed.ogretmenAdSoyad ?? defaults.ogretmenAdSoyad
-            ),
-            ogretmenBransi: String(
-              parsed.ogretmenBransi ?? defaults.ogretmenBransi
-            ),
-            okulMuduruAdSoyad: String(
-              parsed.okulMuduruAdSoyad ?? defaults.okulMuduruAdSoyad
-            ),
+            sinifDuzeyi: savedLocks.sinifDuzeyi
+              ? String(parsed.sinifDuzeyi ?? defaults.sinifDuzeyi)
+              : defaults.sinifDuzeyi,
+            ogretmenAdSoyad: savedLocks.ogretmenAdSoyad
+              ? String(parsed.ogretmenAdSoyad ?? defaults.ogretmenAdSoyad)
+              : defaults.ogretmenAdSoyad,
+            ogretmenBransi: savedLocks.ogretmenBransi
+              ? String(parsed.ogretmenBransi ?? defaults.ogretmenBransi)
+              : defaults.ogretmenBransi,
+            okulMuduruAdSoyad: savedLocks.okulMuduruAdSoyad
+              ? String(parsed.okulMuduruAdSoyad ?? defaults.okulMuduruAdSoyad)
+              : defaults.okulMuduruAdSoyad,
           };
         }
       }
@@ -245,20 +258,24 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const toPersist: Record<LockableMetaKey, string> = {
-        okulAdi: meta.okulAdi,
-        egitimOgretimYili: meta.egitimOgretimYili,
-        dersIsmi: meta.dersIsmi,
-        sinifDuzeyi: meta.sinifDuzeyi,
-        ogretmenAdSoyad: meta.ogretmenAdSoyad,
-        ogretmenBransi: meta.ogretmenBransi,
-        okulMuduruAdSoyad: meta.okulMuduruAdSoyad,
-      };
+      const toPersist: Partial<Record<LockableMetaKey, string>> = {};
+      if (lockedFields.okulAdi) toPersist.okulAdi = meta.okulAdi;
+      if (lockedFields.egitimOgretimYili)
+        toPersist.egitimOgretimYili = meta.egitimOgretimYili;
+      if (lockedFields.dersIsmi) toPersist.dersIsmi = meta.dersIsmi;
+      if (lockedFields.sinifDuzeyi) toPersist.sinifDuzeyi = meta.sinifDuzeyi;
+      if (lockedFields.ogretmenAdSoyad)
+        toPersist.ogretmenAdSoyad = meta.ogretmenAdSoyad;
+      if (lockedFields.ogretmenBransi)
+        toPersist.ogretmenBransi = meta.ogretmenBransi;
+      if (lockedFields.okulMuduruAdSoyad)
+        toPersist.okulMuduruAdSoyad = meta.okulMuduruAdSoyad;
       localStorage.setItem(META_VALUES_STORAGE_KEY, JSON.stringify(toPersist));
     } catch {
       // ignore storage errors
     }
   }, [
+    lockedFields,
     meta.okulAdi,
     meta.egitimOgretimYili,
     meta.dersIsmi,
@@ -888,6 +905,32 @@ export default function App() {
     }
 
     try {
+      const activeWeekInfo = extractWeekPlanStructured(
+        yillikPlan,
+        meta.haftaEtiketi,
+        meta.tarihAraligi,
+        structuredDbfMemo,
+        selectedWeekObj
+      );
+      const unitDbfSlice =
+        (!activeWeekInfo.isSpecialWeek &&
+          activeWeekInfo.unitNumber &&
+          structuredDbfMemo.rawUnitBlocks?.[activeWeekInfo.unitNumber]) ||
+        dersBilgiFormu.slice(0, 45000);
+      const unitMateryalSlice =
+        extractWeekMateryalSlice(dersMateryali, activeWeekInfo, 15000) ||
+        dersMateryali.slice(0, 35000);
+      let yillikCenteredSlice = yillikPlan.slice(0, 45000);
+      if (yillikPlan.length > 45000 && activeWeekInfo.haftaNo >= 1) {
+        const wHit = yillikPlan.match(
+          new RegExp(`\\b${activeWeekInfo.haftaNo}\\s*\\.\\s*HAFTA\\b`, "i")
+        );
+        if (wHit && typeof wHit.index === "number") {
+          const s = Math.max(0, wHit.index - 18000);
+          yillikCenteredSlice = yillikPlan.slice(s, s + 45000);
+        }
+      }
+
       const response = await fetch("/api/fix-plan-field", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -896,9 +939,9 @@ export default function App() {
           currentValue,
           plan: p,
           meta,
-          yillik_plan: yillikPlan.slice(0, 45000),
-          ders_bilgi_formu: dersBilgiFormu.slice(0, 45000),
-          ders_materyali: dersMateryali.slice(0, 35000),
+          yillik_plan: yillikCenteredSlice,
+          ders_bilgi_formu: unitDbfSlice,
+          ders_materyali: unitMateryalSlice,
         }),
       });
       const parsed = await safeReadJsonResponse<{
@@ -1413,11 +1456,108 @@ export default function App() {
       });
       const extractedText = result.text || "";
 
+      clearMaarifParserCaches();
+      clearQuickWeeksCache();
+
+      const areCourseNamesDistinct = (courseA: string, courseB: string): boolean => {
+        const normalizeCourse = (raw: string) =>
+          (raw || "")
+            .trim()
+            .toLocaleLowerCase("tr-TR")
+            .replace(/\b(?:hazırlık|5|6|7|8|9|10|11|12)\s*\.?\s*sınıf\b/gi, " ")
+            .replace(/\bders(?:i|in)?\b/gi, " ")
+            .replace(/[^\p{L}\p{N}\s]/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        const a = normalizeCourse(courseA);
+        const b = normalizeCourse(courseB);
+        if (!a || !b || a.length < 3 || b.length < 3) return false;
+        if (a === b || a.includes(b) || b.includes(a)) return false;
+        const wordsA = a.split(" ").filter((w) => w.length >= 3);
+        const wordsB = b.split(" ").filter((w) => w.length >= 3);
+        const shared = wordsA.filter((wa) =>
+          wordsB.some(
+            (wb) =>
+              wb.startsWith(wa.slice(0, 4)) || wa.startsWith(wb.slice(0, 4))
+          )
+        );
+        return shared.length === 0;
+      };
+
+      const newDetectedMeta =
+        result.detectedMeta || extractDocumentMetadataClient(extractedText);
+      const newCourse = (newDetectedMeta?.dersIsmi || "").trim();
+
+      let nextYillik = fieldKey === "yillik_plan" ? extractedText : yillikPlan;
+      let nextMateryal =
+        fieldKey === "ders_materyali" ? extractedText : dersMateryali;
+      let nextDbf =
+        fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu;
+
+      const courseMismatchDetected =
+        Boolean(newCourse) &&
+        ((fieldKey !== "yillik_plan" &&
+          yillikPlan.trim().length > 0 &&
+          areCourseNamesDistinct(
+            newCourse,
+            extractDocumentMetadataClient(yillikPlan).dersIsmi
+          )) ||
+          (fieldKey !== "ders_bilgi_formu" &&
+            dersBilgiFormu.trim().length > 0 &&
+            areCourseNamesDistinct(
+              newCourse,
+              extractDocumentMetadataClient(dersBilgiFormu).dersIsmi
+            )) ||
+          (fieldKey !== "ders_materyali" &&
+            dersMateryali.trim().length > 0 &&
+            areCourseNamesDistinct(
+              newCourse,
+              extractDocumentMetadataClient(dersMateryali).dersIsmi
+            )));
+
+      if (courseMismatchDetected) {
+        if (fieldKey !== "yillik_plan") {
+          setYillikPlan("");
+          nextYillik = "";
+          if (yillikPlanInputRef.current) yillikPlanInputRef.current.value = "";
+          setExtractedWeeks([]);
+          setSelectedWeekId("meb-1");
+        }
+        if (fieldKey !== "ders_materyali") {
+          setDersMateryali("");
+          nextMateryal = "";
+          if (dersMateryaliInputRef.current)
+            dersMateryaliInputRef.current.value = "";
+        }
+        if (fieldKey !== "ders_bilgi_formu") {
+          setDersBilgiFormu("");
+          nextDbf = "";
+          if (dersBilgiFormuInputRef.current)
+            dersBilgiFormuInputRef.current.value = "";
+        }
+        setUploadedFileNames({
+          yillik_plan:
+            fieldKey === "yillik_plan"
+              ? `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`
+              : null,
+          ders_materyali:
+            fieldKey === "ders_materyali"
+              ? `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`
+              : null,
+          ders_bilgi_formu:
+            fieldKey === "ders_bilgi_formu"
+              ? `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`
+              : null,
+        });
+        setCurrentPlan(null);
+      } else {
+        setUploadedFileNames((prev) => ({
+          ...prev,
+          [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
+        }));
+      }
+
       setter(extractedText);
-      setUploadedFileNames((prev) => ({
-        ...prev,
-        [fieldKey]: `${file.name} (${formatFileSize(file.size)} · ${extractedText.length.toLocaleString("tr-TR")} karakter)`,
-      }));
 
       // Release upload spinner immediately after text extraction so the button never stays stuck
       setUploadingFields((prev) => ({ ...prev, [fieldKey]: false }));
@@ -1426,77 +1566,46 @@ export default function App() {
       // Yield a frame so the browser paints the uploaded badge before running any secondary sync
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-      // Never auto-overwrite user's manual Ders İsmi; only fill empty Okul Adı / Sınıf Düzeyi if unlocked
-      if (result.detectedMeta) {
+      // Fill empty unlocked Okul Adı / Sınıf Düzeyi, and reset stale unlocked Ders İsmi on cross-course switch
+      if (newDetectedMeta) {
         const locks = lockedFieldsRef.current;
         setMeta((prev) => ({
           ...prev,
           okulAdi: locks.okulAdi
             ? prev.okulAdi
-            : prev.okulAdi.trim() || result.detectedMeta.okulAdi?.trim() || "",
-          dersIsmi: prev.dersIsmi,
+            : prev.okulAdi.trim() || newDetectedMeta.okulAdi?.trim() || "",
+          dersIsmi: locks.dersIsmi
+            ? prev.dersIsmi
+            : courseMismatchDetected &&
+                areCourseNamesDistinct(newCourse, prev.dersIsmi)
+              ? ""
+              : prev.dersIsmi,
           sinifDuzeyi: locks.sinifDuzeyi
             ? prev.sinifDuzeyi
-            : prev.sinifDuzeyi.trim() ||
-              result.detectedMeta.sinifDuzeyi?.trim() ||
-              "",
+            : courseMismatchDetected
+              ? newDetectedMeta.sinifDuzeyi?.trim() || ""
+              : prev.sinifDuzeyi.trim() ||
+                newDetectedMeta.sinifDuzeyi?.trim() ||
+                "",
         }));
       }
 
       // Trigger analyzeWeeksFromYillikPlan to purge stale course week cache and re-bind activeWeekList
       if (fieldKey === "yillik_plan") {
         setCurrentPlan(null);
-
-        // Detect if the newly uploaded Yıllık Plan belongs to a different course than the existing dersBilgiFormu
-        const newDetectedMeta =
-          result.detectedMeta || extractDocumentMetadataClient(extractedText);
-        const newCourse = (newDetectedMeta?.dersIsmi || "")
-          .trim()
-          .toLocaleLowerCase("tr-TR");
-
-        let shouldPurgeOldDbf = false;
-        if (dersBilgiFormu.trim() && newCourse) {
-          const oldDbfCourse = (
-            extractDocumentMetadataClient(dersBilgiFormu).dersIsmi || ""
-          )
-            .trim()
-            .toLocaleLowerCase("tr-TR");
-          if (
-            oldDbfCourse &&
-            !newCourse.includes(oldDbfCourse.slice(0, 4)) &&
-            !oldDbfCourse.includes(newCourse.slice(0, 4))
-          ) {
-            shouldPurgeOldDbf = true;
-          }
-        }
-
-        let effectiveDbf = dersBilgiFormu;
-        let effectiveMateryal = dersMateryali;
-        if (shouldPurgeOldDbf) {
-          setDersBilgiFormu("");
-          setDersMateryali("");
-          setUploadedFileNames((prev) => ({
-            ...prev,
-            ders_bilgi_formu: null,
-            ders_materyali: null,
-          }));
-          effectiveDbf = "";
-          effectiveMateryal = "";
-        }
-
         void analyzeWeeksFromYillikPlan(extractedText, {
-          dbfText: effectiveDbf,
-          materyalText: effectiveMateryal,
+          dbfText: nextDbf,
+          materyalText: nextMateryal,
         });
       } else {
-        if (fieldKey === "ders_bilgi_formu") {
+        if (fieldKey === "ders_bilgi_formu" && !courseMismatchDetected) {
           const updatedDbf = parseDersBilgiFormuStructured(
             extractedText,
-            yillikPlan,
-            dersMateryali
+            nextYillik,
+            nextMateryal
           );
           const refreshedWeekData = extractWeekPlanStructured(
-            yillikPlan,
+            nextYillik,
             meta.haftaEtiketi,
             meta.tarihAraligi,
             updatedDbf,
@@ -1504,23 +1613,28 @@ export default function App() {
           );
           setCurrentPlan((prevPlan) => {
             if (!prevPlan) return prevPlan;
-            return {
+            return sanitizePlanOutputBeforeDelivery({
               ...prevPlan,
               Ogrenme_Kanitlari:
-                updatedDbf.ogrenmeKanitlari ||
                 refreshedWeekData.unitOgrenmeKanitlari ||
+                updatedDbf.ogrenmeKanitlari ||
                 prevPlan.Ogrenme_Kanitlari,
               Farklilastirma:
-                updatedDbf.farklilastirma || prevPlan.Farklilastirma,
+                refreshedWeekData.unitFarklilastirma ||
+                updatedDbf.farklilastirma ||
+                prevPlan.Farklilastirma,
               Ogrenme_Ogretme_Yasantilari: {
                 ...prevPlan.Ogrenme_Ogretme_Yasantilari,
                 Temel_Kabuller:
+                  refreshedWeekData.unitTemelKabuller ||
                   updatedDbf.temelKabuller ||
                   prevPlan.Ogrenme_Ogretme_Yasantilari.Temel_Kabuller,
                 On_Degerlendirme_Sureci:
+                  refreshedWeekData.unitOnDegerlendirmeSureci ||
                   updatedDbf.onDegerlendirmeSureci ||
                   prevPlan.Ogrenme_Ogretme_Yasantilari.On_Degerlendirme_Sureci,
                 Kopru_Kurma:
+                  refreshedWeekData.unitKopruKurma ||
                   updatedDbf.kopruKurma ||
                   prevPlan.Ogrenme_Ogretme_Yasantilari.Kopru_Kurma,
                 Ogretme_Uygulamalari:
@@ -1530,15 +1644,13 @@ export default function App() {
                       )
                     : prevPlan.Ogrenme_Ogretme_Yasantilari.Ogretme_Uygulamalari,
               },
-            };
+            });
           });
         }
-        if (yillikPlan.trim()) {
-          void analyzeWeeksFromYillikPlan(yillikPlan, {
-            dbfText:
-              fieldKey === "ders_bilgi_formu" ? extractedText : dersBilgiFormu,
-            materyalText:
-              fieldKey === "ders_materyali" ? extractedText : dersMateryali,
+        if (nextYillik.trim()) {
+          void analyzeWeeksFromYillikPlan(nextYillik, {
+            dbfText: nextDbf,
+            materyalText: nextMateryal,
             skipAiFetch: true,
           });
         }
@@ -1751,25 +1863,7 @@ export default function App() {
         onayTarihi: finalOnayTarihi,
       };
       setMeta(updatedMeta);
-
       setCurrentPlan(generated);
-      const newRecord: SavedLessonPlanRecord = {
-        id: `plan-${Date.now()}`,
-        createdAt:
-          updatedMeta.onayTarihi || new Date().toISOString().slice(0, 10),
-        title: `${updatedMeta.haftaEtiketi} (${updatedMeta.tarihAraligi}) — ${
-          generated.Ders_Bilgisi?.Ders || "Ders Planı"
-        }`,
-        department: generated.Ders_Bilgisi?.Sinif || "",
-        inputs: {
-          yillik_plan: weekData.rawWeekWindowText,
-          ders_materyali: materyalSlice,
-          ders_bilgi_formu: dersBilgiFormu.slice(0, 12000),
-        },
-        meta: updatedMeta,
-        plan: generated,
-      };
-      setSavedPlans((prev) => [newRecord, ...prev]);
 
       // Focus the user's attention directly on the Plan Validator before official table
       window.setTimeout(() => {
@@ -1837,10 +1931,11 @@ export default function App() {
         meta.dersIsmi || currentPlan.Ders_Bilgisi.Ders
       }`,
       department: meta.sinifDuzeyi || currentPlan.Ders_Bilgisi.Sinif,
+      // Do NOT persist uploaded source files in localStorage background storage
       inputs: {
-        yillik_plan: yillikPlan,
-        ders_materyali: dersMateryali,
-        ders_bilgi_formu: dersBilgiFormu,
+        yillik_plan: "",
+        ders_materyali: "",
+        ders_bilgi_formu: "",
       },
       meta: { ...meta },
       plan: currentPlan,
@@ -1851,9 +1946,16 @@ export default function App() {
   };
 
   const handleLoadSavedPlan = (record: SavedLessonPlanRecord) => {
-    setYillikPlan(record.inputs.yillik_plan);
-    setDersMateryali(record.inputs.ders_materyali);
-    setDersBilgiFormu(record.inputs.ders_bilgi_formu || "");
+    clearMaarifParserCaches();
+    clearQuickWeeksCache();
+    setYillikPlan(record.inputs?.yillik_plan || "");
+    setDersMateryali(record.inputs?.ders_materyali || "");
+    setDersBilgiFormu(record.inputs?.ders_bilgi_formu || "");
+    setUploadedFileNames({
+      yillik_plan: null,
+      ders_materyali: null,
+      ders_bilgi_formu: null,
+    });
     if (record.meta) {
       const locks = lockedFieldsRef.current;
       setMeta((prev) => ({
@@ -1877,49 +1979,20 @@ export default function App() {
           : record.meta.okulMuduruAdSoyad,
       }));
     }
-    let syncedOgretmeUygulamalari =
+    const syncedOgretmeUygulamalari =
       record.plan.Ogrenme_Ogretme_Yasantilari?.Ogretme_Uygulamalari || [];
-    if (record.inputs.ders_bilgi_formu) {
-      const parsedDbf = parseDersBilgiFormuStructured(
-        record.inputs.ders_bilgi_formu,
-        record.inputs.yillik_plan || "",
-        record.inputs.ders_materyali || ""
-      );
-      const parsedWeek = extractWeekPlanStructured(
-        record.inputs.yillik_plan || "",
-        record.meta?.haftaEtiketi || "1. HAFTA",
-        record.meta?.tarihAraligi || "",
-        parsedDbf,
-        {
-          id: record.id,
-          haftaNo:
-            Number((record.meta?.haftaEtiketi || "").match(/(\d{1,2})/)?.[1]) ||
-            1,
-          haftaEtiketi: record.meta?.haftaEtiketi || "1. HAFTA",
-          tarihAraligi: record.meta?.tarihAraligi || "",
-          onayTarihi: record.meta?.onayTarihi || "",
-          ogrenmeBirimi: record.plan.Ders_Bilgisi?.Ogrenme_Birimi || "",
-          icerikCercevesi: record.plan.Icerik_Cercevesi || "",
-          konuVeCiktiOzeti:
-            record.plan.Ogrenme_Ciktilari_ve_Surec_Bilesenleri || "",
-        }
-      );
-      if (parsedWeek.unitOgretmeUygulamalari.length > 0) {
-        syncedOgretmeUygulamalari = parsedWeek.unitOgretmeUygulamalari.map((b) =>
-          b.replace(/^\*\s*/, "").trim()
-        );
-      }
-    }
-    setCurrentPlan({
-      ...record.plan,
-      Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(
-        record.plan.Ogrenme_Kanitlari
-      ),
-      Ogrenme_Ogretme_Yasantilari: {
-        ...record.plan.Ogrenme_Ogretme_Yasantilari,
-        Ogretme_Uygulamalari: syncedOgretmeUygulamalari,
-      },
-    });
+    setCurrentPlan(
+      sanitizePlanOutputBeforeDelivery({
+        ...record.plan,
+        Ogrenme_Kanitlari: cleanOgrenmeKanitlariPrefix(
+          record.plan.Ogrenme_Kanitlari
+        ),
+        Ogrenme_Ogretme_Yasantilari: {
+          ...record.plan.Ogrenme_Ogretme_Yasantilari,
+          Ogretme_Uygulamalari: syncedOgretmeUygulamalari,
+        },
+      })
+    );
     setActiveTab("official-table");
   };
 
@@ -1928,9 +2001,11 @@ export default function App() {
   };
 
   const handlePrepareNewPlan = () => {
-    // 1. Cancel any pending async week parsing
+    // 1. Cancel any pending async week parsing and purge parser caches
     weekParseRequestIdRef.current++;
     setIsParsingWeeks(false);
+    clearMaarifParserCaches();
+    clearQuickWeeksCache();
 
     // 2. Clear all uploaded document texts, file names, field errors, and DOM file inputs
     setYillikPlan("");
@@ -2960,7 +3035,14 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
+                              clearMaarifParserCaches();
+                              clearQuickWeeksCache();
                               setYillikPlan("");
+                              setExtractedWeeks([]);
+                              setSelectedWeekId("meb-1");
+                              setCurrentPlan(null);
+                              if (yillikPlanInputRef.current)
+                                yillikPlanInputRef.current.value = "";
                               setUploadedFileNames((prev) => ({
                                 ...prev,
                                 yillik_plan: null,
@@ -3075,7 +3157,12 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
+                              clearMaarifParserCaches();
+                              clearQuickWeeksCache();
                               setDersMateryali("");
+                              setCurrentPlan(null);
+                              if (dersMateryaliInputRef.current)
+                                dersMateryaliInputRef.current.value = "";
                               setUploadedFileNames((prev) => ({
                                 ...prev,
                                 ders_materyali: null,
@@ -3194,7 +3281,12 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => {
+                              clearMaarifParserCaches();
+                              clearQuickWeeksCache();
                               setDersBilgiFormu("");
+                              setCurrentPlan(null);
+                              if (dersBilgiFormuInputRef.current)
+                                dersBilgiFormuInputRef.current.value = "";
                               setUploadedFileNames((prev) => ({
                                 ...prev,
                                 ders_bilgi_formu: null,

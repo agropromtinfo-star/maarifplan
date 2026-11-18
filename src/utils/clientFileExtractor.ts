@@ -90,19 +90,23 @@ export function extractDocumentMetadataClient(text: string): {
 
 const QUICK_WEEKS_CACHE = new Map<string, YillikPlanWeekItem[]>();
 
+export function clearQuickWeeksCache(): void {
+  QUICK_WEEKS_CACHE.clear();
+}
+
 export function parseQuickWeeksClient(
   text: string,
   dersBilgiFormuText = "",
   dersMateryaliText = ""
 ): YillikPlanWeekItem[] {
   if (!text || !text.trim()) return [];
-  const cacheKey = `${text.length}:${text.slice(0, 120)}:${dersBilgiFormuText.length}:${dersMateryaliText.length}`;
+  const cacheKey = `${text.length}:${text.slice(0, 120)}:${text.slice(-80)}:${dersBilgiFormuText.length}:${dersMateryaliText.length}`;
   const cached = QUICK_WEEKS_CACHE.get(cacheKey);
   if (cached) {
     return cached;
   }
 
-  const cleanYillik = stripFrontMatter((text || "").slice(0, 150000));
+  const cleanYillik = stripFrontMatter((text || "").slice(0, 250000));
   const lines = cleanYillik
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -166,29 +170,41 @@ export function parseQuickWeeksClient(
       structuredDbf
     );
 
-    const displayOutcome =
-      weekSpecific.outcomeHeader || activeOutcomeCarryover;
-    if (weekSpecific.outcomeHeader) {
+    const isSpecial = Boolean(weekSpecific.isSpecialWeek);
+    const displayOutcome = isSpecial
+      ? weekSpecific.outcomeHeader || weekSpecific.ogrenmeBirimi
+      : weekSpecific.outcomeHeader || activeOutcomeCarryover;
+    if (!isSpecial && weekSpecific.outcomeHeader) {
       activeOutcomeCarryover = weekSpecific.outcomeHeader;
+    } else if (isSpecial) {
+      activeOutcomeCarryover = "";
     }
 
-    let ogrenmeBirimi = weekSpecific.ogrenmeBirimi || activeUnitCarryover;
-    if (weekSpecific.ogrenmeBirimi) {
+    const ogrenmeBirimi = isSpecial
+      ? weekSpecific.ogrenmeBirimi
+      : weekSpecific.ogrenmeBirimi || activeUnitCarryover;
+    if (!isSpecial && weekSpecific.ogrenmeBirimi) {
       activeUnitCarryover = weekSpecific.ogrenmeBirimi;
+    } else if (isSpecial) {
+      activeUnitCarryover = "";
     }
 
     // Build week-specific summary showing the outcome and THIS week's specific sub-components (a, b vs c, ç vs d, e)
-    const weekSubs = weekSpecific.weekSubComponents.filter(
-      (s) => s.length >= 4
-    );
-    const meaningfulSummary = displayOutcome
+    const weekSubs = isSpecial
+      ? []
+      : weekSpecific.weekSubComponents.filter((s) => s.length >= 4);
+    const meaningfulSummary = isSpecial
+      ? weekSpecific.formattedOutcomeAndProcessBlock ||
+        weekSpecific.icerikCercevesi ||
+        ogrenmeBirimi
+      : displayOutcome
       ? weekSubs.length > 0
-        ? [displayOutcome, ...weekSubs.slice(0, 3)].join(" · ")
+        ? [displayOutcome, ...weekSubs.slice(0, 3)].join("\n")
         : weekSpecific.icerikCercevesi
-        ? `${displayOutcome} · ${weekSpecific.icerikCercevesi}`
+        ? `${displayOutcome} — ${weekSpecific.icerikCercevesi}`
         : displayOutcome
       : weekSubs.length > 0
-      ? weekSubs.slice(0, 3).join(" · ")
+      ? weekSubs.slice(0, 3).join("\n")
       : weekSpecific.icerikCercevesi || "";
 
     weeks.push({
@@ -201,9 +217,12 @@ export function parseQuickWeeksClient(
       icerikCercevesi: weekSpecific.icerikCercevesi || "",
       konuVeCiktiOzeti: meaningfulSummary.slice(0, 260),
       sure: weekSpecific.sure || structuredDbf.sure || "2 Ders Saati",
-      ogrenmeKanitlari:
-        weekSpecific.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari || "",
-      ogretmeUygulamalari: weekSpecific.unitOgretmeUygulamalari || [],
+      ogrenmeKanitlari: isSpecial
+        ? ""
+        : weekSpecific.unitOgrenmeKanitlari || structuredDbf.ogrenmeKanitlari || "",
+      ogretmeUygulamalari: isSpecial
+        ? []
+        : weekSpecific.unitOgretmeUygulamalari || [],
     });
   }
 
@@ -270,7 +289,8 @@ export interface ExtractFileOptions {
  */
 async function extractPdfTextChunkedNonBlocking(
   uint8: Uint8Array,
-  onProgress?: (statusText: string) => void
+  onProgress?: (statusText: string) => void,
+  maxTotalChars = 600000
 ): Promise<{ text: string; totalPages: number }> {
   onProgress?.("PDF yapısı hazırlanıyor...");
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -278,8 +298,7 @@ async function extractPdfTextChunkedNonBlocking(
   const pdf = await getDocumentProxy(uint8);
   const totalPages = pdf.numPages || 0;
   const pageTexts: string[] = [];
-  const BATCH_SIZE = 4;
-  const MAX_TOTAL_CHARS = 450000;
+  const BATCH_SIZE = 8;
   const PER_PAGE_TIMEOUT_MS = 1800;
   let accumulatedChars = 0;
 
@@ -296,19 +315,98 @@ async function extractPdfTextChunkedNonBlocking(
           const loadedPage = await pdf.getPage(pageNo);
           pageProxy = loadedPage;
           const content = await loadedPage.getTextContent();
-          const pageStr = content.items
-            .map((item) => {
-              if (item && "str" in item && typeof item.str === "string") {
-                return item.str + (item.hasEOL ? "\n" : " ");
+
+          interface PositionedItem {
+            str: string;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            hasEOL?: boolean;
+          }
+
+          const positioned: PositionedItem[] = [];
+          for (const rawItem of content.items) {
+            if (rawItem && "str" in rawItem && typeof rawItem.str === "string") {
+              const str = rawItem.str;
+              if (!str && !rawItem.hasEOL) continue;
+              const tr =
+                "transform" in rawItem && Array.isArray(rawItem.transform)
+                  ? rawItem.transform
+                  : [1, 0, 0, 1, 0, 0];
+              positioned.push({
+                str,
+                x: Number(tr[4]) || 0,
+                y: Number(tr[5]) || 0,
+                width: "width" in rawItem ? Number(rawItem.width) || 0 : 0,
+                height: "height" in rawItem ? Number(rawItem.height) || 10 : 10,
+                hasEOL: Boolean(rawItem.hasEOL),
+              });
+            }
+          }
+
+          if (positioned.length === 0) return "";
+
+          // Sort items visually top-to-bottom (Y descending) then left-to-right (X ascending)
+          positioned.sort((a, b) => {
+            if (Math.abs(a.y - b.y) > 2.5) return b.y - a.y;
+            return a.x - b.x;
+          });
+
+          const visualLines: string[] = [];
+          let currentLineY = positioned[0].y;
+          let currentLineParts: PositionedItem[] = [];
+
+          const flushLine = () => {
+            if (currentLineParts.length === 0) return;
+            currentLineParts.sort((a, b) => a.x - b.x);
+            let lineStr = "";
+            let prevEndX = currentLineParts[0].x;
+            for (let idx = 0; idx < currentLineParts.length; idx++) {
+              const part = currentLineParts[idx];
+              if (idx > 0) {
+                const gap = part.x - prevEndX;
+                const spaceThreshold = Math.max(1.2, (part.height || 10) * 0.14);
+                if (
+                  gap > spaceThreshold &&
+                  !lineStr.endsWith(" ") &&
+                  !part.str.startsWith(" ")
+                ) {
+                  lineStr += " ";
+                }
               }
-              return "";
-            })
-            .join("")
-            .replace(/[^\S\n]+/g, " ")
-            .replace(/ ?\n ?/g, "\n")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-          return pageStr;
+              lineStr += part.str;
+              prevEndX = Math.max(prevEndX, part.x + part.width);
+            }
+            const cleanLine = lineStr.replace(/[^\S\n]+/g, " ").trim();
+            if (cleanLine) {
+              visualLines.push(cleanLine);
+            }
+          };
+
+          for (const item of positioned) {
+            if (Math.abs(item.y - currentLineY) <= 2.5) {
+              currentLineParts.push(item);
+            } else {
+              flushLine();
+              currentLineY = item.y;
+              currentLineParts = [item];
+            }
+          }
+          flushLine();
+
+          // Strip isolated standalone page numbers at the very top or bottom edge of the page
+          if (visualLines.length > 2 && /^\d{1,3}$/.test(visualLines[0])) {
+            visualLines.shift();
+          }
+          if (
+            visualLines.length > 2 &&
+            /^\d{1,3}$/.test(visualLines[visualLines.length - 1])
+          ) {
+            visualLines.pop();
+          }
+
+          return visualLines.join("\n").trim();
         })();
 
         const timeoutPromise = new Promise<string>((resolve) => {
@@ -353,9 +451,9 @@ async function extractPdfTextChunkedNonBlocking(
       );
 
       // Yield to browser UI event loop so React renders progress and browser never freezes
-      await new Promise((resolve) => setTimeout(resolve, 8));
+      await new Promise((resolve) => setTimeout(resolve, 6));
 
-      if (accumulatedChars >= MAX_TOTAL_CHARS) {
+      if (accumulatedChars >= maxTotalChars) {
         break;
       }
     }
@@ -389,7 +487,12 @@ export async function extractFileContentHybrid(
   try {
     if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
       const uint8 = new Uint8Array(arrayBuffer);
-      const pdfRes = await extractPdfTextChunkedNonBlocking(uint8, onProgress);
+      const maxPdfChars = fieldKey === "ders_materyali" ? 950000 : 600000;
+      const pdfRes = await extractPdfTextChunkedNonBlocking(
+        uint8,
+        onProgress,
+        maxPdfChars
+      );
       extractedText = pdfRes.text;
       totalPages = pdfRes.totalPages;
     } else if (
@@ -602,14 +705,26 @@ export function buildXmlContextPayloadWithAnalysis(
   const effectiveOnayTarihi =
     inferApprovalDateClient(effectiveTarihAraligi) || input.onay_tarihi || "";
 
-  const cleanYillikTableSlice = stripFrontMatter(input.yillik_plan || "").slice(
-    0,
-    24000
-  );
-  const cleanDbfSlice = stripFrontMatter(input.ders_bilgi_formu || "").slice(
-    0,
-    24000
-  );
+  const rawCleanYillik = stripFrontMatter(input.yillik_plan || "");
+  let cleanYillikTableSlice = rawCleanYillik.slice(0, 48000);
+  if (rawCleanYillik.length > 48000 && weekData.haftaNo >= 1) {
+    const weekAnchorMatch = rawCleanYillik.match(
+      new RegExp(`\\b${weekData.haftaNo}\\s*\\.\\s*HAFTA\\b`, "i")
+    );
+    if (weekAnchorMatch && typeof weekAnchorMatch.index === "number") {
+      const center = weekAnchorMatch.index;
+      const start = Math.max(0, center - 20000);
+      cleanYillikTableSlice = rawCleanYillik.slice(start, start + 48000);
+    }
+  }
+
+  const activeUnitMeta = !weekData.isSpecialWeek ? weekData.unitMetadata : undefined;
+  const cleanDbfSlice = (
+    (!weekData.isSpecialWeek &&
+      weekData.unitNumber &&
+      structuredDbf.rawUnitBlocks?.[weekData.unitNumber]) ||
+    stripFrontMatter(input.ders_bilgi_formu || "").slice(0, 24000)
+  ).slice(0, 32000);
 
   const xmlPayload = `<ders_plani_baglam_paketi>
 <hedef_hafta_ve_ust_bilgiler>
@@ -643,13 +758,13 @@ ${cleanYillikTableSlice}
 </yillik_plan>
 
 <ders_bilgi_formu baglam="Bu metin MEB Türkiye Yüzyılı Maarif Modeli resmi Ders Bilgi Formudur. Öğrenme Çıktıları ve Süreç Bileşenlerinin tam cümleleri ile Öğrenme Kanıtları, Temel Kabuller, Ön Değerlendirme Süreci, Köprü Kurma ve Öğretme Uygulamaları doğrudan bu etiket içindeki resmi metinlerden birebir alınır.">
-  <alan_becerileri>${structuredDbf.alanBecerileri}</alan_becerileri>
-  <egilimler>${structuredDbf.egilimler}</egilimler>
-  <sosyal_duygusal_ogrenme_becerileri>${structuredDbf.sosyalDuygusalBeceriler}</sosyal_duygusal_ogrenme_becerileri>
-  <degerler>${structuredDbf.degerler}</degerler>
-  <okuryazarlik_becerileri>${structuredDbf.okuryazarlikBecerileri}</okuryazarlik_becerileri>
-  <disiplinler_arasi_iliski>${structuredDbf.disiplinlerArasiIliski}</disiplinler_arasi_iliski>
-  <beceriler_arasi_iliski>${structuredDbf.becerilerArasiIliski}</beceriler_arasi_iliski>
+  <alan_becerileri>${activeUnitMeta?.alanBecerileri || structuredDbf.alanBecerileri}</alan_becerileri>
+  <egilimler>${activeUnitMeta?.egilimler || structuredDbf.egilimler}</egilimler>
+  <sosyal_duygusal_ogrenme_becerileri>${activeUnitMeta?.sosyalDuygusalBeceriler || structuredDbf.sosyalDuygusalBeceriler}</sosyal_duygusal_ogrenme_becerileri>
+  <degerler>${activeUnitMeta?.degerler || structuredDbf.degerler}</degerler>
+  <okuryazarlik_becerileri>${activeUnitMeta?.okuryazarlikBecerileri || structuredDbf.okuryazarlikBecerileri}</okuryazarlik_becerileri>
+  <disiplinler_arasi_iliski>${activeUnitMeta?.disiplinlerArasiIliski || structuredDbf.disiplinlerArasiIliski}</disiplinler_arasi_iliski>
+  <beceriler_arasi_iliski>${activeUnitMeta?.becerilerArasiIliski || structuredDbf.becerilerArasiIliski}</beceriler_arasi_iliski>
   <ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
 ${structuredDbf.rawOutcomesCatalogText || ""}
   </ogrenme_ciktilari_ve_surec_bilesenleri_katalogu>
@@ -669,7 +784,7 @@ ${weekData.unitKopruKurma || structuredDbf.kopruKurma}
 ${weekData.unitOgretmeUygulamalari.join("\n")}
   </ogretme_uygulamalari_secilen_birim>
   <farklilastirma_tam_metin>${weekData.unitFarklilastirma || structuredDbf.farklilastirma}</farklilastirma_tam_metin>
-  <aktif_maarif_kodlari>${structuredDbf.rawActivityCodes.join(", ")}</aktif_maarif_kodlari>
+  <aktif_maarif_kodlari>${(activeUnitMeta?.rawActivityCodes && activeUnitMeta.rawActivityCodes.length > 0 ? activeUnitMeta.rawActivityCodes : structuredDbf.rawActivityCodes).join(", ")}</aktif_maarif_kodlari>
   <ders_bilgi_formu_ham_metin>
 ${cleanDbfSlice}
   </ders_bilgi_formu_ham_metin>
