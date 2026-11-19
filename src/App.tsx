@@ -3449,12 +3449,14 @@ export default function App() {
                         plan={currentPlan}
                         meta={meta}
                         onUpdatePlan={(updated) => {
-                          setCurrentPlan(updated);
+                          const sanitized =
+                            sanitizePlanOutputBeforeDelivery(updated);
+                          setCurrentPlan(sanitized);
                           if (selectedWeekObj) {
                             handleUpdateWeekItem(selectedWeekObj.id, {
-                              ogrenmeKanitlari: updated.Ogrenme_Kanitlari,
+                              ogrenmeKanitlari: sanitized.Ogrenme_Kanitlari,
                               ogretmeUygulamalari:
-                                updated.Ogrenme_Ogretme_Yasantilari
+                                sanitized.Ogrenme_Ogretme_Yasantilari
                                   .Ogretme_Uygulamalari,
                             });
                           }
@@ -3479,10 +3481,12 @@ export default function App() {
                       <OfficialPlanTable
                         plan={currentPlan}
                         meta={meta}
-                        onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                        onUpdatePlan={(updated) =>
+                          setCurrentPlan(
+                            sanitizePlanOutputBeforeDelivery(updated)
+                          )
+                        }
                         onOpenTopicSummary={() => setIsTopicSummaryOpen(true)}
-                        dersMateryali={dersMateryali}
-                        konuVeCiktiOzeti={selectedWeekObj?.konuVeCiktiOzeti || ""}
                       />
                     </div>
                   </div>
@@ -3502,12 +3506,14 @@ export default function App() {
                   plan={currentPlan}
                   meta={meta}
                   onUpdatePlan={(updated) => {
-                    setCurrentPlan(updated);
+                    const sanitized =
+                      sanitizePlanOutputBeforeDelivery(updated);
+                    setCurrentPlan(sanitized);
                     if (selectedWeekObj) {
                       handleUpdateWeekItem(selectedWeekObj.id, {
-                        ogrenmeKanitlari: updated.Ogrenme_Kanitlari,
+                        ogrenmeKanitlari: sanitized.Ogrenme_Kanitlari,
                         ogretmeUygulamalari:
-                          updated.Ogrenme_Ogretme_Yasantilari
+                          sanitized.Ogrenme_Ogretme_Yasantilari
                             .Ogretme_Uygulamalari,
                       });
                     }
@@ -3532,10 +3538,10 @@ export default function App() {
                 <OfficialPlanTable
                   plan={currentPlan}
                   meta={meta}
-                  onUpdatePlan={(updated) => setCurrentPlan(updated)}
+                  onUpdatePlan={(updated) =>
+                    setCurrentPlan(sanitizePlanOutputBeforeDelivery(updated))
+                  }
                   onOpenTopicSummary={() => setIsTopicSummaryOpen(true)}
-                  dersMateryali={dersMateryali}
-                  konuVeCiktiOzeti={selectedWeekObj?.konuVeCiktiOzeti || ""}
                 />
               </div>
             </div>
@@ -3686,7 +3692,9 @@ export default function App() {
             <OfficialPlanTable
               plan={currentPlan}
               meta={meta}
-              onUpdatePlan={(updated) => setCurrentPlan(updated)}
+              onUpdatePlan={(updated) =>
+                setCurrentPlan(sanitizePlanOutputBeforeDelivery(updated))
+              }
             />
           </div>
         )}
@@ -3699,7 +3707,9 @@ export default function App() {
           onClose={() => setIsExportConfigOpen(false)}
           plan={currentPlan}
           meta={meta}
-          onExecutePrint={() => triggerPrintWithFileName(meta, currentPlan)}
+          onExecutePrint={(opts) =>
+            triggerPrintWithFileName(meta, currentPlan, opts)
+          }
         />
       )}
 

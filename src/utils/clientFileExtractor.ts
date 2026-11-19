@@ -13,10 +13,10 @@ import {
   extractWeekPlanStructured,
   extractWeekMateryalSlice,
   enforceAndMergeLessonPlan,
-  extractDateRangeFromText,
   resolveValidDateRange,
   cleanPdfHeaderFooterNoiseFromField,
   sanitizePlanOutputBeforeDelivery,
+  extractAllWeekAnchorsFromYillikPlan,
   StructuredDersBilgiFormu,
   WeekSpecificExtraction,
 } from "../shared/maarifPlanEngine";
@@ -121,48 +121,19 @@ export function parseQuickWeeksClient(
     dersMateryaliText || ""
   );
 
-  const rawHits: { wNo: number; lineIdx: number }[] = [];
-  const seenWeeks = new Set<number>();
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const matches = line.matchAll(
-      /(?:\b(\d{1,2})\s*\.\s*HAFTA\b|\bHAFTA\s*[:|-]?\s*(\d{1,2})\b)/gi
-    );
-    for (const m of matches) {
-      const wNo = Number(m[1] || m[2]);
-      if (wNo >= 1 && wNo <= 42 && !seenWeeks.has(wNo)) {
-        seenWeeks.add(wNo);
-        rawHits.push({ wNo, lineIdx: i });
-      }
-    }
-  }
+  // Extract all week anchors (including split multi-line weeks, glued tokens, and gap-recovered weeks)
+  const anchors = extractAllWeekAnchorsFromYillikPlan(lines);
 
   const weeks: YillikPlanWeekItem[] = [];
   let activeUnitCarryover = "";
   let activeOutcomeCarryover = "";
 
-  for (let idx = 0; idx < rawHits.length; idx++) {
-    const { wNo, lineIdx: i } = rawHits[idx];
-    const prevIdx = idx > 0 ? rawHits[idx - 1].lineIdx : -1;
-    const nextIdx =
-      idx + 1 < rawHits.length ? rawHits[idx + 1].lineIdx : lines.length;
+  for (let idx = 0; idx < anchors.length; idx++) {
+    const anchor = anchors[idx];
+    const wNo = anchor.weekNo;
+    const validDateRange = resolveValidDateRange(anchor.dateRange, wNo);
 
-    // 1. Resolve date range strictly from this week's anchor (same line -> 1 line above -> 1 line below)
-    let datePart = extractDateRangeFromText(lines[i]);
-    if (!datePart && i - 1 > prevIdx) {
-      datePart = extractDateRangeFromText(lines[i - 1]);
-    }
-    if (!datePart && i + 1 < nextIdx - 1) {
-      datePart = extractDateRangeFromText(lines[i + 1]);
-    }
-    if (!datePart && i - 2 > prevIdx + 1) {
-      datePart = extractDateRangeFromText(lines[i - 2]);
-    }
-
-    const validDateRange = resolveValidDateRange(datePart, wNo);
-
-    // 2. Extract exact week-specific outcome, sub-components, unit, and topic using the structured engine
+    // Extract exact week-specific outcome, sub-components, unit, and topic using the structured engine
     const weekSpecific = extractWeekPlanStructured(
       cleanYillik,
       `${wNo}. HAFTA`,
@@ -189,7 +160,7 @@ export function parseQuickWeeksClient(
       activeUnitCarryover = "";
     }
 
-    // Build week-specific summary showing the outcome and THIS week's specific sub-components (a, b vs c, ç vs d, e)
+    // Build week-specific summary showing the outcome and THIS week's specific sub-components
     const weekSubs = isSpecial
       ? []
       : weekSpecific.weekSubComponents.filter((s) => s.length >= 4);
@@ -283,9 +254,9 @@ export interface ExtractFileOptions {
 
 /**
  * Non-blocking chunked PDF text extractor.
- * Processes pages in small async batches, cleans up page proxies immediately to keep memory flat,
- * enforces a per-page timeout so complex vector diagram pages never hang PDF.js,
- * and yields to the browser UI thread after every batch so the tab never freezes ("Sayfa Yanıt Vermiyor").
+ * Processes pages sequentially inside small UI-yielding batches so each page gets its full timeout budget
+ * (preventing Promise.all timer starvation from dropping pages), cleans up page proxies immediately,
+ * and yields to the browser UI thread so the tab never freezes ("Sayfa Yanıt Vermiyor").
  */
 async function extractPdfTextChunkedNonBlocking(
   uint8: Uint8Array,
@@ -298,8 +269,8 @@ async function extractPdfTextChunkedNonBlocking(
   const pdf = await getDocumentProxy(uint8);
   const totalPages = pdf.numPages || 0;
   const pageTexts: string[] = [];
-  const BATCH_SIZE = 8;
-  const PER_PAGE_TIMEOUT_MS = 1800;
+  const UI_YIELD_EVERY_PAGES = 3;
+  const PER_PAGE_TIMEOUT_MS = 5000;
   let accumulatedChars = 0;
 
   try {
@@ -427,31 +398,30 @@ async function extractPdfTextChunkedNonBlocking(
       }
     };
 
-    for (let startPage = 1; startPage <= totalPages; startPage += BATCH_SIZE) {
-      const endPage = Math.min(totalPages, startPage + BATCH_SIZE - 1);
-      const batchNumbers: number[] = [];
-      for (let p = startPage; p <= endPage; p++) {
-        batchNumbers.push(p);
+    for (let pageNo = 1; pageNo <= totalPages; pageNo++) {
+      let pText = await extractSinglePageWithTimeout(pageNo);
+      if (!pText) {
+        // Retry once after yielding in case main thread was momentarily busy
+        await new Promise((resolve) => setTimeout(resolve, 4));
+        pText = await extractSinglePageWithTimeout(pageNo);
       }
 
-      const batchResults = await Promise.all(
-        batchNumbers.map((pNo) => extractSinglePageWithTimeout(pNo))
-      );
-
-      for (const pText of batchResults) {
-        if (pText) {
-          pageTexts.push(pText);
-          accumulatedChars += pText.length;
-        }
+      if (pText) {
+        pageTexts.push(pText);
+        accumulatedChars += pText.length;
       }
 
-      const pct = Math.min(100, Math.round((endPage / Math.max(1, totalPages)) * 100));
-      onProgress?.(
-        `PDF okunuyor: ${endPage} / ${totalPages} sayfa (%${pct})`
-      );
-
-      // Yield to browser UI event loop so React renders progress and browser never freezes
-      await new Promise((resolve) => setTimeout(resolve, 6));
+      if (pageNo % UI_YIELD_EVERY_PAGES === 0 || pageNo === totalPages) {
+        const pct = Math.min(
+          100,
+          Math.round((pageNo / Math.max(1, totalPages)) * 100)
+        );
+        onProgress?.(
+          `PDF okunuyor: ${pageNo} / ${totalPages} sayfa (%${pct})`
+        );
+        // Yield to browser UI event loop so React renders progress and browser never freezes
+        await new Promise((resolve) => setTimeout(resolve, 4));
+      }
 
       if (accumulatedChars >= maxTotalChars) {
         break;

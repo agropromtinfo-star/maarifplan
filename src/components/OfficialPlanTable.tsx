@@ -12,7 +12,7 @@ import {
   Sparkles,
   BookOpen,
 } from "lucide-react";
-import { downloadWordDoc, triggerPrintWithFileName } from "../utils/exportPlan";
+import { triggerPrintWithFileName } from "../utils/exportPlan";
 import {
   formatFullWeekAndDateRange,
   cleanOgrenmeKanitlariPrefix,
@@ -25,8 +25,6 @@ interface OfficialPlanTableProps {
   meta: DocumentHeaderFooterMeta;
   onUpdatePlan: (updated: MaarifLessonPlan) => void;
   onOpenTopicSummary?: () => void;
-  dersMateryali?: string;
-  konuVeCiktiOzeti?: string;
 }
 
 // Helper to render codes like "E2.2. ", "SDB2.2. ", "D12. ", "OB1. ", "KB2.2. " in bold when followed by space
@@ -326,7 +324,11 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
 
           <button
             type="button"
-            onClick={() => triggerPrintWithFileName(meta, plan)}
+            onClick={() =>
+              triggerPrintWithFileName(meta, plan, {
+                compactPaperSaver: isCompactView,
+              })
+            }
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-900 bg-amber-400 rounded-lg hover:bg-amber-300 transition-colors whitespace-nowrap shrink-0"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -341,7 +343,9 @@ export const OfficialPlanTable: React.FC<OfficialPlanTableProps> = ({
         onClose={() => setIsConfigModalOpen(false)}
         plan={plan}
         meta={meta}
-        onExecutePrint={() => window.print()}
+        onExecutePrint={(opts: PlanExportOptions) =>
+          triggerPrintWithFileName(meta, plan, opts)
+        }
       />
 
       {/* Official Document Sheet (Matches User's Attached Sample Plan Format 1:1) */}

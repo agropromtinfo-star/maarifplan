@@ -301,21 +301,12 @@ export function printTopicSummaryPdf(
     // ignore
   }
 
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) {
-    // Fallback if popup blocked
-    window.print();
-    setTimeout(() => {
-      document.title = oldTitle;
-    }, 1000);
-    return;
-  }
-
   const bodyHtml = markdownToWordHtml(summary.markdownContent);
-  const okulAdi = meta?.okulAdi || "MİLLÎ EĞİTİM BAKANLIĞI MESLEKİ VE TEKNİK ANADOLU LİSESİ";
+  const okulAdi =
+    meta?.okulAdi || "MİLLÎ EĞİTİM BAKANLIĞI MESLEKİ VE TEKNİK ANADOLU LİSESİ";
   const egitimYili = meta?.egitimYili || "2026-2027 Eğitim ve Öğretim Yılı";
 
-  printWindow.document.write(`<!DOCTYPE html>
+  const htmlContent = `<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="utf-8">
@@ -431,17 +422,48 @@ export function printTopicSummaryPdf(
   <div class="footer">
     Türkiye Yüzyılı Maarif Modeli · Öğrenci Çalışma Notu ve Konu Özeti
   </div>
-
-  <script>
-    window.onload = function() {
-      window.print();
-    };
-  </script>
 </body>
-</html>`);
-  printWindow.document.close();
+</html>`;
 
-  setTimeout(() => {
-    document.title = oldTitle;
-  }, 1000);
+  const existingFrame = document.getElementById("topic-summary-print-iframe");
+  if (existingFrame && existingFrame.parentNode) {
+    existingFrame.parentNode.removeChild(existingFrame);
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.id = "topic-summary-print-iframe";
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.visibility = "hidden";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+    doc.title = fileName;
+
+    window.setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        window.print();
+      } finally {
+        window.setTimeout(() => {
+          document.title = oldTitle;
+        }, 1000);
+      }
+    }, 250);
+  } else {
+    window.print();
+    window.setTimeout(() => {
+      document.title = oldTitle;
+    }, 1000);
+  }
 }

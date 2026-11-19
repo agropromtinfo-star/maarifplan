@@ -8,12 +8,10 @@ import {
   Printer,
   Sparkles,
   Settings2,
-  Check,
   X,
   Maximize2,
   Minimize2,
   PenTool,
-  Sliders,
   FileSpreadsheet,
   FileCheck2,
 } from "lucide-react";
@@ -78,7 +76,7 @@ export const ExportConfigModal: React.FC<ExportConfigModalProps> = ({
     if (onExecutePrint) {
       onExecutePrint(options);
     } else {
-      triggerPrintWithFileName(meta, plan);
+      triggerPrintWithFileName(meta, plan, options);
     }
     onClose();
   };

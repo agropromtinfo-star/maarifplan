@@ -13,14 +13,11 @@ import {
   BookOpen,
   Download,
   Printer,
-  Sparkles,
   X,
   RefreshCw,
   Edit3,
   Eye,
   Check,
-  AlertCircle,
-  FileText,
   Info,
 } from "lucide-react";
 

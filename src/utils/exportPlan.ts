@@ -1,5 +1,8 @@
 import { MaarifLessonPlan, DocumentHeaderFooterMeta } from "../types/lessonPlan";
-import { formatFullWeekAndDateRange } from "../shared/maarifPlanEngine";
+import {
+  formatFullWeekAndDateRange,
+  sanitizePlanOutputBeforeDelivery,
+} from "../shared/maarifPlanEngine";
 import { PlanExportOptions, DEFAULT_EXPORT_OPTIONS } from "../types/exportOptions";
 
 function escapeHtml(text: string): string {
@@ -60,10 +63,11 @@ function formatAsteriskLinesHtml(items: string[]): string {
 }
 
 function buildSinglePlanSectionHtml(
-  plan: MaarifLessonPlan,
+  rawPlan: MaarifLessonPlan,
   meta: DocumentHeaderFooterMeta | undefined,
   options: PlanExportOptions
 ): { sectionHtml: string; secondTitleLine: string; haftaSatiri: string; dersIsmi: string } {
+  const plan = sanitizePlanOutputBeforeDelivery(rawPlan);
   const {
     Ders_Bilgisi: db,
     Programlar_Arasi_Bilesenler: pab,
@@ -318,8 +322,8 @@ function buildDocumentStyleBlock(options: PlanExportOptions): string {
   const cellPaddingVal = options.compactPaperSaver ? "2.5px 5px" : "5px 7px";
   const headerFontSizeVal = options.compactPaperSaver ? "10pt" : "11pt";
   const headerMarginVal = options.compactPaperSaver ? "6px" : "12px";
-  const borderColorVal = "#4bacc6";
-  const bannerBgVal = "#c2d69b";
+  const borderColorVal = options.printerFriendlyBorders ? "#64748b" : "#4bacc6";
+  const bannerBgVal = options.printerFriendlyBorders ? "#e2e8f0" : "#c2d69b";
 
   return `
     @page {
@@ -446,10 +450,69 @@ export function applyDocumentTitleForPdf(
 
 export function triggerPrintWithFileName(
   meta?: DocumentHeaderFooterMeta,
-  plan?: MaarifLessonPlan | null
+  plan?: MaarifLessonPlan | null,
+  exportOptions?: Partial<PlanExportOptions>
 ) {
-  applyDocumentTitleForPdf(meta, plan);
-  window.print();
+  const exportFileName = applyDocumentTitleForPdf(meta, plan);
+  if (!plan) {
+    window.print();
+    return;
+  }
+
+  const options: PlanExportOptions = {
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...(exportOptions || {}),
+  };
+
+  const { sectionHtml } = buildSinglePlanSectionHtml(plan, meta, options);
+  const htmlContent = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(exportFileName)}</title>
+  <style>${buildDocumentStyleBlock(options)}</style>
+</head>
+<body>
+${sectionHtml}
+</body>
+</html>`;
+
+  const existingFrame = document.getElementById("single-week-print-iframe");
+  if (existingFrame && existingFrame.parentNode) {
+    existingFrame.parentNode.removeChild(existingFrame);
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.id = "single-week-print-iframe";
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.visibility = "hidden";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+    doc.title = exportFileName;
+
+    window.setTimeout(() => {
+      applyDocumentTitleForPdf(meta, plan);
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (err) {
+        console.warn("Single week iframe print fallback:", err);
+        window.print();
+      }
+    }, 250);
+  } else {
+    window.print();
+  }
 }
 
 export function downloadWordDoc(
